@@ -34,10 +34,11 @@ The "Alpha-Dog" engine relies on the Alpaca Market Data API. To avoid "recreatin
 ### 3.1 Alpaca Data Source Mapping
 The backend worker uses the following endpoints to fuel the refinery:
 
-| Data Need | Alpaca Endpoint / SDK Method | Documentation Link | Use Case |
+| Data Need | Alpaca Endpoint / SDK SDK Method | Documentation Link | Use Case |
 | :--- | :--- | :--- | :--- |
 | **Active Contracts** | `get_option_contracts` | [Option Contracts](https://docs.alpaca.markets/reference/optionchain) | Populating the initial options universe. |
 | **Greeks & Pricing** | `get_option_snapshot` | [Option Snapshots](https://docs.alpaca.markets/reference/optionchain) | Fetching Delta, Theta, Vega, Bid, Ask, and IV. |
+| **Stock Real-time Price** | `get_stock_snapshot` | [Stock Snapshots](https://docs.alpaca.markets/reference/stock) | Syncing current underlying price with option strikes. |
 | **Historical Price** | `get_option_bars` | [Option Bars](https://docs.alpaca.markets/reference/optionchain) | Powering the interactive candlestick charts. |
 | **Stock Data** | `get_stock_bars` | [Stock Bars](https://docs.alpaca.markets/reference/bars) | Calculating SMA 50/200 and RSI. |
 | **Ticker Details** | `get_asset` | [Assets API](https://docs.alpaca.markets/reference/assets) | Fetching company name and basic asset info. |
