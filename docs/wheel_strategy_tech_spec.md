@@ -6,19 +6,44 @@ The system is a data-intensive financial application. The primary challenge is t
 ### Architecture Pattern: Dynamic Query Builder
 The system will avoid static endpoints for filtering. Instead, it will implement a **Query-Driven API**. The frontend sends a list of "Filter Operations," and the backend parses these into a database query.
 
-## 2. Technology Stack (Recommended)
-*   **Frontend:** React / Next.js (for SEO and fast routing) + Tailwind CSS.
-*   **Backend:** Node.js (TypeScript) or Python (FastAPI) for high-performance data processing.
-*   **Database:** 
-    *   **PostgreSQL:** For user data, saved screeners, and trade tracking.
-    *   **TimescaleDB or ClickHouse:** For the option chain data (high-volume time-series data).
-*   **Cache:** Redis (for caching ticker data and common filter results).
-*   **Data Sources:** Polygon.io, Tradier, or Alpaca (Market Data APIs for Option Chains and Stock Fundamentals).
+## 2. Technology Stack & Hosting Blueprint
 
-## 3. API Design (Internal Specification)
+The "Alpha-Dog" terminal uses a **Hybrid Architecture** to balance the high-speed requirements of a trading terminal with the scalability of modern hosting.
 
-### 3.1 The Filter Endpoint (`POST /api/filter`)
-This is the core engine. It must accept a dynamic array of filters.
+### 2.1 The Stack
+*   **Frontend (The Terminal):** Next.js + Tailwind CSS $\rightarrow$ Hosted on **Vercel**.
+*   **API & Analysis Engine (The Brain):** FastAPI (Python) $\rightarrow$ Hosted on **Railway.app / Render**.
+*   **Data Core (The State):** Supabase (Postgres + Auth + Realtime) $\rightarrow$ Hosted on **Supabase**.
+*   **Market Data:** Alpaca Market Data APIs (`alpaca-py`).
+
+### 2.2 Hosting Strategy: Serverless UI vs. Persistent Engine
+Because the system requires 24/7 data polling and heavy mathematical analysis, we decouple the UI from the Engine.
+
+1.  **Vercel (Serverless):** Hosts the Next.js UI. It is highly scalable and provides the best user experience but cannot run persistent background tasks. It communicates with the API via HTTPS.
+2.  **Railway/Render (Persistent):** Hosts two separate Python services:
+    *   **The API Service:** A FastAPI server that handles user requests, translates filters, and queries Supabase.
+    *   **The Data Worker:** A persistent background process that polls Alpaca, runs the `MARKET_MODEL` analysis, and updates Supabase.
+3.  **Supabase (Managed):** Acts as the centralized state. The Worker writes to it; the API reads from it.
+
+---
+
+## 3. System Architecture: The Data Refinery
+
+The core of the app is a **Data Refinery pipeline** that turns raw market data into high-conviction trade ideas.
+
+### 3.1 The "Back-End" Loop (Refinery Process)
+`Alpaca Market Data` $\xrightarrow{Polled by}$ `Railway Worker` $\xrightarrow{Analyzed by}$ `Market Model` $\xrightarrow{Stored in}$ `Supabase`
+
+1.  **Collection:** The worker polls a "Hot List" of liquid tickers via Alpaca.
+2.  **Analysis:** The worker applies the Trading Agent's logic (RSI, SMA, Support/Resistance zones) and calculates the `contractScore`.
+3.  **Sync:** Processed data is flattened and pushed into Supabase tables.
+
+### 3.2 The "Front-End" Loop (User Experience)
+`User` $\xrightarrow{Interacts with}$ `Vercel UI` $\xrightarrow{Requests}$ `Railway FastAPI` $\xrightarrow{Queries}$ `Supabase` $\xrightarrow{Returns}$ `User`
+
+1.  **Instant Filtering:** The UI sends a "Dynamic Query" to FastAPI.
+2.  **Cache Query:** FastAPI queries the pre-calculated data in Supabase (avoiding slow Alpaca API calls during the user session).
+3.  **Real-time Delivery:** The UI renders the results instantly.
 
 **Request Schema:**
 ```json
