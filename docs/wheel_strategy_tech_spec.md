@@ -27,23 +27,57 @@ Because the system requires 24/7 data polling and heavy mathematical analysis, w
 
 ---
 
-## 3. System Architecture: The Data Refinery
+## 3. API Design & Data Source Mapping
 
-The core of the app is a **Data Refinery pipeline** that turns raw market data into high-conviction trade ideas.
+The "Alpha-Dog" engine relies on the Alpaca Market Data API. To avoid "recreating the wheel," we leverage Alpaca's native data objects wherever possible.
 
-### 3.1 The "Back-End" Loop (Refinery Process)
-`Alpaca Market Data` $\xrightarrow{Polled by}$ `Railway Worker` $\xrightarrow{Analyzed by}$ `Market Model` $\xrightarrow{Stored in}$ `Supabase`
+### 3.1 Alpaca Data Source Mapping
+The backend worker uses the following endpoints to fuel the refinery:
 
-1.  **Collection:** The worker polls a "Hot List" of liquid tickers via Alpaca.
-2.  **Analysis:** The worker applies the Trading Agent's logic (RSI, SMA, Support/Resistance zones) and calculates the `contractScore`.
-3.  **Sync:** Processed data is flattened and pushed into Supabase tables.
+| Data Need | Alpaca Endpoint / SDK Method | Documentation Link | Use Case |
+| :--- | :--- | :--- | :--- |
+| **Active Contracts** | `get_option_contracts` | [Option Contracts](https://docs.alpaca.markets/reference/optionchain) | Populating the initial options universe. |
+| **Greeks & Pricing** | `get_option_snapshot` | [Option Snapshots](https://docs.alpaca.markets/reference/optionchain) | Fetching Delta, Theta, Vega, Bid, Ask, and IV. |
+| **Historical Price** | `get_option_bars` | [Option Bars](https://docs.alpaca.markets/reference/optionchain) | Powering the interactive candlestick charts. |
+| **Stock Data** | `get_stock_bars` | [Stock Bars](https://docs.alpaca.markets/reference/bars) | Calculating SMA 50/200 and RSI. |
+| **Ticker Details** | `get_asset` | [Assets API](https://docs.alpaca.markets/reference/assets) | Fetching company name and basic asset info. |
 
-### 3.2 The "Front-End" Loop (User Experience)
-`User` $\xrightarrow{Interacts with}$ `Vercel UI` $\xrightarrow{Requests}$ `Railway FastAPI` $\xrightarrow{Queries}$ `Supabase` $\xrightarrow{Returns}$ `User`
+### 3.2 The "Data Refinery" Engine Architecture
+The refinery is a decoupled, asynchronous pipeline designed to maximize the Alpaca free-tier limits.
 
-1.  **Instant Filtering:** The UI sends a "Dynamic Query" to FastAPI.
-2.  **Cache Query:** FastAPI queries the pre-calculated data in Supabase (avoiding slow Alpaca API calls during the user session).
-3.  **Real-time Delivery:** The UI renders the results instantly.
+#### Step 1: Ticker Polling (The Seed)
+*   **Action:** Poll a curated "Hot List" of liquid symbols.
+*   **Tool:** `TradingClient.get_option_contracts`.
+*   **Output:** A list of active, liquid contracts for the target symbols.
+
+#### Step 2: Chain Snapshotting (The Meat)
+*   **Action:** Batch request snapshots for all active contracts.
+*   **Tool:** `OptionHistoricalDataClient.get_option_snapshot`.
+*   **Leverage:** We use Alpaca's **native Greeks** (Delta, Theta, Vega) and **IV** provided in the snapshot instead of calculating them locally.
+
+#### Step 3: Technical Enrichment (The Edge)
+*   **Action:** Fetch historical stock bars for the underlying.
+*   **Tool:** `get_stock_bars`.
+*   **Process:** Apply `pandas-ta` to the bar data to generate:
+    *   **SMA 50/200:** To confirm the market regime.
+    *   **RSI (14):** To identify overbought/oversold conditions.
+    *   **Structural Zones:** Identify local support/resistance by analyzing price pivots over the last 60-180 days.
+
+#### Step 4: Scoring & Yield Calculation (The Logic)
+*   **Action:** Combine Alpaca's native data with our calculated indicators.
+*   **Formula:** Run the `contractScore` weighted model (Delta, Yield, IV Rank, Structural Fit).
+*   **Calculation:** Compute `Annualized Yield` based on the snapshot's mid-price.
+
+#### Step 5: Supabase Sync (The State)
+*   **Action:** Upsert the final "Enriched Contract" into the `option_contracts` table.
+*   **Output:** A ready-to-query database that the Vercel UI can access instantly.
+
+---
+
+## 4. Internal API Endpoints (FastAPI)
+
+### 4.1 The Filter Endpoint (`POST /api/filter`)
+This is the core engine. It must accept a dynamic array of filters.
 
 **Request Schema:**
 ```json
@@ -84,15 +118,11 @@ The core of the app is a **Data Refinery pipeline** that turns raw market data i
 }
 ```
 
-## 3. API Design (Internal Specification)
+### 4.2 The Ticker Endpoint (`GET /api/tickers`)
+Provides the list of all supported symbols for the search and "Available Stocks" page.
+*   **Params:** `detailed=true` (returns market cap, sector, industry).
 
-### 3.1 The Filter Endpoint (`POST /api/filter`)
-... (keep existing)
-
-### 3.2 The Ticker Endpoint (`GET /api/tickers`)
-... (keep existing)
-
-### 3.3 The Charting Endpoint (`GET /api/chart/{symbol}`)
+### 4.3 The Charting Endpoint (`GET /api/chart/{symbol}`)
 Provides historical bar data and structural overlays for visualization.
 *   **Params:** `timeframe` (1Min, 5Min, 1Day), `range` (1Month, 6Month, 1Year).
 *   **Logic:** FastAPI fetches bars from Alpaca $\rightarrow$ Applies SMA/RSI calculations $\rightarrow$ Fetches `support_zones` from Supabase $\rightarrow$ Returns a combined JSON object for the chart library.
