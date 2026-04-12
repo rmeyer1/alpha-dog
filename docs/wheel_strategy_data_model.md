@@ -18,7 +18,10 @@ The system centers around the `OptionContract` and the `StockTicker` entities.
 | `sma_200` | Float | 200-day Simple Moving Average |
 | `rsi_14` | Float | 14-day Relative Strength Index |
 | `current_price` | Float | Last traded stock price |
+| `support_zones` | JSONB | Array of support price ranges `[{min: 150, max: 152}]` |
+| `resistance_zones`| JSONB | Array of resistance price ranges `[{min: 170, max: 172}]` |
 | `updated_at` | Timestamp | Last sync time |
+
 
 ### 2.2 Table: `option_contracts` (The Screener Data)
 | Field | Type | Description |

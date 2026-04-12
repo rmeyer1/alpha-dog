@@ -59,9 +59,20 @@ This is the core engine. It must accept a dynamic array of filters.
 }
 ```
 
+## 3. API Design (Internal Specification)
+
+### 3.1 The Filter Endpoint (`POST /api/filter`)
+... (keep existing)
+
 ### 3.2 The Ticker Endpoint (`GET /api/tickers`)
-Provides the list of all supported symbols for the search and "Available Stocks" page.
-*   **Params:** `detailed=true` (returns market cap, sector, industry).
+... (keep existing)
+
+### 3.3 The Charting Endpoint (`GET /api/chart/{symbol}`)
+Provides historical bar data and structural overlays for visualization.
+*   **Params:** `timeframe` (1Min, 5Min, 1Day), `range` (1Month, 6Month, 1Year).
+*   **Logic:** FastAPI fetches bars from Alpaca $\rightarrow$ Applies SMA/RSI calculations $\rightarrow$ Fetches `support_zones` from Supabase $\rightarrow$ Returns a combined JSON object for the chart library.
+*   **Frontend Integration:** Use **TradingView Lightweight Charts** for high-performance rendering of candles and zones.
+
 
 ## 4. Data Pipeline & Processing
 The system cannot query an external API for 500k contracts on every request. It must implement a **Data Sync Pipeline**:

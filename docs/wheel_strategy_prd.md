@@ -72,10 +72,15 @@ A collection of standalone calculators providing instant financial math.
 *   **Put Credit Spread Max Loss:** Worst-case loss calculation.
 *   **Wheel Expectancy Calculator:** Expected return per cycle.
 
-### 3.4 User Account & Tracking
-*   **Auth:** User registration and login.
-*   **Trade Tracker:** A dashboard to log trades, track P&L (realized and unrealized), and monitor the "Wheel Cycle" state.
-*   **Saved Screeners:** Persistence for custom filter sets.
+### 3.5 Interactive Technical Charting
+A high-performance visualization tool to verify the "Structural Fit" of a trade.
+*   **Interactive Candlestick Charts:** Using Alpaca historical bars to provide a professional trading view.
+*   **Visual Overlays:**
+    *   **Moving Averages:** SMA 50 and SMA 200 overlays to confirm trend alignment.
+    *   **Structural Zones:** Visual horizontal bands representing the support and resistance zones identified by the backend Analyst.
+    *   **Technical Indicators:** Integrated RSI and Volume profiles.
+*   **Contextual Linking:** The chart should automatically center on the strike price of the selected option contract, allowing the user to see the "buffer" between the strike and the nearest structural support.
+
 
 ## 4. Non-Functional Requirements
 *   **Performance:** The screener must handle a universe of 500k+ contracts with low latency.
