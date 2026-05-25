@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  ChevronDown,
   Clock3,
   RefreshCw,
   Save,
@@ -97,7 +98,82 @@ function WarningBadges({ warnings }: { warnings: Warning[] }) {
   );
 }
 
+function warningTone(warnings: Warning[]) {
+  if (warnings.some((warning) => warning.severity === "danger")) {
+    return "border-red-400/40 bg-red-500/15 text-red-100";
+  }
+
+  if (warnings.some((warning) => warning.severity === "warning")) {
+    return "border-amber-300/40 bg-amber-400/15 text-amber-100";
+  }
+
+  return "border-cyan-300/30 bg-cyan-400/10 text-cyan-100";
+}
+
+function CompactWarnings({
+  warnings,
+  expanded,
+  onToggle,
+}: {
+  warnings: Warning[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  if (warnings.length === 0) {
+    return <span className="text-sm text-zinc-500">None</span>;
+  }
+
+  return (
+    <div className="max-w-[260px]">
+      <button
+        aria-expanded={expanded}
+        className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition hover:brightness-125 ${warningTone(warnings)}`}
+        onClick={onToggle}
+        type="button"
+      >
+        <AlertTriangle className="size-3" />
+        <span>
+          {warnings.length} {warnings.length === 1 ? "warning" : "warnings"}
+        </span>
+        <ChevronDown
+          className={`size-3 transition-transform ${expanded ? "rotate-180" : ""}`}
+        />
+      </button>
+      {expanded ? (
+        <div className="mt-2 grid gap-1.5 whitespace-normal">
+          {warnings.map((warning, index) => (
+            <div
+              className={`rounded-md border px-2.5 py-2 text-xs leading-5 ${badgeClass(warning.severity)}`}
+              key={`${warning.type}-${index}`}
+            >
+              {warning.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
+  const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  function toggleWarnings(contractSymbol: string) {
+    setExpandedWarnings((current) => {
+      const next = new Set(current);
+
+      if (next.has(contractSymbol)) {
+        next.delete(contractSymbol);
+      } else {
+        next.add(contractSymbol);
+      }
+
+      return next;
+    });
+  }
+
   if (rows.length === 0) {
     return (
       <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
@@ -110,13 +186,12 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
   return (
     <>
       <div className="hidden overflow-x-auto lg:block">
-        <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[1310px] border-collapse text-left text-sm whitespace-nowrap">
           <thead className="bg-white/[0.03] text-xs uppercase text-zinc-400">
             <tr>
               {[
                 "Rank",
                 "Score",
-                "Contract",
                 "Strike",
                 "Exp",
                 "DTE",
@@ -151,9 +226,6 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
                     {row.score}
                   </span>
                 </td>
-                <td className="px-4 py-3 font-mono text-xs text-zinc-300">
-                  {row.contractSymbol}
-                </td>
                 <td className="px-4 py-3 font-mono">
                   {formatCurrency(row.strike)}
                 </td>
@@ -161,8 +233,8 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
                   {row.expirationDate}
                 </td>
                 <td className="px-4 py-3 font-mono">{row.dte}</td>
-                <td className="px-4 py-3 font-mono">
-                  {formatCurrency(row.bid)} / {formatCurrency(row.ask)}
+                <td className="px-4 py-3 font-mono tabular-nums">
+                  {formatCurrency(row.bid)}/{formatCurrency(row.ask)}
                 </td>
                 <td className="px-4 py-3 font-mono">
                   {formatCurrency(row.midpoint)}
@@ -182,16 +254,20 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
                 <td className="px-4 py-3 font-mono">
                   {formatPercent(row.impliedVolatility)}
                 </td>
-                <td className="px-4 py-3 font-mono">
-                  {row.volume ?? "-"} / {row.openInterest ?? "-"}
+                <td className="px-4 py-3 font-mono tabular-nums">
+                  {row.volume ?? "-"}/{row.openInterest ?? "-"}
                 </td>
                 <td className={`px-4 py-3 ${qualityClass(row.liquidityQuality)}`}>
                   {row.optionType === "put"
                     ? row.assignmentQuality
                     : row.upsideCapQuality}
                 </td>
-                <td className="max-w-[280px] px-4 py-3">
-                  <WarningBadges warnings={row.warnings} />
+                <td className="w-[180px] px-4 py-2 align-middle">
+                  <CompactWarnings
+                    expanded={expandedWarnings.has(row.contractSymbol)}
+                    onToggle={() => toggleWarnings(row.contractSymbol)}
+                    warnings={row.warnings}
+                  />
                 </td>
               </tr>
             ))}
@@ -240,7 +316,11 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
               </div>
             </div>
             <div className="mt-4">
-              <WarningBadges warnings={row.warnings} />
+              <CompactWarnings
+                expanded={expandedWarnings.has(row.contractSymbol)}
+                onToggle={() => toggleWarnings(row.contractSymbol)}
+                warnings={row.warnings}
+              />
             </div>
           </article>
         ))}
