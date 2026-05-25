@@ -1,72 +1,329 @@
-# Data Model Specification: Wheel Strategy Options
+# Wheel Strategy Dashboard — Data Model Specification
 
-## 1. Entity Relationship Overview
-The system centers around the `OptionContract` and the `StockTicker` entities.
+**Database:** PostgreSQL  
+**Cache:** Redis/KV recommended  
+**MVP mode:** Single-user or private beta, multi-user-ready schema
 
-## 2. Database Schema
+---
 
-### 2.1 Table: `tickers` (Fundamentals & Technicals)
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `symbol` | PK (String) | Ticker symbol (e.g., "AAPL") |
-| `company_name` | String | Full company name |
-| `market_cap` | BigInt | Market capitalization in USD |
-| `pe_ratio` | Float | Price-to-Earnings ratio |
-| `sector` | String | Market sector |
-| `industry` | String | Market industry |
-| `sma_50` | Float | 50-day Simple Moving Average |
-| `sma_200` | Float | 200-day Simple Moving Average |
-| `rsi_14` | Float | 14-day Relative Strength Index |
-| `current_price` | Float | Last traded stock price |
-| `updated_at` | Timestamp | Last sync time |
+## 1. Modeling Principles
 
-### 2.2 Table: `option_contracts` (The Screener Data)
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `contract_id` | PK (String) | Unique option ID (OSI standard) |
-| `ticker` | FK (String) | Reference to `tickers.symbol` |
-| `type` | Enum | "call" or "put" |
-| `strike` | Float | Strike price |
-| `expiration` | Date | Expiration date |
-| `premium_mid` | Float | Midpoint of Bid/Ask |
-| `bid` | Float | Current Bid |
-| `ask` | Float | Current Ask |
-| `delta` | Float | Delta Greek |
-| `theta` | Float | Theta Greek |
-| `vega` | Float | Vega Greek |
-| `iv` | Float | Implied Volatility |
-| `volume` | Int | Daily trading volume |
-| `open_interest`| Int | Total open contracts |
-| `annualized_yield`| Float | Calculated yield % |
-| `contract_score` | Int | Calculated rating (0-100) |
-| `pop` | Float | Probability of Profit % |
-| `updated_at` | Timestamp | Last sync time |
+- Normalize Alpaca responses into internal domain entities.
+- Persist user/saved preset data permanently.
+- Cache market data with TTLs; do not treat cached quotes as permanent truth.
+- Keep scoring outputs reproducible by recording persona config version.
+- Make future portfolio-aware features possible without redesign.
 
-### 2.3 Table: `user_trades` (Trade Tracker)
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `trade_id` | PK (UUID) | Unique trade ID |
-| `user_id` | FK (UUID) | Reference to `users.id` |
-| `ticker` | String | Ticker traded |
-| `strategy` | Enum | "CSP" or "CC" |
-| `entry_date` | Date | Date trade was opened |
-| `exit_date` | Date | Date trade was closed |
-| `entry_premium` | Float | Total premium collected |
-| `strike` | Float | Strike price of contract |
-| `status` | Enum | "Open", "Closed", "Assigned", "Expired" |
-| `pnl` | Float | Realized profit/loss |
+---
 
-### 2.4 Table: `saved_screeners`
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `screener_id` | PK (UUID) | Unique ID |
-| `user_id` | FK (UUID) | Reference to `users.id` |
-| `name` | String | Custom name (e.g. "Safe AAPL Puts") |
-| `filter_json` | JSONB | The array of filter operations |
-| `created_at` | Timestamp | Creation date |
+## 2. Core Entities
 
-## 3. Indexing Strategy
-*   **B-Tree Index:** On `tickers.symbol` and `option_contracts.contract_id`.
-*   **Composite Index:** On `option_contracts(type, expiration, strike)` for fast chain lookups.
-*   **GIST/GIN Index:** On `saved_screeners.filter_json` for searching across saved configurations.
-*   **Partitioning:** Partition `option_contracts` by `expiration` date to keep the active set small and fast.
+```mermaid
+erDiagram
+    users ||--o{ saved_presets : owns
+    strategy_personas ||--o{ saved_presets : based_on
+    analysis_requests ||--o{ ranked_contracts_cache : produces
+    tickers ||--o{ option_contract_metadata : has
+    tickers ||--o{ underlying_technical_snapshots : has
+    option_contract_metadata ||--o{ option_market_snapshots : has
+
+    users {
+        uuid id PK
+        text email
+        timestamptz created_at
+    }
+
+    strategy_personas {
+        text id PK
+        text name
+        text motto
+        jsonb default_filters
+        jsonb scoring_weights
+        int config_version
+    }
+
+    saved_presets {
+        uuid id PK
+        uuid user_id FK
+        text name
+        text base_persona_id FK
+        jsonb filters
+        jsonb scoring_overrides
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    tickers {
+        text symbol PK
+        text name
+        boolean active
+        timestamptz updated_at
+    }
+
+    option_contract_metadata {
+        text contract_symbol PK
+        text underlying_symbol FK
+        text option_type
+        numeric strike_price
+        date expiration_date
+        text style
+        text status
+        numeric open_interest
+        date open_interest_date
+        boolean tradable
+        timestamptz updated_at
+    }
+
+    option_market_snapshots {
+        text id PK
+        text contract_symbol FK
+        text feed
+        numeric bid
+        numeric ask
+        numeric midpoint
+        numeric delta
+        numeric theta
+        numeric gamma
+        numeric vega
+        numeric rho
+        numeric implied_volatility
+        int volume
+        timestamptz quote_time
+        timestamptz trade_time
+        timestamptz captured_at
+    }
+
+    underlying_technical_snapshots {
+        text id PK
+        text symbol FK
+        numeric price
+        numeric ma20
+        numeric ma50
+        numeric ma200
+        numeric rsi14
+        text trend
+        timestamptz as_of
+        timestamptz captured_at
+    }
+
+    analysis_requests {
+        uuid id PK
+        uuid user_id FK
+        text ticker
+        text persona_id
+        jsonb filters
+        text feed
+        text cache_status
+        timestamptz requested_at
+    }
+
+    ranked_contracts_cache {
+        text cache_key PK
+        uuid analysis_request_id FK
+        text ticker
+        text persona_id
+        jsonb response_payload
+        timestamptz market_data_as_of
+        timestamptz expires_at
+        timestamptz created_at
+    }
+```
+
+---
+
+## 3. Tables
+
+### 3.1 `strategy_personas`
+
+Stores system-defined persona defaults.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | text PK | `conservative_wheel`, `balanced_wheel`, `aggressive_yield`, etc. |
+| `name` | text | Display name. |
+| `motto` | text | UI subtitle. |
+| `default_filters` | jsonb | DTE, delta, liquidity, earnings behavior. |
+| `scoring_weights` | jsonb | Weight map for scoring engine. |
+| `config_version` | int | Increment when defaults change. |
+| `created_at` | timestamptz | Audit. |
+| `updated_at` | timestamptz | Audit. |
+
+### 3.2 `saved_presets`
+
+Stores reusable user filter presets.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid PK | Preset ID. |
+| `user_id` | uuid nullable | Nullable for single-user/private MVP if auth is deferred. |
+| `name` | text | User-defined preset name. |
+| `base_persona_id` | text FK | Persona used as baseline. |
+| `filters` | jsonb | Filter overrides. |
+| `scoring_overrides` | jsonb nullable | Future custom score weights. |
+| `created_at` | timestamptz | Audit. |
+| `updated_at` | timestamptz | Audit. |
+
+### 3.3 `option_contract_metadata`
+
+Stores relatively stable option contract data.
+
+| Column | Type | Notes |
+|---|---|---|
+| `contract_symbol` | text PK | Alpaca/OSI option symbol. |
+| `underlying_symbol` | text index | Equity ticker. |
+| `option_type` | text | `call` or `put`. |
+| `strike_price` | numeric | Contract strike. |
+| `expiration_date` | date | Expiration. |
+| `style` | text | Usually `american` for US equity options. |
+| `status` | text | `active` / `inactive`. |
+| `open_interest` | numeric nullable | From Alpaca contracts endpoint when available. |
+| `open_interest_date` | date nullable | OI freshness. |
+| `tradable` | boolean nullable | Contract tradability. |
+| `updated_at` | timestamptz | Metadata refresh time. |
+
+Indexes:
+
+```sql
+CREATE INDEX idx_option_contracts_underlying_type_exp
+ON option_contract_metadata (underlying_symbol, option_type, expiration_date);
+
+CREATE INDEX idx_option_contracts_strike
+ON option_contract_metadata (underlying_symbol, strike_price);
+```
+
+### 3.4 `option_market_snapshots`
+
+Optional persisted cache/audit table for market snapshots. Redis can serve hot cache; Postgres can retain recent snapshots for debugging and reproducibility.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | text PK | Hash of contract/feed/captured timestamp. |
+| `contract_symbol` | text FK | Option symbol. |
+| `feed` | text | `opra` or `indicative`. |
+| `bid` | numeric nullable | Latest quote bid. |
+| `ask` | numeric nullable | Latest quote ask. |
+| `midpoint` | numeric nullable | Calculated. |
+| `delta` | numeric nullable | Greek. |
+| `theta` | numeric nullable | Greek. |
+| `gamma` | numeric nullable | Greek. |
+| `vega` | numeric nullable | Greek. |
+| `rho` | numeric nullable | Greek. |
+| `implied_volatility` | numeric nullable | If available in payload/provider. |
+| `volume` | int nullable | If available. |
+| `quote_time` | timestamptz nullable | Source timestamp. |
+| `trade_time` | timestamptz nullable | Source timestamp. |
+| `captured_at` | timestamptz | App capture time. |
+
+Indexes:
+
+```sql
+CREATE INDEX idx_option_snapshots_contract_captured
+ON option_market_snapshots (contract_symbol, captured_at DESC);
+```
+
+### 3.5 `underlying_technical_snapshots`
+
+Stores computed underlying technical context.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | text PK | Symbol + as-of timestamp hash. |
+| `symbol` | text index | Ticker. |
+| `price` | numeric | Latest price used in analysis. |
+| `ma20` | numeric | 20-day moving average. |
+| `ma50` | numeric | 50-day moving average. |
+| `ma200` | numeric | 200-day moving average. |
+| `rsi14` | numeric | 14-day RSI. |
+| `trend` | text | `bullish`, `neutral`, `bearish`. |
+| `as_of` | timestamptz | Source-data timestamp. |
+| `captured_at` | timestamptz | App capture time. |
+
+---
+
+## 4. Domain DTOs
+
+### 4.1 `WheelCandidate`
+
+```ts
+interface WheelCandidate {
+  rank: number;
+  score: number;
+  contractSymbol: string;
+  optionType: 'put' | 'call';
+  strike: number;
+  expirationDate: string;
+  dte: number;
+  bid: number;
+  ask: number;
+  midpoint: number;
+  spread: number;
+  spreadPctOfMid: number;
+  premiumYield: number;
+  annualizedYield: number;
+  delta: number | null;
+  theta: number | null;
+  impliedVolatility: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  distanceFromSpotPct: number;
+  breakeven?: number;
+  calledAwayPrice?: number;
+  assignmentQuality?: QualityLabel;
+  upsideCapQuality?: QualityLabel;
+  liquidityQuality: QualityLabel;
+  warnings: Warning[];
+  scoreBreakdown: ScoreBreakdown;
+}
+```
+
+### 4.2 `QualityLabel`
+
+```ts
+type QualityLabel = 'excellent' | 'good' | 'acceptable' | 'weak' | 'poor' | 'unknown';
+```
+
+### 4.3 `Warning`
+
+```ts
+interface Warning {
+  type: 'earnings' | 'liquidity' | 'volatility' | 'trend' | 'upside_cap' | 'data_quality';
+  severity: 'info' | 'warning' | 'danger';
+  message: string;
+}
+```
+
+---
+
+## 5. Data Retention
+
+Recommended MVP retention:
+
+- Saved presets: permanent until deleted.
+- Analysis request metadata: 30–90 days.
+- Ranked response cache: expire by TTL, optionally retain 7 days for debugging.
+- Raw market snapshots: optional; retain 1–7 days if persisted.
+- Technical snapshots: retain 30 days.
+
+---
+
+## 6. Future Extensions
+
+Add later without breaking MVP model:
+
+- `portfolios`
+- `positions`
+- `watchlists`
+- `trade_journal_entries`
+- `assignment_prompts`
+- `alerts`
+- `explainability_events`
+
+---
+
+## 7. Data Model Acceptance Criteria
+
+- Saved presets can be persisted and reused.
+- Persona configs are versioned.
+- Option metadata and market snapshots are modeled separately.
+- Cached ranked responses include expiration/freshness metadata.
+- Future multi-user support does not require reworking saved preset ownership.
