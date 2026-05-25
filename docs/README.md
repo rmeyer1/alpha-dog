@@ -4,7 +4,7 @@ This documentation package translates the Wheel Strategy Dashboard BRD into impl
 
 ## Document Set
 
-- [`wheel_strategy_prd.md`](./wheel_strategy_prd.md) — Product requirements from the previous planning pass.
+- [`wheel_strategy_brd.md`](./wheel_strategy_brd.md) — Source business requirements document for the Wheel Strategy Dashboard.
 - [`wheel_strategy_tech_spec.md`](./wheel_strategy_tech_spec.md) — REST-first architecture, Alpaca integration, cache strategy, and system components.
 - [`wheel_strategy_api_spec.md`](./wheel_strategy_api_spec.md) — Internal REST API contracts for analysis, personas, saved presets, and refresh behavior.
 - [`wheel_strategy_data_model.md`](./wheel_strategy_data_model.md) — PostgreSQL-ready data model, cache/audit entities, and domain DTOs.
