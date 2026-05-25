@@ -1,0 +1,207 @@
+import type { PersonaConfig, PersonaId, WheelFilters } from "./types";
+
+const balancedFilters: WheelFilters = {
+  dteMin: 21,
+  dteMax: 30,
+  deltaMin: 0.15,
+  deltaMax: 0.3,
+  minPremiumYield: 0.01,
+  minVolume: 50,
+  minOpenInterest: 100,
+  maxSpreadPctOfMid: 0.2,
+  excludeEarnings: false,
+  includeWeeklies: true,
+};
+
+export const personas: PersonaConfig[] = [
+  {
+    id: "conservative_wheel",
+    name: "Conservative Wheel",
+    motto: "Own quality, collect patiently.",
+    default: false,
+    filters: {
+      ...balancedFilters,
+      dteMax: 45,
+      deltaMax: 0.2,
+      minPremiumYield: 0.0075,
+      maxSpreadPctOfMid: 0.12,
+      excludeEarnings: true,
+    },
+    scoringWeights: {
+      put: {
+        yield: 12,
+        deltaFit: 15,
+        dteFit: 10,
+        liquidity: 21,
+        technicalFit: 17,
+        assignmentQuality: 15,
+        eventRisk: 7,
+        volatilityRisk: 3,
+      },
+      call: {
+        yield: 12,
+        deltaFit: 15,
+        dteFit: 10,
+        liquidity: 21,
+        technicalFit: 15,
+        upsideCapQuality: 17,
+        eventRisk: 7,
+        volatilityRisk: 3,
+      },
+    },
+  },
+  {
+    id: "balanced_wheel",
+    name: "Balanced Wheel",
+    motto: "Income with discipline.",
+    default: true,
+    filters: balancedFilters,
+    scoringWeights: {
+      put: {
+        yield: 18,
+        deltaFit: 16,
+        dteFit: 10,
+        liquidity: 18,
+        technicalFit: 14,
+        assignmentQuality: 12,
+        eventRisk: 8,
+        volatilityRisk: 4,
+      },
+      call: {
+        yield: 18,
+        deltaFit: 16,
+        dteFit: 10,
+        liquidity: 18,
+        technicalFit: 12,
+        upsideCapQuality: 14,
+        eventRisk: 8,
+        volatilityRisk: 4,
+      },
+    },
+  },
+  {
+    id: "aggressive_yield",
+    name: "Aggressive Yield",
+    motto: "Harvest yield, accept assignment risk.",
+    default: false,
+    filters: {
+      ...balancedFilters,
+      dteMin: 7,
+      deltaMin: 0.25,
+      deltaMax: 0.4,
+      minPremiumYield: 0.0125,
+      maxSpreadPctOfMid: 0.25,
+    },
+    scoringWeights: {
+      put: {
+        yield: 25,
+        deltaFit: 14,
+        dteFit: 10,
+        liquidity: 18,
+        technicalFit: 10,
+        assignmentQuality: 7,
+        eventRisk: 5,
+        volatilityRisk: 3,
+        thetaEfficiency: 8,
+      },
+      call: {
+        yield: 25,
+        deltaFit: 14,
+        dteFit: 10,
+        liquidity: 18,
+        technicalFit: 8,
+        upsideCapQuality: 9,
+        eventRisk: 5,
+        volatilityRisk: 3,
+        thetaEfficiency: 8,
+      },
+    },
+  },
+  {
+    id: "weekly_theta",
+    name: "Weekly Theta",
+    motto: "Shorter duration, stricter fills.",
+    default: false,
+    filters: {
+      ...balancedFilters,
+      dteMin: 7,
+      dteMax: 14,
+      maxSpreadPctOfMid: 0.12,
+    },
+    scoringWeights: {
+      put: {
+        yield: 18,
+        deltaFit: 14,
+        dteFit: 14,
+        liquidity: 22,
+        technicalFit: 10,
+        assignmentQuality: 8,
+        eventRisk: 6,
+        volatilityRisk: 3,
+        thetaEfficiency: 5,
+      },
+      call: {
+        yield: 18,
+        deltaFit: 14,
+        dteFit: 14,
+        liquidity: 22,
+        technicalFit: 9,
+        upsideCapQuality: 9,
+        eventRisk: 6,
+        volatilityRisk: 3,
+        thetaEfficiency: 5,
+      },
+    },
+  },
+  {
+    id: "high_iv_hunter",
+    name: "High IV Hunter",
+    motto: "Separate premium from risk quality.",
+    default: false,
+    filters: {
+      ...balancedFilters,
+      deltaMin: 0.2,
+      deltaMax: 0.35,
+      minPremiumYield: 0.0125,
+      maxSpreadPctOfMid: 0.22,
+    },
+    scoringWeights: {
+      put: {
+        yield: 24,
+        deltaFit: 14,
+        dteFit: 10,
+        liquidity: 19,
+        technicalFit: 10,
+        assignmentQuality: 8,
+        eventRisk: 5,
+        volatilityRisk: 4,
+        thetaEfficiency: 6,
+      },
+      call: {
+        yield: 24,
+        deltaFit: 14,
+        dteFit: 10,
+        liquidity: 19,
+        technicalFit: 8,
+        upsideCapQuality: 10,
+        eventRisk: 5,
+        volatilityRisk: 4,
+        thetaEfficiency: 6,
+      },
+    },
+  },
+];
+
+export function getPersona(id: PersonaId) {
+  return personas.find((persona) => persona.id === id) ?? personas[1];
+}
+
+export function mergeFilters(
+  personaId: PersonaId,
+  filters?: Partial<WheelFilters>,
+) {
+  return {
+    ...getPersona(personaId).filters,
+    ...filters,
+  };
+}
