@@ -6,6 +6,7 @@ function NumericFilter({
   min,
   max,
   step,
+  prefix,
   suffix,
   onChange,
 }: {
@@ -14,6 +15,7 @@ function NumericFilter({
   min: number;
   max: number;
   step: number;
+  prefix?: string;
   suffix?: string;
   onChange: (value: number) => void;
 }) {
@@ -32,6 +34,9 @@ function NumericFilter({
           value={value}
         />
         <div className="flex h-10 items-center rounded-lg border border-white/10 bg-black/30 px-2">
+          {prefix ? (
+            <span className="pr-1 text-xs text-zinc-500">{prefix}</span>
+          ) : null}
           <input
             aria-label={label}
             className="w-full bg-transparent font-mono text-sm text-white outline-none"
@@ -170,6 +175,37 @@ export function FilterPanel({
           suffix="%"
           value={(filters.maxSpreadPctOfMid * 100).toFixed(1)}
         />
+        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="text-sm font-medium text-white">Spread filters</div>
+          <div className="mt-3 grid gap-4">
+            <NumericFilter
+              label="Minimum return on risk"
+              max={200}
+              min={0}
+              onChange={(value) => update("minSpreadReturnOnRisk", value / 100)}
+              step={1}
+              suffix="%"
+              value={(filters.minSpreadReturnOnRisk * 100).toFixed(0)}
+            />
+            <NumericFilter
+              label="Max spread width"
+              max={100}
+              min={1}
+              onChange={(value) => update("maxSpreadWidth", Math.round(value))}
+              prefix="$"
+              step={1}
+              value={filters.maxSpreadWidth}
+            />
+            <NumericFilter
+              label="Long legs to test"
+              max={10}
+              min={1}
+              onChange={(value) => update("spreadLongLegCount", Math.round(value))}
+              step={1}
+              value={filters.spreadLongLegCount}
+            />
+          </div>
+        </div>
         <div className="grid gap-2">
           <ToggleFilter
             checked={filters.excludeEarnings}

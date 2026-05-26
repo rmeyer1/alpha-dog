@@ -18,7 +18,7 @@ import {
   personaById,
 } from "./wheel-dashboard/persona-utils";
 import { PresetsPanel } from "./wheel-dashboard/presets-panel";
-import type { RequestState } from "./wheel-dashboard/types";
+import type { RequestState, StrategyTab } from "./wheel-dashboard/types";
 
 interface WheelDashboardProps {
   initialPersonas: PersonaConfig[];
@@ -32,7 +32,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [ticker, setTicker] = useState(defaultTicker);
   const [personaId, setPersonaId] = useState<PersonaId>(defaultPersona.id);
   const [filters, setFilters] = useState<WheelFilters>(defaultPersona.filters);
-  const [activeTab, setActiveTab] = useState<"puts" | "calls">("puts");
+  const [activeTab, setActiveTab] = useState<StrategyTab>("puts");
   const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +185,14 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
   const rows = activeTab === "puts"
     ? response?.shortPuts ?? []
-    : response?.coveredCalls ?? [];
+    : activeTab === "calls"
+      ? response?.coveredCalls ?? []
+      : [];
+  const spreadRows = activeTab === "putSpreads"
+    ? response?.putCreditSpreads ?? []
+    : activeTab === "callSpreads"
+      ? response?.callCreditSpreads ?? []
+      : [];
 
   return (
     <main className="min-h-screen bg-[#0b0c0d] text-zinc-100">
@@ -200,8 +207,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         ticker={ticker}
       />
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-5 md:px-6 xl:grid-cols-[1fr_320px] xl:px-8">
-        <section className="grid gap-4">
+      <div className="mx-auto grid max-w-[1600px] items-start gap-4 px-4 py-5 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:px-8">
+        <section className="grid min-w-0 content-start gap-4">
           <MarketOverview
             activePersona={activePersona}
             error={error}
@@ -216,6 +223,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             onTabChange={setActiveTab}
             requestState={requestState}
             rows={rows}
+            spreadRows={spreadRows}
             underlyingPrice={response?.underlying.price}
           />
         </section>

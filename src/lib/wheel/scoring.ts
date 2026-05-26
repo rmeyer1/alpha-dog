@@ -9,6 +9,7 @@ import type {
   ScoreBreakdown,
   ScoreWeights,
   UnderlyingContext,
+  VerticalSpreadCandidate,
   Warning,
   WheelCandidate,
   WheelFilters,
@@ -37,9 +38,13 @@ function yieldScore(candidate: WheelCandidate, filters: WheelFilters) {
 }
 
 function dteScore(candidate: WheelCandidate, filters: WheelFilters) {
+  return dteValueScore(candidate.dte, filters);
+}
+
+function dteValueScore(dte: number, filters: WheelFilters) {
   const midpoint = (filters.dteMin + filters.dteMax) / 2;
   const halfRange = Math.max((filters.dteMax - filters.dteMin) / 2, 1);
-  const distance = Math.abs(candidate.dte - midpoint);
+  const distance = Math.abs(dte - midpoint);
 
   return clamp(100 - (distance / halfRange) * 22, 65, 100);
 }
@@ -79,9 +84,7 @@ function eventRiskScore(filters: WheelFilters) {
   return filters.excludeEarnings ? 82 : 90;
 }
 
-function volatilityScore(candidate: WheelCandidate) {
-  const iv = candidate.impliedVolatility;
-
+function volatilityValueScore(iv: number | null) {
   if (iv == null) {
     return 65;
   }
@@ -97,12 +100,24 @@ function volatilityScore(candidate: WheelCandidate) {
   return 54;
 }
 
+function volatilityScore(candidate: WheelCandidate) {
+  return volatilityValueScore(candidate.impliedVolatility);
+}
+
 function thetaEfficiencyScore(candidate: WheelCandidate) {
   if (candidate.theta == null) {
     return 55;
   }
 
   return clamp(Math.abs(candidate.theta) * 900, 35, 100);
+}
+
+function spreadThetaEfficiencyScore(candidate: VerticalSpreadCandidate) {
+  if (candidate.netTheta == null) {
+    return 55;
+  }
+
+  return clamp(candidate.netTheta * 900, 35, 100);
 }
 
 function weightedScore(breakdown: ScoreBreakdown, weights: ScoreWeights) {
@@ -136,6 +151,71 @@ function warningForLiquidity(
         ? "Wide spread - expected edge may be reduced by poor fills."
         : "Liquidity is below the preferred threshold for this preset.",
   };
+}
+
+function warningForSpreadLiquidity(
+  quality: QualityLabel,
+  candidate: VerticalSpreadCandidate,
+): Warning | null {
+  if (quality !== "weak" && quality !== "poor") {
+    return null;
+  }
+
+  return {
+    type: "liquidity",
+    severity: quality === "poor" ? "danger" : "warning",
+    message:
+      candidate.spreadPctOfCredit > 0.35
+        ? "Wide leg markets may consume too much of the spread credit."
+        : "One or both legs are below the preferred liquidity threshold.",
+  };
+}
+
+function returnOnRiskScore(
+  candidate: VerticalSpreadCandidate,
+  filters: WheelFilters,
+) {
+  if (candidate.returnOnRisk < filters.minSpreadReturnOnRisk) {
+    return clamp(
+      (candidate.returnOnRisk / filters.minSpreadReturnOnRisk) * 55,
+    );
+  }
+
+  const overTarget =
+    (candidate.returnOnRisk - filters.minSpreadReturnOnRisk) /
+    Math.max(filters.minSpreadReturnOnRisk, 0.0001);
+
+  return clamp(72 + overTarget * 14, 0, 96);
+}
+
+function spreadTechnicalScore(
+  candidate: VerticalSpreadCandidate,
+  underlying: UnderlyingContext,
+) {
+  let score = 72;
+  const { movingAverages, trend, rsi14 } = underlying;
+
+  if (candidate.optionType === "put") {
+    if (trend === "bullish") score += 12;
+    if (trend === "bearish") score -= 24;
+    if (
+      movingAverages.ma50 != null &&
+      candidate.breakeven <= movingAverages.ma50
+    ) {
+      score += 8;
+    }
+    if (rsi14 != null && rsi14 <= 30) {
+      score -= 8;
+    }
+  } else {
+    if (trend === "bearish") score += 10;
+    if (trend === "bullish") score -= 18;
+    if (rsi14 != null && rsi14 >= 70) {
+      score += 6;
+    }
+  }
+
+  return clamp(score);
 }
 
 export function scoreCandidate(
@@ -195,6 +275,104 @@ export function scoreCandidate(
           type: "upside_cap" as const,
           severity: "warning" as const,
           message: "Call strike may cap upside too tightly for current trend.",
+        }
+      : null,
+  ].filter((warning): warning is Warning => warning != null);
+
+  const roundedBreakdown: ScoreBreakdown = {
+    yield: round(breakdown.yield, 1),
+    deltaFit: round(breakdown.deltaFit, 1),
+    dteFit: round(breakdown.dteFit, 1),
+    liquidity: round(breakdown.liquidity, 1),
+    technicalFit: round(breakdown.technicalFit, 1),
+    eventRisk: round(breakdown.eventRisk, 1),
+    volatilityRisk: round(breakdown.volatilityRisk, 1),
+    assignmentQuality:
+      breakdown.assignmentQuality == null
+        ? undefined
+        : round(breakdown.assignmentQuality, 1),
+    upsideCapQuality:
+      breakdown.upsideCapQuality == null
+        ? undefined
+        : round(breakdown.upsideCapQuality, 1),
+    thetaEfficiency:
+      breakdown.thetaEfficiency == null
+        ? undefined
+        : round(breakdown.thetaEfficiency, 1),
+  };
+
+  return {
+    ...candidate,
+    score: weightedScore(
+      breakdown,
+      persona.scoringWeights[candidate.optionType],
+    ),
+    scoreBreakdown: roundedBreakdown,
+    warnings,
+  };
+}
+
+export function scoreVerticalSpreadCandidate(
+  candidate: VerticalSpreadCandidate,
+  persona: PersonaConfig,
+  filters: WheelFilters,
+  underlying: UnderlyingContext,
+) {
+  const absDelta = Math.abs(candidate.shortDelta ?? 0);
+  const deltaFit = candidate.shortDelta == null
+    ? 45
+    : fitScore(absDelta, filters.deltaMin, filters.deltaMax, 0.2);
+  const definedRisk = qualityScore(candidate.definedRiskQuality);
+  const breakdown: ScoreBreakdown = {
+    yield: returnOnRiskScore(candidate, filters),
+    deltaFit,
+    dteFit: dteValueScore(candidate.dte, filters),
+    liquidity: qualityScore(candidate.liquidityQuality),
+    technicalFit: spreadTechnicalScore(candidate, underlying),
+    eventRisk: eventRiskScore(filters),
+    volatilityRisk: volatilityValueScore(candidate.impliedVolatility),
+    thetaEfficiency: spreadThetaEfficiencyScore(candidate),
+  };
+
+  if (candidate.optionType === "put") {
+    breakdown.assignmentQuality = definedRisk;
+  } else {
+    breakdown.upsideCapQuality = definedRisk;
+  }
+
+  const warnings = [
+    warningForSpreadLiquidity(candidate.liquidityQuality, candidate),
+    candidate.definedRiskQuality === "weak" ||
+    candidate.definedRiskQuality === "poor"
+      ? {
+          type: "liquidity" as const,
+          severity: candidate.definedRiskQuality === "poor" ? "danger" as const : "warning" as const,
+          message:
+            "Defined-risk reward is thin for the breakeven distance and max loss.",
+        }
+      : null,
+    candidate.impliedVolatility != null && candidate.impliedVolatility >= 0.7
+      ? {
+          type: "volatility" as const,
+          severity: "warning" as const,
+          message:
+            "High IV - credit is richer, but expected move risk is elevated.",
+        }
+      : null,
+    candidate.optionType === "put" && underlying.trend === "bearish"
+      ? {
+          type: "trend" as const,
+          severity: "warning" as const,
+          message:
+            "Bearish trend increases put spread pressure before expiration.",
+        }
+      : null,
+    candidate.optionType === "call" && underlying.trend === "bullish"
+      ? {
+          type: "trend" as const,
+          severity: "warning" as const,
+          message:
+            "Bullish trend increases call spread pressure before expiration.",
         }
       : null,
   ].filter((warning): warning is Warning => warning != null);

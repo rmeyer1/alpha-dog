@@ -1,9 +1,9 @@
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { getLiveWheelMarketData } from "@/lib/alpaca/client";
-import { buildCandidate } from "./calculations";
+import { buildCandidate, buildVerticalSpreads } from "./calculations";
 import { getDemoContracts, getDemoUnderlying } from "./mock-data";
 import { getPersona, mergeFilters } from "./personas";
-import { scoreCandidate } from "./scoring";
+import { scoreCandidate, scoreVerticalSpreadCandidate } from "./scoring";
 import type {
   DataFeed,
   PersonaId,
@@ -97,6 +97,18 @@ export async function analyzeWheelCandidates(
   const coveredCalls = withRanks(
     candidates.filter((candidate) => candidate.optionType === "call"),
   ).slice(0, resultLimit);
+  const putCreditSpreads = withRanks(
+    buildVerticalSpreads(rawContracts, underlying, filters, "put", now).map(
+      (candidate) =>
+        scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
+    ),
+  ).slice(0, resultLimit);
+  const callCreditSpreads = withRanks(
+    buildVerticalSpreads(rawContracts, underlying, filters, "call", now).map(
+      (candidate) =>
+        scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
+    ),
+  ).slice(0, resultLimit);
 
   return {
     ticker,
@@ -114,9 +126,13 @@ export async function analyzeWheelCandidates(
     },
     shortPuts,
     coveredCalls,
+    putCreditSpreads,
+    callCreditSpreads,
     warnings: globalWarnings(feed, env.EARNINGS_PROVIDER_ENABLED),
     errors:
-      candidates.length === 0
+      candidates.length === 0 &&
+      putCreditSpreads.length === 0 &&
+      callCreditSpreads.length === 0
         ? ["No contracts matched the selected ticker, persona, and filters."]
         : [],
   };

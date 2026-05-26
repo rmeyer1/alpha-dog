@@ -24,7 +24,7 @@ export function MarketOverview({
   ticker: string;
 }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="rounded-lg border border-white/10 bg-[#151718] p-5">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
           <div>

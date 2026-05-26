@@ -26,6 +26,9 @@ export interface WheelFilters {
   minVolume: number;
   minOpenInterest: number;
   maxSpreadPctOfMid: number;
+  minSpreadReturnOnRisk: number;
+  maxSpreadWidth: number;
+  spreadLongLegCount: number;
   excludeEarnings: boolean;
   includeWeeklies: boolean;
 }
@@ -137,6 +140,53 @@ export interface WheelCandidate {
   scoreBreakdown: ScoreBreakdown;
 }
 
+export type VerticalSpreadStrategy =
+  | "put_credit_spread"
+  | "call_credit_spread";
+
+export interface SpreadLeg {
+  contractSymbol: string;
+  strike: number;
+  bid: number;
+  ask: number;
+  midpoint: number;
+  delta: number | null;
+  theta: number | null;
+  impliedVolatility: number | null;
+  volume: number | null;
+  openInterest: number | null;
+}
+
+export interface VerticalSpreadCandidate {
+  rank: number;
+  score: number;
+  id: string;
+  strategy: VerticalSpreadStrategy;
+  optionType: OptionType;
+  shortLeg: SpreadLeg;
+  longLeg: SpreadLeg;
+  expirationDate: string;
+  dte: number;
+  width: number;
+  netCredit: number;
+  maxLoss: number;
+  returnOnRisk: number;
+  annualizedReturnOnRisk: number;
+  breakeven: number;
+  shortDelta: number | null;
+  netDelta: number | null;
+  netTheta: number | null;
+  impliedVolatility: number | null;
+  volume: number | null;
+  openInterest: number | null;
+  distanceFromSpotPct: number;
+  spreadPctOfCredit: number;
+  liquidityQuality: QualityLabel;
+  definedRiskQuality: QualityLabel;
+  warnings: Warning[];
+  scoreBreakdown: ScoreBreakdown;
+}
+
 export interface WheelAnalysisRequest {
   ticker: string;
   persona: PersonaId;
@@ -157,6 +207,8 @@ export interface WheelAnalysisResponse {
   };
   shortPuts: WheelCandidate[];
   coveredCalls: WheelCandidate[];
+  putCreditSpreads: VerticalSpreadCandidate[];
+  callCreditSpreads: VerticalSpreadCandidate[];
   warnings: Warning[];
   errors: string[];
 }
