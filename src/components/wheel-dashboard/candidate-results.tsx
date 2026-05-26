@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { WheelCandidate } from "@/lib/wheel/types";
+import type { VerticalSpreadCandidate, WheelCandidate } from "@/lib/wheel/types";
 import { CandidateDetailDrawer } from "./candidate-detail-drawer";
 import { CandidateMobileCards } from "./candidate-mobile-cards";
 import { CandidateTable } from "./candidate-table";
-import type { RequestState } from "./types";
-
-type ActiveTab = "puts" | "calls";
+import { SpreadDetailDrawer } from "./spread-detail-drawer";
+import { SpreadMobileCards } from "./spread-mobile-cards";
+import { SpreadTable } from "./spread-table";
+import type { RequestState, StrategyTab } from "./types";
 
 function CandidateRows({
   rows,
@@ -66,23 +67,79 @@ function CandidateRows({
   );
 }
 
+function SpreadRows({ rows }: { rows: VerticalSpreadCandidate[] }) {
+  const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<VerticalSpreadCandidate | null>(null);
+
+  function toggleWarnings(id: string) {
+    setExpandedWarnings((current) => {
+      const next = new Set(current);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
+      return next;
+    });
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+        No credit spreads matched this preset. Try widening spread width,
+        lowering return-on-risk, or testing more long legs.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <SpreadTable
+        expandedWarnings={expandedWarnings}
+        onSelectCandidate={setSelectedCandidate}
+        onToggleWarnings={toggleWarnings}
+        rows={rows}
+      />
+      <SpreadMobileCards
+        onSelectCandidate={setSelectedCandidate}
+        rows={rows}
+      />
+      <SpreadDetailDrawer
+        candidate={selectedCandidate}
+        onClose={() => setSelectedCandidate(null)}
+      />
+    </>
+  );
+}
+
 export function CandidateResults({
   activeTab,
   onTabChange,
   requestState,
+  spreadRows,
   rows,
   underlyingPrice,
 }: {
-  activeTab: ActiveTab;
-  onTabChange: (tab: ActiveTab) => void;
+  activeTab: StrategyTab;
+  onTabChange: (tab: StrategyTab) => void;
   requestState: RequestState;
+  spreadRows: VerticalSpreadCandidate[];
   rows: WheelCandidate[];
   underlyingPrice: number | null | undefined;
 }) {
+  const isSpreadTab = activeTab === "putSpreads" || activeTab === "callSpreads";
+  const rowCount = isSpreadTab ? spreadRows.length : rows.length;
+
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-      <div className="flex flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex w-fit rounded-lg border border-white/10 bg-black/20 p-1">
+    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
+      <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="max-w-full overflow-x-auto">
+          <div className="inline-flex w-max rounded-lg border border-white/10 bg-black/20 p-1">
           <button
             className={`rounded-md px-4 py-2 text-sm font-medium ${
               activeTab === "puts"
@@ -105,14 +162,41 @@ export function CandidateResults({
           >
             Covered Calls
           </button>
+          <button
+            className={`rounded-md px-4 py-2 text-sm font-medium ${
+              activeTab === "putSpreads"
+                ? "bg-emerald-300 text-black"
+                : "text-zinc-300 hover:bg-white/[0.06]"
+            }`}
+            onClick={() => onTabChange("putSpreads")}
+            type="button"
+          >
+            Put Credit Spreads
+          </button>
+          <button
+            className={`rounded-md px-4 py-2 text-sm font-medium ${
+              activeTab === "callSpreads"
+                ? "bg-emerald-300 text-black"
+                : "text-zinc-300 hover:bg-white/[0.06]"
+            }`}
+            onClick={() => onTabChange("callSpreads")}
+            type="button"
+          >
+            Call Credit Spreads
+          </button>
+          </div>
         </div>
-        <div className="text-sm text-zinc-400">
+        <div className="shrink-0 text-sm text-zinc-400">
           {requestState === "loading" || requestState === "refreshing"
             ? "Loading candidates..."
-            : `${rows.length} ranked candidates`}
+            : `${rowCount} ranked candidates`}
         </div>
       </div>
-      <CandidateRows rows={rows} underlyingPrice={underlyingPrice} />
+      {isSpreadTab ? (
+        <SpreadRows rows={spreadRows} />
+      ) : (
+        <CandidateRows rows={rows} underlyingPrice={underlyingPrice} />
+      )}
     </section>
   );
 }

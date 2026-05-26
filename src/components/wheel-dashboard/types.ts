@@ -5,3 +5,5 @@ export type RequestState =
   | "successStale"
   | "refreshing"
   | "errorNoCache";
+
+export type StrategyTab = "puts" | "calls" | "putSpreads" | "callSpreads";

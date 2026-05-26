@@ -18,6 +18,9 @@ export const filtersSchema = z
     minVolume: z.number().int().min(0).optional(),
     minOpenInterest: z.number().int().min(0).optional(),
     maxSpreadPctOfMid: z.number().min(0).max(10).optional(),
+    minSpreadReturnOnRisk: z.number().min(0).max(5).optional(),
+    maxSpreadWidth: z.number().min(1).max(100).optional(),
+    spreadLongLegCount: z.number().int().min(1).max(10).optional(),
     excludeEarnings: z.boolean().optional(),
     includeWeeklies: z.boolean().optional(),
   })

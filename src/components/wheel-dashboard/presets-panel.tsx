@@ -24,6 +24,8 @@ function PresetSummary({
       Delta {presetFilters.deltaMin}-{presetFilters.deltaMax}
       {" · "}
       Min {formatPercent(presetFilters.minPremiumYield)}
+      {" · "}
+      Width ${presetFilters.maxSpreadWidth}
     </div>
   );
 }

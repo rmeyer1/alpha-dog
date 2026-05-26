@@ -9,6 +9,9 @@ const balancedFilters: WheelFilters = {
   minVolume: 50,
   minOpenInterest: 100,
   maxSpreadPctOfMid: 0.2,
+  minSpreadReturnOnRisk: 0.2,
+  maxSpreadWidth: 10,
+  spreadLongLegCount: 3,
   excludeEarnings: false,
   includeWeeklies: true,
 };
