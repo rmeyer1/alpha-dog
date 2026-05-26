@@ -11,6 +11,7 @@ import {
   Search,
   ShieldAlert,
   Trash2,
+  X,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import type {
@@ -155,10 +156,116 @@ function CompactWarnings({
   );
 }
 
+function DetailMetric({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+      <div className="text-xs text-zinc-500">{label}</div>
+      <div className={`mt-1 font-mono text-sm text-zinc-100 ${className}`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function MobileCandidateOverlay({
+  candidate,
+  onClose,
+}: {
+  candidate: WheelCandidate | null;
+  onClose: () => void;
+}) {
+  if (!candidate) {
+    return null;
+  }
+
+  const quality =
+    candidate.optionType === "put"
+      ? candidate.assignmentQuality
+      : candidate.upsideCapQuality;
+
+  return (
+    <div
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm lg:hidden"
+      role="dialog"
+    >
+      <button
+        aria-label="Close contract details"
+        className="absolute inset-0 cursor-default"
+        onClick={onClose}
+        type="button"
+      />
+      <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase text-zinc-500">
+              #{candidate.rank} · {candidate.optionType === "put" ? "Short Put" : "Covered Call"}
+            </div>
+            <h2 className="mt-1 font-mono text-2xl font-semibold text-white">
+              {formatCurrency(candidate.strike)}
+            </h2>
+            <p className="mt-1 text-sm text-zinc-400">
+              {candidate.expirationDate} · {candidate.dte} DTE
+            </p>
+          </div>
+          <button
+            aria-label="Close contract details"
+            className="flex size-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-200"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <DetailMetric label="Premium" value={formatCurrency(candidate.midpoint)} />
+          <DetailMetric label="Premium Yield" value={formatPercent(candidate.premiumYield)} />
+          <DetailMetric label="Annualized" value={formatPercent(candidate.annualizedYield)} />
+          <DetailMetric label="Delta" value={candidate.delta?.toFixed(2) ?? "-"} />
+          <DetailMetric label="Theta" value={candidate.theta?.toFixed(3) ?? "-"} />
+          <DetailMetric label="Expiration" value={candidate.expirationDate} />
+          <DetailMetric label="DTE" value={String(candidate.dte)} />
+          <DetailMetric label="IV" value={formatPercent(candidate.impliedVolatility)} />
+          <DetailMetric label="Volume" value={String(candidate.volume ?? "-")} />
+          <DetailMetric label="Open Interest" value={String(candidate.openInterest ?? "-")} />
+          <DetailMetric
+            className={qualityClass(quality ?? "unknown")}
+            label="Quality"
+            value={quality ?? "unknown"}
+          />
+          <DetailMetric
+            label="Bid/Ask"
+            value={`${formatCurrency(candidate.bid)}/${formatCurrency(candidate.ask)}`}
+          />
+        </div>
+
+        <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
+            <AlertTriangle className="size-4 text-amber-200" />
+            Warnings
+          </div>
+          <WarningBadges warnings={candidate.warnings} />
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
   const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(
     () => new Set(),
   );
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<WheelCandidate | null>(null);
 
   function toggleWarnings(contractSymbol: string) {
     setExpandedWarnings((current) => {
@@ -277,8 +384,17 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
       <div className="grid gap-3 p-3 lg:hidden">
         {rows.map((row) => (
           <article
-            className="rounded-lg border border-white/10 bg-black/20 p-4"
+            className="cursor-pointer rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
             key={row.contractSymbol}
+            onClick={() => setSelectedCandidate(row)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setSelectedCandidate(row);
+              }
+            }}
+            role="button"
+            tabIndex={0}
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -316,15 +432,23 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
               </div>
             </div>
             <div className="mt-4">
-              <CompactWarnings
-                expanded={expandedWarnings.has(row.contractSymbol)}
-                onToggle={() => toggleWarnings(row.contractSymbol)}
-                warnings={row.warnings}
-              />
+              {row.warnings.length > 0 ? (
+                <span className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${warningTone(row.warnings)}`}>
+                  <AlertTriangle className="size-3" />
+                  {row.warnings.length}{" "}
+                  {row.warnings.length === 1 ? "warning" : "warnings"}
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500">No warnings</span>
+              )}
             </div>
           </article>
         ))}
       </div>
+      <MobileCandidateOverlay
+        candidate={selectedCandidate}
+        onClose={() => setSelectedCandidate(null)}
+      />
     </>
   );
 }
@@ -626,8 +750,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           </div>
 
           <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-            <div className="flex flex-col justify-between gap-3 border-b border-white/10 p-3 md:flex-row md:items-center">
-              <div className="inline-flex rounded-lg border border-white/10 bg-black/20 p-1">
+            <div className="flex flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="inline-flex w-fit rounded-lg border border-white/10 bg-black/20 p-1">
                 <button
                   className={`rounded-md px-4 py-2 text-sm font-medium ${
                     activeTab === "puts"
