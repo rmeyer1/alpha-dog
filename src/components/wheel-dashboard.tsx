@@ -55,6 +55,26 @@ function formatPercent(value: number | null | undefined) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatCompactNumber(value: number | null | undefined) {
+  if (value == null) return "-";
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatScoreLabel(value: number | null | undefined) {
+  if (value == null) return "-";
+
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function contractValue(value: number | null | undefined) {
+  if (value == null) return "-";
+
+  return formatCurrency(value * 100);
+}
+
 function badgeClass(severity: Warning["severity"]) {
   if (severity === "danger") {
     return "border-red-400/40 bg-red-500/15 text-red-100";
@@ -109,6 +129,50 @@ function warningTone(warnings: Warning[]) {
   }
 
   return "border-cyan-300/30 bg-cyan-400/10 text-cyan-100";
+}
+
+function personaById(
+  personas: PersonaConfig[],
+  personaId: PersonaId,
+  fallback: PersonaConfig,
+) {
+  return personas.find((persona) => persona.id === personaId) ?? fallback;
+}
+
+function mergePresetFilters(
+  personas: PersonaConfig[],
+  preset: SavedPreset,
+  fallback: PersonaConfig,
+) {
+  return {
+    ...personaById(personas, preset.basePersona, fallback).filters,
+    ...preset.filters,
+  };
+}
+
+function scoreBreakdownRows(candidate: WheelCandidate) {
+  const breakdown = candidate.scoreBreakdown;
+  const rows: Array<readonly [string, number | undefined]> = [
+    ["Yield", breakdown.yield],
+    ["Delta fit", breakdown.deltaFit],
+    ["DTE fit", breakdown.dteFit],
+    ["Liquidity", breakdown.liquidity],
+    ["Technical fit", breakdown.technicalFit],
+    ["Event risk", breakdown.eventRisk],
+    ["Volatility risk", breakdown.volatilityRisk],
+    ["Theta efficiency", breakdown.thetaEfficiency],
+  ];
+
+  const qualityLabel =
+    candidate.optionType === "put" ? "Assignment quality" : "Upside cap quality";
+  const qualityValue =
+    candidate.optionType === "put"
+      ? breakdown.assignmentQuality
+      : breakdown.upsideCapQuality;
+
+  return [...rows, [qualityLabel, qualityValue] as const].filter(
+    (row): row is readonly [string, number] => row[1] != null,
+  );
 }
 
 function CompactWarnings({
@@ -175,11 +239,13 @@ function DetailMetric({
   );
 }
 
-function MobileCandidateOverlay({
+function CandidateDetailDrawer({
   candidate,
+  underlyingPrice,
   onClose,
 }: {
   candidate: WheelCandidate | null;
+  underlyingPrice: number | null | undefined;
   onClose: () => void;
 }) {
   if (!candidate) {
@@ -190,11 +256,21 @@ function MobileCandidateOverlay({
     candidate.optionType === "put"
       ? candidate.assignmentQuality
       : candidate.upsideCapQuality;
+  const assignmentOrCalledAway =
+    candidate.optionType === "put" ? candidate.strike : candidate.calledAwayPrice;
+  const maxCashRequired =
+    candidate.optionType === "put"
+      ? candidate.strike * 100
+      : underlyingPrice == null
+        ? null
+        : underlyingPrice * 100;
+  const breakdownRows = scoreBreakdownRows(candidate);
 
   return (
     <div
+      aria-label="Contract ranking details"
       aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm lg:hidden"
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
       role="dialog"
     >
       <button
@@ -203,7 +279,7 @@ function MobileCandidateOverlay({
         onClick={onClose}
         type="button"
       />
-      <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl">
+      <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:inset-y-0 lg:right-0 lg:left-auto lg:max-h-none lg:w-[440px] lg:rounded-l-xl lg:rounded-tr-none lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-xs uppercase text-zinc-500">
@@ -235,8 +311,11 @@ function MobileCandidateOverlay({
           <DetailMetric label="Expiration" value={candidate.expirationDate} />
           <DetailMetric label="DTE" value={String(candidate.dte)} />
           <DetailMetric label="IV" value={formatPercent(candidate.impliedVolatility)} />
-          <DetailMetric label="Volume" value={String(candidate.volume ?? "-")} />
-          <DetailMetric label="Open Interest" value={String(candidate.openInterest ?? "-")} />
+          <DetailMetric label="Volume" value={formatCompactNumber(candidate.volume)} />
+          <DetailMetric
+            label="Open Interest"
+            value={formatCompactNumber(candidate.openInterest)}
+          />
           <DetailMetric
             className={qualityClass(quality ?? "unknown")}
             label="Quality"
@@ -255,12 +334,66 @@ function MobileCandidateOverlay({
           </div>
           <WarningBadges warnings={candidate.warnings} />
         </div>
+
+        <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
+            <BarChart3 className="size-4 text-emerald-200" />
+            Why this ranks here
+          </div>
+          <div className="grid gap-2">
+            {breakdownRows.map(([label, value]) => (
+              <div className="grid gap-1.5" key={label}>
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span className="text-zinc-400">{label}</span>
+                  <span className="font-mono text-zinc-100">
+                    {formatScoreLabel(value)}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full bg-emerald-300"
+                    style={{ width: `${Math.max(0, Math.min(value, 100))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <DetailMetric
+            label="Breakeven"
+            value={formatCurrency(candidate.breakeven)}
+          />
+          <DetailMetric
+            label={
+              candidate.optionType === "put"
+                ? "Assignment price"
+                : "Called-away price"
+            }
+            value={formatCurrency(assignmentOrCalledAway)}
+          />
+          <DetailMetric
+            label="Spread cost"
+            value={contractValue(candidate.spread)}
+          />
+          <DetailMetric
+            label="Max cash required"
+            value={formatCurrency(maxCashRequired)}
+          />
+        </div>
       </section>
     </div>
   );
 }
 
-function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
+function CandidateRows({
+  rows,
+  underlyingPrice,
+}: {
+  rows: WheelCandidate[];
+  underlyingPrice: number | null | undefined;
+}) {
   const [expandedWarnings, setExpandedWarnings] = useState<Set<string>>(
     () => new Set(),
   );
@@ -334,7 +467,13 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
                   </span>
                 </td>
                 <td className="px-4 py-3 font-mono">
-                  {formatCurrency(row.strike)}
+                  <button
+                    className="rounded-md text-left text-zinc-50 underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                    onClick={() => setSelectedCandidate(row)}
+                    type="button"
+                  >
+                    {formatCurrency(row.strike)}
+                  </button>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">
                   {row.expirationDate}
@@ -445,11 +584,221 @@ function CandidateRows({ rows }: { rows: WheelCandidate[] }) {
           </article>
         ))}
       </div>
-      <MobileCandidateOverlay
+      <CandidateDetailDrawer
         candidate={selectedCandidate}
+        underlyingPrice={underlyingPrice}
         onClose={() => setSelectedCandidate(null)}
       />
     </>
+  );
+}
+
+function NumericFilter({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number | string;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="grid gap-1.5 text-sm">
+      <span className="text-zinc-400">{label}</span>
+      <div className="grid grid-cols-[1fr_92px] items-center gap-2">
+        <input
+          aria-label={`${label} slider`}
+          className="accent-emerald-300"
+          max={max}
+          min={min}
+          onChange={(event) => onChange(Number(event.target.value))}
+          step={step}
+          type="range"
+          value={value}
+        />
+        <div className="flex h-10 items-center rounded-lg border border-white/10 bg-black/30 px-2">
+          <input
+            aria-label={label}
+            className="w-full bg-transparent font-mono text-sm text-white outline-none"
+            max={max}
+            min={min}
+            onChange={(event) => onChange(Number(event.target.value))}
+            step={step}
+            type="number"
+            value={value}
+          />
+          {suffix ? (
+            <span className="pl-1 text-xs text-zinc-500">{suffix}</span>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleFilter({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm">
+      <span className="text-zinc-300">{label}</span>
+      <input
+        checked={checked}
+        className="size-4 accent-emerald-300"
+        onChange={(event) => onChange(event.target.checked)}
+        type="checkbox"
+      />
+    </label>
+  );
+}
+
+function FilterPanel({
+  filters,
+  onChange,
+  onReset,
+}: {
+  filters: WheelFilters;
+  onChange: (filters: WheelFilters) => void;
+  onReset: () => void;
+}) {
+  function update<K extends keyof WheelFilters>(
+    key: K,
+    value: WheelFilters[K],
+  ) {
+    onChange({ ...filters, [key]: value });
+  }
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-white">Filters</h2>
+        <button
+          className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+          onClick={onReset}
+          type="button"
+        >
+          Reset
+        </button>
+      </div>
+      <div className="mt-4 grid gap-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+          <NumericFilter
+            label="DTE min"
+            max={365}
+            min={1}
+            onChange={(value) => update("dteMin", Math.round(value))}
+            step={1}
+            value={filters.dteMin}
+          />
+          <NumericFilter
+            label="DTE max"
+            max={730}
+            min={1}
+            onChange={(value) => update("dteMax", Math.round(value))}
+            step={1}
+            value={filters.dteMax}
+          />
+          <NumericFilter
+            label="Delta min"
+            max={1}
+            min={0}
+            onChange={(value) => update("deltaMin", value)}
+            step={0.01}
+            value={filters.deltaMin}
+          />
+          <NumericFilter
+            label="Delta max"
+            max={1}
+            min={0}
+            onChange={(value) => update("deltaMax", value)}
+            step={0.01}
+            value={filters.deltaMax}
+          />
+        </div>
+        <NumericFilter
+          label="Minimum premium yield"
+          max={10}
+          min={0}
+          onChange={(value) => update("minPremiumYield", value / 100)}
+          step={0.1}
+          suffix="%"
+          value={(filters.minPremiumYield * 100).toFixed(1)}
+        />
+        <NumericFilter
+          label="Minimum volume"
+          max={5000}
+          min={0}
+          onChange={(value) => update("minVolume", Math.round(value))}
+          step={10}
+          value={filters.minVolume}
+        />
+        <NumericFilter
+          label="Minimum open interest"
+          max={10000}
+          min={0}
+          onChange={(value) => update("minOpenInterest", Math.round(value))}
+          step={25}
+          value={filters.minOpenInterest}
+        />
+        <NumericFilter
+          label="Max spread / mid"
+          max={100}
+          min={0}
+          onChange={(value) => update("maxSpreadPctOfMid", value / 100)}
+          step={0.5}
+          suffix="%"
+          value={(filters.maxSpreadPctOfMid * 100).toFixed(1)}
+        />
+        <div className="grid gap-2">
+          <ToggleFilter
+            checked={filters.excludeEarnings}
+            label="Exclude earnings windows"
+            onChange={(checked) => update("excludeEarnings", checked)}
+          />
+          <ToggleFilter
+            checked={filters.includeWeeklies}
+            label="Include weeklies"
+            onChange={(checked) => update("includeWeeklies", checked)}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PresetSummary({
+  preset,
+  personas,
+  fallback,
+}: {
+  preset: SavedPreset;
+  personas: PersonaConfig[];
+  fallback: PersonaConfig;
+}) {
+  const presetFilters = mergePresetFilters(personas, preset, fallback);
+
+  return (
+    <div className="text-xs text-zinc-500">
+      DTE {presetFilters.dteMin}-{presetFilters.dteMax}
+      {" · "}
+      Delta {presetFilters.deltaMin}-{presetFilters.deltaMax}
+      {" · "}
+      Min {formatPercent(presetFilters.minPremiumYield)}
+    </div>
   );
 }
 
@@ -458,6 +807,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     initialPersonas[0];
   const [ticker, setTicker] = useState(defaultTicker);
   const [personaId, setPersonaId] = useState<PersonaId>(defaultPersona.id);
+  const [filters, setFilters] = useState<WheelFilters>(defaultPersona.filters);
   const [activeTab, setActiveTab] = useState<"puts" | "calls">("puts");
   const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("loading");
@@ -490,6 +840,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         body: JSON.stringify({
           ticker,
           persona: personaId,
+          filters,
           resultLimit: 25,
           forceRefresh,
         }),
@@ -517,7 +868,6 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   }
 
   async function savePreset() {
-    const filters: Partial<WheelFilters> = activePersona.filters;
     const apiResponse = await fetch("/api/presets", {
       method: "POST",
       headers: {
@@ -542,7 +892,15 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
   function loadPreset(preset: SavedPreset) {
     setPersonaId(preset.basePersona);
+    setFilters(mergePresetFilters(initialPersonas, preset, defaultPersona));
     setPresetName(preset.name);
+  }
+
+  function selectPersona(nextPersonaId: PersonaId) {
+    const nextPersona = personaById(initialPersonas, nextPersonaId, defaultPersona);
+
+    setPersonaId(nextPersona.id);
+    setFilters(nextPersona.filters);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -565,6 +923,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             body: JSON.stringify({
               ticker: defaultTicker,
               persona: defaultPersona.id,
+              filters: defaultPersona.filters,
               resultLimit: 25,
               forceRefresh: false,
             }),
@@ -600,7 +959,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     return () => {
       cancelled = true;
     };
-  }, [defaultPersona.id]);
+  }, [defaultPersona.filters, defaultPersona.id]);
 
   const rows = activeTab === "puts"
     ? response?.shortPuts ?? []
@@ -651,7 +1010,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
               <span className="text-zinc-400">Strategy persona</span>
               <select
                 className="h-11 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-                onChange={(event) => setPersonaId(event.target.value as PersonaId)}
+                onChange={(event) => selectPersona(event.target.value as PersonaId)}
                 value={personaId}
               >
                 {initialPersonas.map((persona) => (
@@ -720,13 +1079,13 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                   <p className="mt-1 text-sm text-zinc-400">{activePersona.motto}</p>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-zinc-300">
                     <span className="rounded-md bg-white/[0.04] px-2 py-1">
-                      DTE {activePersona.filters.dteMin}-{activePersona.filters.dteMax}
+                      DTE {filters.dteMin}-{filters.dteMax}
                     </span>
                     <span className="rounded-md bg-white/[0.04] px-2 py-1">
-                      Delta {activePersona.filters.deltaMin}-{activePersona.filters.deltaMax}
+                      Delta {filters.deltaMin}-{filters.deltaMax}
                     </span>
                     <span className="rounded-md bg-white/[0.04] px-2 py-1">
-                      Min {formatPercent(activePersona.filters.minPremiumYield)}
+                      Min {formatPercent(filters.minPremiumYield)}
                     </span>
                   </div>
                 </div>
@@ -781,11 +1140,20 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                   : `${rows.length} ranked candidates`}
               </div>
             </div>
-            <CandidateRows rows={rows} />
+            <CandidateRows
+              rows={rows}
+              underlyingPrice={response?.underlying.price}
+            />
           </section>
         </section>
 
         <aside className="grid content-start gap-4">
+          <FilterPanel
+            filters={filters}
+            onChange={setFilters}
+            onReset={() => setFilters(activePersona.filters)}
+          />
+
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
             <h2 className="text-sm font-semibold text-white">Saved Presets</h2>
             <div className="mt-4 grid gap-3">
@@ -802,8 +1170,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                 onClick={() => void savePreset()}
                 type="button"
               >
-                <Save className="size-4" />
-                Save Current Persona
+              <Save className="size-4" />
+                Save Current Filters
               </button>
             </div>
             <div className="mt-5 grid gap-2">
@@ -823,9 +1191,11 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                       <div className="text-sm font-medium text-white">
                         {preset.name}
                       </div>
-                      <div className="text-xs text-zinc-500">
-                        {preset.basePersona.replaceAll("_", " ")}
-                      </div>
+                      <PresetSummary
+                        fallback={defaultPersona}
+                        personas={initialPersonas}
+                        preset={preset}
+                      />
                     </button>
                     <button
                       aria-label={`Delete ${preset.name}`}
