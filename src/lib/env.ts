@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+const emptyStringToUndefined = (value: unknown) =>
+  value === "" ? undefined : value;
+
 const envSchema = z.object({
   APCA_API_KEY_ID: z.string().optional(),
   APCA_API_SECRET_KEY: z.string().optional(),
@@ -12,6 +15,21 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://paper-api.alpaca.markets"),
+  SIGNAL_SCRIBE_SUPABASE_URL: z
+    .preprocess(emptyStringToUndefined, z.string().url().optional())
+    .default("https://kauwcybbiwsmmljovmit.supabase.co"),
+  SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
+  SUPABASE_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.string().url().optional(),
+  ),
+  SUPABASE_SERVICE_ROLE_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
   EARNINGS_PROVIDER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

@@ -1,4 +1,5 @@
 import { AlertTriangle, Clock3 } from "lucide-react";
+import Link from "next/link";
 import type {
   PersonaConfig,
   WheelAnalysisResponse,
@@ -35,9 +36,12 @@ export function MarketOverview({
                 : requestState}
             </div>
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
-              <h2 className="font-mono text-4xl font-semibold text-white">
+              <Link
+                className="font-mono text-4xl font-semibold text-white underline decoration-cyan-300/40 underline-offset-4 transition hover:text-cyan-100"
+                href={`/company/${encodeURIComponent(response?.underlying.symbol ?? ticker)}`}
+              >
                 {response?.underlying.symbol ?? ticker}
-              </h2>
+              </Link>
               <span className="font-mono text-3xl text-zinc-100">
                 {formatCurrency(response?.underlying.price)}
               </span>
