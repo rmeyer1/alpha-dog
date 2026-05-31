@@ -14,15 +14,17 @@ import type { Metadata } from "next";
 import {
   getCompanyProfile,
   type AlpacaBar,
-  type SignalScribeAnalysis,
   type SignalScribeFinancialFact,
   type SignalScribeProfile,
 } from "@/lib/company-profile";
 import {
+  FilingAnalysisCards,
+  FilingSectionCards,
+} from "./filing-intelligence";
+import {
   formatCompactNumber,
   formatCurrency,
   formatPercent,
-  formatScoreLabel,
 } from "@/components/wheel-dashboard/formatters";
 
 export async function generateMetadata({
@@ -88,38 +90,6 @@ function formatMetricValue(value: number | string | null, unit: string | null) {
     notation: Math.abs(numericValue) >= 1_000_000 ? "compact" : "standard",
     maximumFractionDigits: 2,
   }).format(numericValue)}${unit && unit !== "pure" ? ` ${unit}` : ""}`;
-}
-
-function formatNullableScore(value: number | string | null) {
-  if (value == null) {
-    return "-";
-  }
-
-  const numericValue = Number(value);
-
-  return Number.isFinite(numericValue) ? formatScoreLabel(numericValue) : "-";
-}
-
-function textFromUnknown(value: unknown) {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const preferred =
-      record.finding ??
-      record.summary ??
-      record.text ??
-      record.description ??
-      record.title;
-
-    if (typeof preferred === "string") {
-      return preferred;
-    }
-  }
-
-  return JSON.stringify(value);
 }
 
 function StatusPill({
@@ -320,81 +290,6 @@ function SectionShell({
       </div>
       {children}
     </section>
-  );
-}
-
-function AnalysisList({ analyses }: { analyses: SignalScribeAnalysis[] }) {
-  if (analyses.length === 0) {
-    return <p className="text-sm text-zinc-500">No saved filing analysis.</p>;
-  }
-
-  return (
-    <div className="grid gap-3">
-      {analyses.slice(0, 3).map((analysis) => (
-        <article
-          className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-4"
-          key={analysis.id}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusPill>{analysis.form_type}</StatusPill>
-              <span className="font-mono text-xs text-zinc-500">
-                {analysis.accession_number}
-              </span>
-            </div>
-            <span className="text-xs text-zinc-500">
-              {formatDateTime(analysis.created_at)}
-            </span>
-          </div>
-          <p className="mt-3 break-words text-sm leading-6 text-zinc-300 [overflow-wrap:anywhere]">
-            {analysis.summary}
-          </p>
-          {analysis.business_summary ? (
-            <p className="mt-2 break-words text-sm leading-6 text-zinc-400 [overflow-wrap:anywhere]">
-              {analysis.business_summary}
-            </p>
-          ) : null}
-          <div className="mt-3 flex flex-wrap gap-2">
-            <StatusPill tone="warning">
-              Risk {formatNullableScore(analysis.risk_score)}
-            </StatusPill>
-            <StatusPill tone="good">
-              Quality {formatNullableScore(analysis.quality_score)}
-            </StatusPill>
-            {analysis.management_tone ? (
-              <StatusPill>{analysis.management_tone}</StatusPill>
-            ) : null}
-          </div>
-          <UnknownList title="Key findings" values={analysis.key_findings} />
-          <UnknownList title="Catalysts" values={analysis.catalysts} />
-          <UnknownList title="Red flags" values={analysis.red_flags} />
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function UnknownList({ title, values }: { title: string; values: unknown[] }) {
-  const displayValues = values.slice(0, 4).map(textFromUnknown).filter(Boolean);
-
-  if (displayValues.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="mt-3 min-w-0">
-      <div className="text-xs font-medium uppercase text-zinc-500">{title}</div>
-      <ul className="mt-2 grid min-w-0 gap-1.5 text-sm leading-6 text-zinc-300">
-        {displayValues.map((value) => (
-          <li
-            className="min-w-0 break-words rounded-md bg-white/[0.04] px-3 py-2 [overflow-wrap:anywhere]"
-            key={value}
-          >
-            {value}
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -628,7 +523,10 @@ export default async function CompanyProfilePage({
               icon={<FileText className="size-4 text-cyan-200" />}
               title="SEC Filing Analysis"
             >
-              <AnalysisList analyses={signalScribe.analyses} />
+              <FilingAnalysisCards
+                analyses={signalScribe.analyses}
+                filings={signalScribe.filings}
+              />
             </SectionShell>
 
             <SectionShell
@@ -703,25 +601,7 @@ export default async function CompanyProfilePage({
               icon={<ShieldAlert className="size-4 text-amber-200" />}
               title="Filing Sections"
             >
-              {signalScribe.sections.length === 0 ? (
-                <p className="text-sm text-zinc-500">No saved sections found.</p>
-              ) : (
-                <div className="grid gap-3">
-                  {signalScribe.sections.slice(0, 4).map((section) => (
-                    <div
-                      className="rounded-lg border border-white/10 bg-black/20 p-3"
-                      key={section.id}
-                    >
-                      <div className="font-mono text-xs uppercase text-cyan-100">
-                        {section.section_name}
-                      </div>
-                      <p className="mt-2 line-clamp-5 text-sm leading-6 text-zinc-400">
-                        {section.section_text}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <FilingSectionCards sections={signalScribe.sections} />
             </SectionShell>
           </aside>
         </div>
