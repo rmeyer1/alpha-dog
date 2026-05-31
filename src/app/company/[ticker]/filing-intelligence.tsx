@@ -21,6 +21,11 @@ interface SourceLink {
   url: string;
 }
 
+interface InsightItem {
+  links: SourceLink[];
+  text: string;
+}
+
 type ModalState =
   | { kind: "analysis"; analysis: SignalScribeAnalysis }
   | { kind: "section"; section: SignalScribeSection }
@@ -105,6 +110,38 @@ function firstUrlInText(value: string) {
   return match ? validExternalUrl(match[0]) : null;
 }
 
+function linksFromText(value: string) {
+  const matches = value.matchAll(/(?:\bURLs?:\s*)?(https?:\/\/[^\s)\]}>,"]+)/gi);
+  const seen = new Set<string>();
+  const links: SourceLink[] = [];
+
+  for (const match of matches) {
+    const url = validExternalUrl(match[1]);
+
+    if (!url || seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    links.push({
+      label: links.length === 0 ? "Source" : `Source ${links.length + 1}`,
+      url,
+    });
+  }
+
+  return links;
+}
+
+function removeUrlText(value: string) {
+  return value
+    .replace(/(?:\bURLs?:\s*)?https?:\/\/[^\s)\]}>,"]+/gi, "")
+    .replace(/\(\s*\)/g, "")
+    .replace(/\[\s*\]/g, "")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function firstStringByKeys(record: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = record[key];
@@ -143,6 +180,58 @@ function textFromUnknown(value: unknown) {
   } catch {
     return "";
   }
+}
+
+function insightLinksFromRecord(record: Record<string, unknown>) {
+  const seen = new Set<string>();
+  const links: SourceLink[] = [];
+
+  for (const key of citationUrlKeys) {
+    const url = validExternalUrl(record[key]);
+
+    if (!url || seen.has(url)) {
+      continue;
+    }
+
+    seen.add(url);
+    links.push({
+      label: links.length === 0 ? "Source" : `Source ${links.length + 1}`,
+      url,
+    });
+  }
+
+  return links;
+}
+
+function insightFromUnknown(value: unknown): InsightItem | null {
+  const text = textFromUnknown(value);
+  const links = [
+    ...(isRecord(value) ? insightLinksFromRecord(value) : []),
+    ...linksFromText(text),
+  ];
+  const seen = new Set<string>();
+  const uniqueLinks = links.filter((link) => {
+    if (seen.has(link.url)) {
+      return false;
+    }
+
+    seen.add(link.url);
+
+    return true;
+  });
+  const cleanText = removeUrlText(text);
+
+  if (!cleanText && uniqueLinks.length === 0) {
+    return null;
+  }
+
+  return {
+    links: uniqueLinks.map((link, index) => ({
+      ...link,
+      label: index === 0 ? "Source" : `Source ${index + 1}`,
+    })),
+    text: cleanText,
+  };
 }
 
 function filingUrlForAnalysis(
@@ -260,6 +349,38 @@ function SourceLinks({ sources }: { sources: SourceLink[] }) {
   );
 }
 
+function InlineSourceLinks({ links }: { links: SourceLink[] }) {
+  if (links.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="ml-2 inline-flex flex-wrap gap-1 align-baseline">
+      {links.map((link) => (
+        <a
+          className="inline-flex items-center gap-1 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-1.5 py-0.5 text-xs leading-5 text-cyan-100 hover:border-cyan-200/40 hover:text-cyan-50"
+          href={link.url}
+          key={`${link.label}-${link.url}`}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {link.label}
+          <ExternalLink className="size-3" />
+        </a>
+      ))}
+    </span>
+  );
+}
+
+function InsightContent({ item }: { item: InsightItem }) {
+  return (
+    <>
+      {item.text ? <span>{item.text}</span> : null}
+      <InlineSourceLinks links={item.links} />
+    </>
+  );
+}
+
 function InsightPreviewList({
   title,
   values,
@@ -267,7 +388,10 @@ function InsightPreviewList({
   title: string;
   values: unknown[];
 }) {
-  const displayValues = values.slice(0, 2).map(textFromUnknown).filter(Boolean);
+  const displayValues = values
+    .slice(0, 2)
+    .map(insightFromUnknown)
+    .filter((item): item is InsightItem => Boolean(item));
 
   if (displayValues.length === 0) {
     return null;
@@ -280,9 +404,9 @@ function InsightPreviewList({
         {displayValues.map((value) => (
           <li
             className="min-w-0 break-words [overflow-wrap:anywhere]"
-            key={value}
+            key={`${value.text}-${value.links.map((link) => link.url).join("|")}`}
           >
-            {value}
+            <InsightContent item={value} />
           </li>
         ))}
       </ul>
@@ -291,7 +415,9 @@ function InsightPreviewList({
 }
 
 function ModalList({ title, values }: { title: string; values: unknown[] }) {
-  const displayValues = values.map(textFromUnknown).filter(Boolean);
+  const displayValues = values
+    .map(insightFromUnknown)
+    .filter((item): item is InsightItem => Boolean(item));
 
   if (displayValues.length === 0) {
     return null;
@@ -304,9 +430,9 @@ function ModalList({ title, values }: { title: string; values: unknown[] }) {
         {displayValues.map((value, index) => (
           <li
             className="break-words rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2 [overflow-wrap:anywhere]"
-            key={`${title}-${index}-${value}`}
+            key={`${title}-${index}-${value.text}-${value.links.map((link) => link.url).join("|")}`}
           >
-            {value}
+            <InsightContent item={value} />
           </li>
         ))}
       </ul>
