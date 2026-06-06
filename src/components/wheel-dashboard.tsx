@@ -8,8 +8,11 @@ import type {
   SavedPreset,
   WheelAnalysisResponse,
   WheelFilters,
+  WheelScreenerResponse,
 } from "@/lib/wheel/types";
 import { CandidateResults } from "./wheel-dashboard/candidate-results";
+import { CompanyResults } from "./wheel-dashboard/company-results";
+import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
 import { MarketOverview } from "./wheel-dashboard/market-overview";
@@ -24,7 +27,8 @@ interface WheelDashboardProps {
   initialPersonas: PersonaConfig[];
 }
 
-const defaultTicker = "AAPL";
+const defaultTicker = "";
+const topCompanyLimit = 50;
 
 export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const defaultPersona = initialPersonas.find((persona) => persona.default) ??
@@ -34,6 +38,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [filters, setFilters] = useState<WheelFilters>(defaultPersona.filters);
   const [activeTab, setActiveTab] = useState<StrategyTab>("puts");
   const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
+  const [screenerResponse, setScreenerResponse] =
+    useState<WheelScreenerResponse | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
@@ -49,7 +55,77 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setPresets(payload.presets);
   }
 
-  async function analyze(forceRefresh = false) {
+  async function loadCompanyScreener({
+    forceRefresh = false,
+    nextFilters = filters,
+    nextPersonaId = personaId,
+  }: {
+    forceRefresh?: boolean;
+    nextFilters?: WheelFilters;
+    nextPersonaId?: PersonaId;
+  } = {}) {
+    setRequestState(screenerResponse ? "refreshing" : "loading");
+    setError(null);
+
+    try {
+      const apiResponse = await fetch("/api/wheel/screener", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          persona: nextPersonaId,
+          filters: nextFilters,
+          limit: topCompanyLimit,
+          forceRefresh,
+        }),
+      });
+      const payload = (await apiResponse.json()) as
+        | WheelScreenerResponse
+        | { error: { message: string } };
+
+      if (!apiResponse.ok || "error" in payload) {
+        throw new Error(
+          "error" in payload ? payload.error.message : "Analysis failed.",
+        );
+      }
+
+      setResponse(null);
+      setScreenerResponse(payload);
+      setRequestState(
+        payload.dataFreshness.cacheStatus === "stale"
+          ? "successStale"
+          : "successFresh",
+      );
+    } catch (caught) {
+      setRequestState("errorNoCache");
+      setError(caught instanceof Error ? caught.message : "Analysis failed.");
+    }
+  }
+
+  async function analyzeTicker({
+    forceRefresh = false,
+    nextFilters = filters,
+    nextPersonaId = personaId,
+    nextTicker = ticker,
+  }: {
+    forceRefresh?: boolean;
+    nextFilters?: WheelFilters;
+    nextPersonaId?: PersonaId;
+    nextTicker?: string;
+  } = {}) {
+    const symbol = nextTicker.trim().toUpperCase();
+
+    if (!symbol) {
+      await loadCompanyScreener({
+        forceRefresh,
+        nextFilters,
+        nextPersonaId,
+      });
+
+      return;
+    }
+
     setRequestState(response ? "refreshing" : "loading");
     setError(null);
 
@@ -60,9 +136,9 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ticker,
-          persona: personaId,
-          filters,
+          ticker: symbol,
+          persona: nextPersonaId,
+          filters: nextFilters,
           resultLimit: 25,
           forceRefresh,
         }),
@@ -77,6 +153,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         );
       }
 
+      setTicker(payload.ticker);
+      setScreenerResponse(null);
       setResponse(payload);
       setRequestState(
         payload.dataFreshness.cacheStatus === "stale"
@@ -113,9 +191,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   }
 
   function loadPreset(preset: SavedPreset) {
+    const nextFilters = mergePresetFilters(initialPersonas, preset, defaultPersona);
+
     setPersonaId(preset.basePersona);
-    setFilters(mergePresetFilters(initialPersonas, preset, defaultPersona));
+    setFilters(nextFilters);
+    setTicker(defaultTicker);
+    setResponse(null);
     setPresetName(preset.name);
+    void loadCompanyScreener({
+      nextFilters,
+      nextPersonaId: preset.basePersona,
+    });
   }
 
   function selectPersona(nextPersonaId: PersonaId) {
@@ -123,11 +209,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     setPersonaId(nextPersona.id);
     setFilters(nextPersona.filters);
+    setTicker(defaultTicker);
+    setResponse(null);
+    void loadCompanyScreener({
+      nextFilters: nextPersona.filters,
+      nextPersonaId: nextPersona.id,
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void analyze(false);
+    void analyzeTicker();
   }
 
   useEffect(() => {
@@ -135,18 +227,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     async function loadInitialData() {
       try {
-        const [presetResponse, analysisResponse] = await Promise.all([
+        const [presetResponse, screenerApiResponse] = await Promise.all([
           fetch("/api/presets", { cache: "no-store" }),
-          fetch("/api/wheel/analyze", {
+          fetch("/api/wheel/screener", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              ticker: defaultTicker,
               persona: defaultPersona.id,
               filters: defaultPersona.filters,
-              resultLimit: 25,
+              limit: topCompanyLimit,
               forceRefresh: false,
             }),
           }),
@@ -154,17 +245,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         const presetPayload = (await presetResponse.json()) as {
           presets: SavedPreset[];
         };
-        const analysisPayload =
-          (await analysisResponse.json()) as WheelAnalysisResponse;
+        const screenerPayload =
+          (await screenerApiResponse.json()) as WheelScreenerResponse;
 
         if (cancelled) {
           return;
         }
 
         setPresets(presetPayload.presets);
-        setResponse(analysisPayload);
+        setScreenerResponse(screenerPayload);
         setRequestState(
-          analysisPayload.dataFreshness.cacheStatus === "stale"
+          screenerPayload.dataFreshness.cacheStatus === "stale"
             ? "successStale"
             : "successFresh",
         );
@@ -199,7 +290,13 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       <DashboardHeader
         initialPersonas={initialPersonas}
         onAnalyze={handleSubmit}
-        onForceRefresh={() => void analyze(true)}
+        onForceRefresh={() => {
+          if (response || ticker.trim()) {
+            void analyzeTicker({ forceRefresh: true });
+          } else {
+            void loadCompanyScreener({ forceRefresh: true });
+          }
+        }}
         onPersonaChange={selectPersona}
         onTickerChange={setTicker}
         personaId={personaId}
@@ -209,23 +306,45 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
       <div className="mx-auto grid max-w-[1600px] items-start gap-4 px-4 py-5 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:px-8">
         <section className="grid min-w-0 content-start gap-4">
-          <MarketOverview
-            activePersona={activePersona}
-            error={error}
-            filters={filters}
-            requestState={requestState}
-            response={response}
-            ticker={ticker}
-          />
+          {response ? (
+            <>
+              <MarketOverview
+                activePersona={activePersona}
+                error={error}
+                filters={filters}
+                requestState={requestState}
+                response={response}
+                ticker={ticker}
+              />
 
-          <CandidateResults
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            requestState={requestState}
-            rows={rows}
-            spreadRows={spreadRows}
-            underlyingPrice={response?.underlying.price}
-          />
+              <CandidateResults
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+                requestState={requestState}
+                rows={rows}
+                spreadRows={spreadRows}
+                underlyingPrice={response?.underlying.price}
+              />
+            </>
+          ) : (
+            <>
+              <CompanyScreenerOverview
+                activePersona={activePersona}
+                error={error}
+                filters={filters}
+                requestState={requestState}
+                response={screenerResponse}
+              />
+
+              <CompanyResults
+                companies={screenerResponse?.companies ?? []}
+                onSelectTicker={(selectedTicker) =>
+                  void analyzeTicker({ nextTicker: selectedTicker })
+                }
+                requestState={requestState}
+              />
+            </>
+          )}
         </section>
 
         <aside className="grid content-start gap-4">

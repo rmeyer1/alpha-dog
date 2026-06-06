@@ -66,6 +66,7 @@ export function DashboardHeader({
                 aria-label="Ticker symbol"
                 className="w-full bg-transparent font-mono text-base text-white outline-none"
                 onChange={(event) => onTickerChange(event.target.value.toUpperCase())}
+                placeholder="TOP 50"
                 value={ticker}
               />
             </div>
