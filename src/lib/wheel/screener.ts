@@ -1,0 +1,471 @@
+import { getWheelAssetUniverse } from "@/lib/alpaca/client";
+import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { analyzeWheelCandidates } from "./analyze";
+import { getPersona, mergeFilters } from "./personas";
+import type {
+  CacheStatus,
+  DataFeed,
+  PersonaId,
+  Warning,
+  WheelAnalysisResponse,
+  WheelCandidate,
+  WheelCompanyCandidateSummary,
+  WheelCompanyScore,
+  WheelCompanyStrategy,
+  WheelFilters,
+  WheelScreenerRequest,
+  WheelScreenerResponse,
+  VerticalSpreadCandidate,
+} from "./types";
+
+const SCREENER_CACHE_VERSION = "v1";
+const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
+const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
+const SCREENER_ANALYSIS_RESULT_LIMIT = 5;
+const SCREENER_CONCURRENCY = 4;
+
+interface WheelScreenerAsset {
+  symbol: string;
+  name: string;
+  exchange: "NYSE" | "NASDAQ";
+}
+
+interface ScreenerCacheEntry {
+  response: WheelScreenerResponse;
+  freshUntilMs: number;
+  staleUntilMs: number;
+}
+
+const demoAssets: WheelScreenerAsset[] = [
+  ["AAPL", "Apple Inc.", "NASDAQ"],
+  ["MSFT", "Microsoft Corporation", "NASDAQ"],
+  ["NVDA", "NVIDIA Corporation", "NASDAQ"],
+  ["AMZN", "Amazon.com, Inc.", "NASDAQ"],
+  ["META", "Meta Platforms, Inc.", "NASDAQ"],
+  ["GOOGL", "Alphabet Inc.", "NASDAQ"],
+  ["GOOG", "Alphabet Inc.", "NASDAQ"],
+  ["TSLA", "Tesla, Inc.", "NASDAQ"],
+  ["AVGO", "Broadcom Inc.", "NASDAQ"],
+  ["COST", "Costco Wholesale Corporation", "NASDAQ"],
+  ["NFLX", "Netflix, Inc.", "NASDAQ"],
+  ["AMD", "Advanced Micro Devices, Inc.", "NASDAQ"],
+  ["PEP", "PepsiCo, Inc.", "NASDAQ"],
+  ["ADBE", "Adobe Inc.", "NASDAQ"],
+  ["CSCO", "Cisco Systems, Inc.", "NASDAQ"],
+  ["QCOM", "QUALCOMM Incorporated", "NASDAQ"],
+  ["INTC", "Intel Corporation", "NASDAQ"],
+  ["AMAT", "Applied Materials, Inc.", "NASDAQ"],
+  ["TXN", "Texas Instruments Incorporated", "NASDAQ"],
+  ["INTU", "Intuit Inc.", "NASDAQ"],
+  ["BKNG", "Booking Holdings Inc.", "NASDAQ"],
+  ["SBUX", "Starbucks Corporation", "NASDAQ"],
+  ["GILD", "Gilead Sciences, Inc.", "NASDAQ"],
+  ["MU", "Micron Technology, Inc.", "NASDAQ"],
+  ["LRCX", "Lam Research Corporation", "NASDAQ"],
+  ["PANW", "Palo Alto Networks, Inc.", "NASDAQ"],
+  ["ISRG", "Intuitive Surgical, Inc.", "NASDAQ"],
+  ["ADP", "Automatic Data Processing, Inc.", "NASDAQ"],
+  ["VRTX", "Vertex Pharmaceuticals Incorporated", "NASDAQ"],
+  ["MELI", "MercadoLibre, Inc.", "NASDAQ"],
+  ["JPM", "JPMorgan Chase & Co.", "NYSE"],
+  ["V", "Visa Inc.", "NYSE"],
+  ["MA", "Mastercard Incorporated", "NYSE"],
+  ["LLY", "Eli Lilly and Company", "NYSE"],
+  ["UNH", "UnitedHealth Group Incorporated", "NYSE"],
+  ["XOM", "Exxon Mobil Corporation", "NYSE"],
+  ["WMT", "Walmart Inc.", "NYSE"],
+  ["JNJ", "Johnson & Johnson", "NYSE"],
+  ["PG", "The Procter & Gamble Company", "NYSE"],
+  ["HD", "The Home Depot, Inc.", "NYSE"],
+  ["BAC", "Bank of America Corporation", "NYSE"],
+  ["KO", "The Coca-Cola Company", "NYSE"],
+  ["CRM", "Salesforce, Inc.", "NYSE"],
+  ["CVX", "Chevron Corporation", "NYSE"],
+  ["ABBV", "AbbVie Inc.", "NYSE"],
+  ["MRK", "Merck & Co., Inc.", "NYSE"],
+  ["ORCL", "Oracle Corporation", "NYSE"],
+  ["WFC", "Wells Fargo & Company", "NYSE"],
+  ["MCD", "McDonald's Corporation", "NYSE"],
+  ["DIS", "The Walt Disney Company", "NYSE"],
+  ["IBM", "International Business Machines Corporation", "NYSE"],
+  ["GE", "GE Aerospace", "NYSE"],
+  ["NOW", "ServiceNow, Inc.", "NYSE"],
+  ["UBER", "Uber Technologies, Inc.", "NYSE"],
+  ["CAT", "Caterpillar Inc.", "NYSE"],
+  ["GS", "The Goldman Sachs Group, Inc.", "NYSE"],
+  ["BA", "The Boeing Company", "NYSE"],
+  ["T", "AT&T Inc.", "NYSE"],
+  ["VZ", "Verizon Communications Inc.", "NYSE"],
+  ["F", "Ford Motor Company", "NYSE"],
+].map(([symbol, name, exchange]) => ({
+  symbol,
+  name,
+  exchange: exchange as "NYSE" | "NASDAQ",
+}));
+
+const screenerCache = new Map<string, ScreenerCacheEntry>();
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+
+  return `{${entries
+    .map(([key, entryValue]) =>
+      `${JSON.stringify(key)}:${stableStringify(entryValue)}`,
+    )
+    .join(",")}}`;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
+}
+
+function cloneResponse(response: WheelScreenerResponse): WheelScreenerResponse {
+  return structuredClone(response);
+}
+
+function buildScreenerCacheKey({
+  feed,
+  filters,
+  limit,
+  personaId,
+  universe,
+}: {
+  feed: DataFeed;
+  filters: WheelFilters;
+  limit: number;
+  personaId: PersonaId;
+  universe: "demo" | "live";
+}) {
+  return [
+    "wheel-screener",
+    SCREENER_CACHE_VERSION,
+    universe,
+    feed,
+    personaId,
+    String(limit),
+    stableStringify(filters),
+  ].join(":");
+}
+
+function getFreshScreenerCache(key: string, nowMs = Date.now()) {
+  const entry = screenerCache.get(key);
+
+  if (!entry || nowMs > entry.freshUntilMs) {
+    return null;
+  }
+
+  const cacheStatus: CacheStatus =
+    entry.response.dataFreshness.feed === "demo" ? "demo" : "fresh";
+
+  return {
+    ...cloneResponse(entry.response),
+    dataFreshness: {
+      ...entry.response.dataFreshness,
+      cacheStatus,
+      nextSuggestedRefreshAt: new Date(entry.freshUntilMs).toISOString(),
+    },
+  };
+}
+
+function getStaleScreenerCache(key: string, nowMs = Date.now()) {
+  const entry = screenerCache.get(key);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (nowMs > entry.staleUntilMs) {
+    screenerCache.delete(key);
+
+    return null;
+  }
+
+  const cacheStatus: CacheStatus =
+    entry.response.dataFreshness.feed === "demo" ? "demo" : "stale";
+
+  return {
+    ...cloneResponse(entry.response),
+    dataFreshness: {
+      ...entry.response.dataFreshness,
+      cacheStatus,
+      nextSuggestedRefreshAt: null,
+    },
+  };
+}
+
+function setScreenerCache(
+  key: string,
+  response: WheelScreenerResponse,
+  nowMs = Date.now(),
+) {
+  screenerCache.set(key, {
+    response: cloneResponse(response),
+    freshUntilMs: nowMs + SCREENER_CACHE_FRESH_TTL_MS,
+    staleUntilMs: nowMs + SCREENER_CACHE_STALE_TTL_MS,
+  });
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(values[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, () => worker()),
+  );
+
+  return results;
+}
+
+function summarizeContractCandidate(
+  strategy: WheelCompanyStrategy,
+  candidate: WheelCandidate,
+): WheelCompanyCandidateSummary {
+  return {
+    strategy,
+    score: candidate.score,
+    expirationDate: candidate.expirationDate,
+    dte: candidate.dte,
+    shortStrike: candidate.strike,
+    premiumYield: candidate.premiumYield,
+    annualizedYield: candidate.annualizedYield,
+    delta: candidate.delta,
+    impliedVolatility: candidate.impliedVolatility,
+    liquidityQuality: candidate.liquidityQuality,
+    warningCount: candidate.warnings.length,
+  };
+}
+
+function summarizeSpreadCandidate(
+  strategy: WheelCompanyStrategy,
+  candidate: VerticalSpreadCandidate,
+): WheelCompanyCandidateSummary {
+  return {
+    strategy,
+    score: candidate.score,
+    expirationDate: candidate.expirationDate,
+    dte: candidate.dte,
+    shortStrike: candidate.shortLeg.strike,
+    longStrike: candidate.longLeg.strike,
+    returnOnRisk: candidate.returnOnRisk,
+    annualizedReturnOnRisk: candidate.annualizedReturnOnRisk,
+    delta: candidate.shortDelta,
+    impliedVolatility: candidate.impliedVolatility,
+    liquidityQuality: candidate.liquidityQuality,
+    warningCount: candidate.warnings.length,
+  };
+}
+
+function bestCompanyCandidate(response: WheelAnalysisResponse) {
+  const candidates = [
+    response.shortPuts[0]
+      ? summarizeContractCandidate("short_put", response.shortPuts[0])
+      : null,
+    response.coveredCalls[0]
+      ? summarizeContractCandidate("covered_call", response.coveredCalls[0])
+      : null,
+    response.putCreditSpreads[0]
+      ? summarizeSpreadCandidate(
+          "put_credit_spread",
+          response.putCreditSpreads[0],
+        )
+      : null,
+    response.callCreditSpreads[0]
+      ? summarizeSpreadCandidate(
+          "call_credit_spread",
+          response.callCreditSpreads[0],
+        )
+      : null,
+  ].filter((candidate) => candidate != null);
+
+  return candidates.sort((left, right) => right.score - left.score)[0] ?? null;
+}
+
+function warningKey(warning: Warning) {
+  return `${warning.type}:${warning.severity}:${warning.message}`;
+}
+
+function mergeWarnings(responses: WheelAnalysisResponse[]) {
+  const seen = new Set<string>();
+  const warnings: Warning[] = [];
+
+  for (const response of responses) {
+    for (const warning of response.warnings) {
+      const key = warningKey(warning);
+
+      if (!seen.has(key)) {
+        seen.add(key);
+        warnings.push(warning);
+      }
+    }
+  }
+
+  return warnings;
+}
+
+async function getUniverse(useDemoData: boolean) {
+  if (useDemoData) {
+    return demoAssets;
+  }
+
+  return getWheelAssetUniverse();
+}
+
+export async function analyzeTopWheelCompanies(
+  request: WheelScreenerRequest,
+): Promise<WheelScreenerResponse> {
+  const env = getEnv();
+  const personaId = request.persona;
+  const persona = getPersona(personaId);
+  const filters = mergeFilters(personaId, request.filters);
+  const limit = request.limit ?? 50;
+  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
+  const cacheKey = buildScreenerCacheKey({
+    feed,
+    filters,
+    limit,
+    personaId,
+    universe: useDemoData ? "demo" : "live",
+  });
+
+  if (!request.forceRefresh) {
+    const fresh = getFreshScreenerCache(cacheKey);
+
+    if (fresh) {
+      return fresh;
+    }
+  }
+
+  try {
+    const now = new Date();
+    const universe = await getUniverse(useDemoData);
+    const errors: string[] = [];
+    const responses: WheelAnalysisResponse[] = [];
+    let skippedCount = 0;
+
+    const scoredCompanies = await mapWithConcurrency(
+      universe,
+      SCREENER_CONCURRENCY,
+      async (asset): Promise<WheelCompanyScore | null> => {
+        try {
+          const response = await analyzeWheelCandidates({
+            ticker: asset.symbol,
+            persona: personaId,
+            filters,
+            resultLimit: SCREENER_ANALYSIS_RESULT_LIMIT,
+            forceRefresh: request.forceRefresh,
+          });
+          const bestCandidate = bestCompanyCandidate(response);
+
+          responses.push(response);
+
+          if (!bestCandidate) {
+            skippedCount += 1;
+
+            return null;
+          }
+
+          return {
+            rank: 0,
+            ticker: asset.symbol,
+            name: asset.name,
+            exchange: asset.exchange,
+            score: bestCandidate.score,
+            underlying: response.underlying,
+            bestCandidate,
+            warnings: response.warnings,
+            errors: response.errors,
+          };
+        } catch (error) {
+          skippedCount += 1;
+
+          if (errors.length < 25) {
+            errors.push(
+              `${asset.symbol}: ${
+                error instanceof Error ? error.message : "Analysis failed."
+              }`,
+            );
+          }
+
+          return null;
+        }
+      },
+    );
+
+    const companies = scoredCompanies
+      .filter((company) => company != null)
+      .sort((left, right) => right.score - left.score || left.ticker.localeCompare(right.ticker))
+      .slice(0, limit)
+      .map((company, index) => ({
+        ...company,
+        rank: index + 1,
+      }));
+    const response: WheelScreenerResponse = {
+      persona: {
+        id: persona.id,
+        name: persona.name,
+        motto: persona.motto,
+      },
+      dataFreshness: {
+        feed,
+        cacheStatus: feed === "demo" ? "demo" : "fresh",
+        asOf: responses.at(-1)?.dataFreshness.asOf ?? now.toISOString(),
+        nextSuggestedRefreshAt: addMinutes(now, 5),
+      },
+      companies,
+      screenedCount: universe.length,
+      skippedCount,
+      warnings: mergeWarnings(responses),
+      errors:
+        companies.length === 0 && errors.length === 0
+          ? ["No companies produced a matching wheel candidate."]
+          : errors,
+    };
+
+    setScreenerCache(cacheKey, response);
+
+    return response;
+  } catch (error) {
+    const stale = getStaleScreenerCache(cacheKey);
+
+    if (stale) {
+      return {
+        ...stale,
+        warnings: [
+          {
+            type: "data_quality",
+            severity: "warning",
+            message: `Live screener refresh failed; showing cached company rankings. ${
+              error instanceof Error ? error.message : "Refresh failed."
+            }`,
+          },
+          ...stale.warnings,
+        ],
+      };
+    }
+
+    throw error;
+  }
+}

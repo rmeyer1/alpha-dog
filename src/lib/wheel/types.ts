@@ -195,6 +195,63 @@ export interface WheelAnalysisRequest {
   forceRefresh?: boolean;
 }
 
+export type WheelCompanyStrategy =
+  | "short_put"
+  | "covered_call"
+  | "put_credit_spread"
+  | "call_credit_spread";
+
+export interface WheelCompanyCandidateSummary {
+  strategy: WheelCompanyStrategy;
+  score: number;
+  expirationDate: string;
+  dte: number;
+  shortStrike: number;
+  longStrike?: number;
+  premiumYield?: number;
+  annualizedYield?: number;
+  returnOnRisk?: number;
+  annualizedReturnOnRisk?: number;
+  delta: number | null;
+  impliedVolatility: number | null;
+  liquidityQuality: QualityLabel;
+  warningCount: number;
+}
+
+export interface WheelCompanyScore {
+  rank: number;
+  ticker: string;
+  name: string;
+  exchange: "NYSE" | "NASDAQ";
+  score: number;
+  underlying: UnderlyingContext;
+  bestCandidate: WheelCompanyCandidateSummary;
+  warnings: Warning[];
+  errors: string[];
+}
+
+export interface WheelScreenerRequest {
+  persona: PersonaId;
+  filters?: Partial<WheelFilters>;
+  limit?: number;
+  forceRefresh?: boolean;
+}
+
+export interface WheelScreenerResponse {
+  persona: Pick<PersonaConfig, "id" | "name" | "motto">;
+  dataFreshness: {
+    feed: DataFeed;
+    cacheStatus: CacheStatus;
+    asOf: string;
+    nextSuggestedRefreshAt: string | null;
+  };
+  companies: WheelCompanyScore[];
+  screenedCount: number;
+  skippedCount: number;
+  warnings: Warning[];
+  errors: string[];
+}
+
 export interface WheelAnalysisResponse {
   ticker: string;
   underlying: UnderlyingContext;

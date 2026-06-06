@@ -39,6 +39,13 @@ export const analyzeRequestSchema = z.object({
   forceRefresh: z.boolean().default(false),
 });
 
+export const screenerRequestSchema = z.object({
+  persona: personaIdSchema.default("balanced_wheel"),
+  filters: filtersSchema,
+  limit: z.number().int().min(1).max(100).default(50),
+  forceRefresh: z.boolean().default(false),
+});
+
 export const savedPresetInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   basePersona: personaIdSchema,
