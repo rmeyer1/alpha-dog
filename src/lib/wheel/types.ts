@@ -235,6 +235,19 @@ export interface WheelScreenerRequest {
   filters?: Partial<WheelFilters>;
   limit?: number;
   forceRefresh?: boolean;
+  cursor?: number;
+  batchSize?: number;
+}
+
+export interface WheelScreenerProgress {
+  status: "running" | "complete";
+  resultScope: "batch" | "complete";
+  cursor: number;
+  nextCursor: number | null;
+  batchSize: number;
+  batchScreenedCount: number;
+  processedCount: number;
+  totalCount: number;
 }
 
 export interface WheelScreenerResponse {
@@ -248,6 +261,7 @@ export interface WheelScreenerResponse {
   companies: WheelCompanyScore[];
   screenedCount: number;
   skippedCount: number;
+  progress: WheelScreenerProgress;
   warnings: Warning[];
   errors: string[];
 }
