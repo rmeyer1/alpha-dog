@@ -165,7 +165,7 @@ export async function getWheelAssetUniverse(): Promise<AlpacaWheelAsset[]> {
   return [...nyseAssets, ...nasdaqAssets]
     .filter((asset) => {
       if (
-        asset.asset_class !== "us_equity" ||
+        (asset.asset_class != null && asset.asset_class !== "us_equity") ||
         asset.status !== "active" ||
         !asset.tradable ||
         (asset.exchange !== "NYSE" && asset.exchange !== "NASDAQ") ||
