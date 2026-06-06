@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { analyzeRequestSchema, savedPresetInputSchema } from "./validation";
+import {
+  analyzeRequestSchema,
+  savedPresetInputSchema,
+  screenerRequestSchema,
+} from "./validation";
 
 describe("wheel validation", () => {
   it("normalizes analysis request defaults", () => {
@@ -38,5 +42,18 @@ describe("wheel validation", () => {
     });
 
     expect(parsed.filters).toEqual({});
+  });
+
+  it("normalizes screener request defaults", () => {
+    const parsed = screenerRequestSchema.parse({});
+
+    expect(parsed).toMatchObject({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+      forceRefresh: false,
+      cursor: 0,
+      batchSize: 32,
+    });
   });
 });

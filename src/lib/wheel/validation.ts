@@ -8,6 +8,13 @@ export const personaIdSchema = z.enum([
   "high_iv_hunter",
 ]);
 
+export const companyStrategySchema = z.enum([
+  "short_put",
+  "put_credit_spread",
+  "covered_call",
+  "call_credit_spread",
+]);
+
 export const filtersSchema = z
   .object({
     dteMin: z.number().int().min(1).max(365).optional(),
@@ -41,11 +48,12 @@ export const analyzeRequestSchema = z.object({
 
 export const screenerRequestSchema = z.object({
   persona: personaIdSchema.default("balanced_wheel"),
+  strategy: companyStrategySchema.default("short_put"),
   filters: filtersSchema,
   limit: z.number().int().min(1).max(100).default(50),
   forceRefresh: z.boolean().default(false),
   cursor: z.number().int().min(0).default(0),
-  batchSize: z.number().int().min(1).max(50).default(8),
+  batchSize: z.number().int().min(1).max(50).default(32),
 });
 
 export const savedPresetInputSchema = z.object({

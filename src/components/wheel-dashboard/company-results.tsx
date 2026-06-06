@@ -15,15 +15,22 @@ import type { RequestState } from "./types";
 function strategyLabel(strategy: WheelCompanyStrategy) {
   switch (strategy) {
     case "short_put":
-      return "Short Put";
+      return "Cash-Secured Put";
     case "covered_call":
       return "Covered Call";
     case "put_credit_spread":
-      return "Put Spread";
+      return "Put Credit Spread";
     case "call_credit_spread":
-      return "Call Spread";
+      return "Call Credit Spread";
   }
 }
+
+const screenerTabs: { label: string; strategy: WheelCompanyStrategy }[] = [
+  { label: "Cash-Secured Puts", strategy: "short_put" },
+  { label: "Put Credit Spreads", strategy: "put_credit_spread" },
+  { label: "Covered Calls", strategy: "covered_call" },
+  { label: "Call Credit Spreads", strategy: "call_credit_spread" },
+];
 
 function candidateYield(row: WheelCompanyScore) {
   const { bestCandidate } = row;
@@ -48,22 +55,46 @@ function candidateStructure(row: WheelCompanyScore) {
 }
 
 export function CompanyResults({
+  activeStrategy,
   companies,
   onSelectTicker,
+  onSelectStrategy,
   requestState,
 }: {
+  activeStrategy: WheelCompanyStrategy;
   companies: WheelCompanyScore[];
-  onSelectTicker: (ticker: string) => void;
+  onSelectTicker: (ticker: string, strategy: WheelCompanyStrategy) => void;
+  onSelectStrategy: (strategy: WheelCompanyStrategy) => void;
   requestState: RequestState;
 }) {
   const isRanking = requestState === "loading" || requestState === "refreshing";
 
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-      <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-          <Building2 className="size-4 text-emerald-200" />
-          Top Companies
+      <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Building2 className="size-4 text-emerald-200" />
+            Top Companies
+          </div>
+          <div className="max-w-full overflow-x-auto">
+            <div className="inline-flex w-max rounded-lg border border-white/10 bg-black/20 p-1">
+              {screenerTabs.map((tab) => (
+                <button
+                  className={`rounded-md px-3 py-2 text-sm font-medium ${
+                    activeStrategy === tab.strategy
+                      ? "bg-emerald-300 text-black"
+                      : "text-zinc-300 hover:bg-white/[0.06]"
+                  }`}
+                  key={tab.strategy}
+                  onClick={() => onSelectStrategy(tab.strategy)}
+                  type="button"
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="shrink-0 text-sm text-zinc-400">
           {isRanking
@@ -123,7 +154,12 @@ export function CompanyResults({
                     <td className="max-w-[260px] px-4 py-3">
                       <button
                         className="grid max-w-full rounded-md text-left underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
-                        onClick={() => onSelectTicker(row.ticker)}
+                        onClick={() =>
+                          onSelectTicker(
+                            row.ticker,
+                            row.bestCandidate.strategy,
+                          )
+                        }
                         type="button"
                       >
                         <span className="font-mono text-zinc-50">
@@ -195,11 +231,13 @@ export function CompanyResults({
               <article
                 className="cursor-pointer rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                 key={row.ticker}
-                onClick={() => onSelectTicker(row.ticker)}
+                onClick={() =>
+                  onSelectTicker(row.ticker, row.bestCandidate.strategy)
+                }
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    onSelectTicker(row.ticker);
+                    onSelectTicker(row.ticker, row.bestCandidate.strategy);
                   }
                 }}
                 role="button"

@@ -48,7 +48,9 @@ function CandidateHeader({
       <div>
         <div className="text-xs uppercase text-zinc-500">
           #{candidate.rank} ·{" "}
-          {candidate.optionType === "put" ? "Short Put" : "Covered Call"}
+          {candidate.optionType === "put"
+            ? "Cash-Secured Put"
+            : "Covered Call"}
         </div>
         <h2 className="mt-1 font-mono text-2xl font-semibold text-white">
           {formatCurrency(candidate.strike)}

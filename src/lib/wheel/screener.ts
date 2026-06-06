@@ -18,13 +18,14 @@ import type {
   VerticalSpreadCandidate,
 } from "./types";
 
-const SCREENER_CACHE_VERSION = "v1";
+const SCREENER_CACHE_VERSION = "v2";
 const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
 const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_UNIVERSE_CACHE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_ANALYSIS_RESULT_LIMIT = 5;
-const SCREENER_CONCURRENCY = 4;
-const DEFAULT_LIVE_BATCH_SIZE = 8;
+const SCREENER_CONCURRENCY = 2;
+const DEFAULT_LIVE_BATCH_SIZE = 32;
+const SCREENER_RATE_LIMIT_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
 
 interface WheelScreenerAsset {
   symbol: string;
@@ -146,12 +147,14 @@ function buildScreenerCacheKey({
   filters,
   limit,
   personaId,
+  strategy,
   universe,
 }: {
   feed: DataFeed;
   filters: WheelFilters;
   limit: number;
   personaId: PersonaId;
+  strategy: WheelCompanyStrategy;
   universe: "demo" | "live";
 }) {
   return [
@@ -160,6 +163,7 @@ function buildScreenerCacheKey({
     universe,
     feed,
     personaId,
+    strategy,
     String(limit),
     stableStringify(filters),
   ].join(":");
@@ -260,6 +264,38 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimitError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /429|too many requests|rate limit/i.test(error.message);
+}
+
+async function analyzeWheelCandidatesWithRetry(
+  request: Parameters<typeof analyzeWheelCandidates>[0],
+) {
+  for (let attempt = 0; attempt <= SCREENER_RATE_LIMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await analyzeWheelCandidates(request);
+    } catch (error) {
+      const retryDelay = SCREENER_RATE_LIMIT_RETRY_DELAYS_MS[attempt];
+
+      if (!isRateLimitError(error) || retryDelay == null) {
+        throw error;
+      }
+
+      await wait(retryDelay);
+    }
+  }
+
+  return analyzeWheelCandidates(request);
+}
+
 function summarizeContractCandidate(
   strategy: WheelCompanyStrategy,
   candidate: WheelCandidate,
@@ -299,29 +335,34 @@ function summarizeSpreadCandidate(
   };
 }
 
-function bestCompanyCandidate(response: WheelAnalysisResponse) {
-  const candidates = [
-    response.shortPuts[0]
-      ? summarizeContractCandidate("short_put", response.shortPuts[0])
-      : null,
-    response.coveredCalls[0]
-      ? summarizeContractCandidate("covered_call", response.coveredCalls[0])
-      : null,
-    response.putCreditSpreads[0]
-      ? summarizeSpreadCandidate(
-          "put_credit_spread",
-          response.putCreditSpreads[0],
-        )
-      : null,
-    response.callCreditSpreads[0]
-      ? summarizeSpreadCandidate(
-          "call_credit_spread",
-          response.callCreditSpreads[0],
-        )
-      : null,
-  ].filter((candidate) => candidate != null);
-
-  return candidates.sort((left, right) => right.score - left.score)[0] ?? null;
+export function selectCompanyCandidateForStrategy(
+  response: WheelAnalysisResponse,
+  strategy: WheelCompanyStrategy,
+) {
+  switch (strategy) {
+    case "short_put":
+      return response.shortPuts[0]
+        ? summarizeContractCandidate("short_put", response.shortPuts[0])
+        : null;
+    case "put_credit_spread":
+      return response.putCreditSpreads[0]
+        ? summarizeSpreadCandidate(
+            "put_credit_spread",
+            response.putCreditSpreads[0],
+          )
+        : null;
+    case "covered_call":
+      return response.coveredCalls[0]
+        ? summarizeContractCandidate("covered_call", response.coveredCalls[0])
+        : null;
+    case "call_credit_spread":
+      return response.callCreditSpreads[0]
+        ? summarizeSpreadCandidate(
+            "call_credit_spread",
+            response.callCreditSpreads[0],
+          )
+        : null;
+  }
 }
 
 function warningKey(warning: Warning) {
@@ -384,6 +425,7 @@ export async function analyzeTopWheelCompanies(
 ): Promise<WheelScreenerResponse> {
   const env = getEnv();
   const personaId = request.persona;
+  const strategy = request.strategy ?? "short_put";
   const persona = getPersona(personaId);
   const filters = mergeFilters(personaId, request.filters);
   const limit = request.limit ?? 50;
@@ -398,6 +440,7 @@ export async function analyzeTopWheelCompanies(
     filters,
     limit,
     personaId,
+    strategy,
     universe: useDemoData ? "demo" : "live",
   });
 
@@ -426,14 +469,17 @@ export async function analyzeTopWheelCompanies(
       SCREENER_CONCURRENCY,
       async (asset): Promise<WheelCompanyScore | null> => {
         try {
-          const response = await analyzeWheelCandidates({
+          const response = await analyzeWheelCandidatesWithRetry({
             ticker: asset.symbol,
             persona: personaId,
             filters,
             resultLimit: SCREENER_ANALYSIS_RESULT_LIMIT,
             forceRefresh: request.forceRefresh,
           });
-          const bestCandidate = bestCompanyCandidate(response);
+          const bestCandidate = selectCompanyCandidateForStrategy(
+            response,
+            strategy,
+          );
 
           responses.push(response);
 

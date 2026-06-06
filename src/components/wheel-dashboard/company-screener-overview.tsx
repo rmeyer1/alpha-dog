@@ -1,6 +1,7 @@
 import { AlertTriangle, Clock3 } from "lucide-react";
 import type {
   PersonaConfig,
+  WheelCompanyStrategy,
   WheelFilters,
   WheelScreenerResponse,
 } from "@/lib/wheel/types";
@@ -14,17 +15,26 @@ export function CompanyScreenerOverview({
   filters,
   requestState,
   response,
+  strategy,
 }: {
   activePersona: PersonaConfig;
   error: string | null;
   filters: WheelFilters;
   requestState: RequestState;
   response: WheelScreenerResponse | null;
+  strategy: WheelCompanyStrategy;
 }) {
   const progress = response?.progress;
   const progressPercent = progress && progress.totalCount > 0
     ? Math.round((progress.processedCount / progress.totalCount) * 100)
     : null;
+  const title = strategy === "short_put"
+    ? "Top 50 Cash-Secured Puts"
+    : strategy === "put_credit_spread"
+      ? "Top 50 Put Credit Spreads"
+      : strategy === "covered_call"
+        ? "Top 50 Covered Calls"
+        : "Top 50 Call Credit Spreads";
 
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -39,7 +49,7 @@ export function CompanyScreenerOverview({
             </div>
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <h2 className="text-3xl font-semibold tracking-normal text-white">
-                Top 50 Companies
+                {title}
               </h2>
               <span className="rounded-md border border-cyan-300/30 bg-cyan-400/10 px-2 py-1 text-sm text-cyan-100">
                 NYSE + NASDAQ
