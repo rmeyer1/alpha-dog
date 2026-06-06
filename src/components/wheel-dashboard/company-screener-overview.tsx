@@ -21,6 +21,11 @@ export function CompanyScreenerOverview({
   requestState: RequestState;
   response: WheelScreenerResponse | null;
 }) {
+  const progress = response?.progress;
+  const progressPercent = progress && progress.totalCount > 0
+    ? Math.round((progress.processedCount / progress.totalCount) * 100)
+    : null;
+
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="rounded-lg border border-white/10 bg-[#151718] p-5">
@@ -41,9 +46,17 @@ export function CompanyScreenerOverview({
               </span>
             </div>
             <div className="mt-4 flex flex-wrap gap-3 text-sm text-zinc-300">
-              <span>{response?.screenedCount ?? "-"} screened</span>
+              <span>
+                {progress
+                  ? `${progress.processedCount}/${progress.totalCount} screened`
+                  : `${response?.screenedCount ?? "-"} screened`}
+              </span>
               <span>{response?.skippedCount ?? "-"} skipped</span>
               <span>{response?.companies.length ?? 0} ranked</span>
+              {progressPercent != null &&
+              progress?.status === "running" ? (
+                <span>{progressPercent}% complete</span>
+              ) : null}
             </div>
           </div>
           <div className="max-w-md">

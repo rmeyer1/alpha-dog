@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   PersonaConfig,
   PersonaId,
   SavedPreset,
+  Warning,
   WheelAnalysisResponse,
+  WheelCompanyScore,
   WheelFilters,
   WheelScreenerResponse,
 } from "@/lib/wheel/types";
@@ -27,8 +29,63 @@ interface WheelDashboardProps {
   initialPersonas: PersonaConfig[];
 }
 
+interface LoadCompanyScreenerOptions {
+  forceRefresh?: boolean;
+  nextFilters: WheelFilters;
+  nextPersonaId: PersonaId;
+}
+
 const defaultTicker = "";
 const topCompanyLimit = 50;
+const screenerBatchSize = 8;
+const screenerBatchDelayMs = 150;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function warningKey(warning: Warning) {
+  return `${warning.type}:${warning.severity}:${warning.message}`;
+}
+
+function mergeWarnings(current: Warning[], incoming: Warning[]) {
+  const warnings = [...current];
+  const seen = new Set(current.map(warningKey));
+
+  for (const warning of incoming) {
+    const key = warningKey(warning);
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      warnings.push(warning);
+    }
+  }
+
+  return warnings;
+}
+
+function rankCompanyScores(
+  current: WheelCompanyScore[],
+  incoming: WheelCompanyScore[],
+) {
+  const byTicker = new Map<string, WheelCompanyScore>();
+
+  for (const company of [...current, ...incoming]) {
+    const existing = byTicker.get(company.ticker);
+
+    if (!existing || company.score > existing.score) {
+      byTicker.set(company.ticker, company);
+    }
+  }
+
+  return Array.from(byTicker.values())
+    .sort((left, right) => right.score - left.score || left.ticker.localeCompare(right.ticker))
+    .slice(0, topCompanyLimit)
+    .map((company, index) => ({
+      ...company,
+      rank: index + 1,
+    }));
+}
 
 export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const defaultPersona = initialPersonas.find((persona) => persona.default) ??
@@ -44,6 +101,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [error, setError] = useState<string | null>(null);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
   const [presetName, setPresetName] = useState("Balanced 21-30 DTE");
+  const screenerRunRef = useRef(0);
   const activePersona = useMemo(
     () => personaById(initialPersonas, personaId, defaultPersona),
     [defaultPersona, initialPersonas, personaId],
@@ -55,53 +113,112 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setPresets(payload.presets);
   }
 
-  async function loadCompanyScreener({
+  const runCompanyScreener = useCallback(async function runCompanyScreener({
     forceRefresh = false,
-    nextFilters = filters,
-    nextPersonaId = personaId,
-  }: {
-    forceRefresh?: boolean;
-    nextFilters?: WheelFilters;
-    nextPersonaId?: PersonaId;
-  } = {}) {
-    setRequestState(screenerResponse ? "refreshing" : "loading");
+    nextFilters,
+    nextPersonaId,
+  }: LoadCompanyScreenerOptions) {
+    const runId = screenerRunRef.current + 1;
+    screenerRunRef.current = runId;
+    let cursor = 0;
+    let aggregateCompanies: WheelCompanyScore[] = [];
+    let aggregateWarnings: Warning[] = [];
+    let aggregateErrors: string[] = [];
+    let aggregateSkippedCount = 0;
+
+    setRequestState("loading");
     setError(null);
+    setResponse(null);
+    setScreenerResponse(null);
 
     try {
-      const apiResponse = await fetch("/api/wheel/screener", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          persona: nextPersonaId,
-          filters: nextFilters,
-          limit: topCompanyLimit,
-          forceRefresh,
-        }),
-      });
-      const payload = (await apiResponse.json()) as
-        | WheelScreenerResponse
-        | { error: { message: string } };
+      while (true) {
+        const apiResponse = await fetch("/api/wheel/screener", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            persona: nextPersonaId,
+            filters: nextFilters,
+            limit: topCompanyLimit,
+            forceRefresh,
+            cursor,
+            batchSize: screenerBatchSize,
+          }),
+        });
+        const payload = (await apiResponse.json()) as
+          | WheelScreenerResponse
+          | { error: { message: string } };
 
-      if (!apiResponse.ok || "error" in payload) {
-        throw new Error(
-          "error" in payload ? payload.error.message : "Analysis failed.",
+        if (!apiResponse.ok || "error" in payload) {
+          throw new Error(
+            "error" in payload ? payload.error.message : "Analysis failed.",
+          );
+        }
+
+        if (screenerRunRef.current !== runId) {
+          return;
+        }
+
+        if (payload.progress.resultScope === "complete") {
+          setScreenerResponse(payload);
+          setRequestState(
+            payload.dataFreshness.cacheStatus === "stale"
+              ? "successStale"
+              : "successFresh",
+          );
+
+          return;
+        }
+
+        aggregateCompanies = rankCompanyScores(
+          aggregateCompanies,
+          payload.companies,
         );
+        aggregateWarnings = mergeWarnings(aggregateWarnings, payload.warnings);
+        aggregateErrors = [...aggregateErrors, ...payload.errors].slice(0, 25);
+        aggregateSkippedCount += payload.skippedCount;
+
+        const completed = payload.progress.status === "complete";
+        const aggregatePayload: WheelScreenerResponse = {
+          ...payload,
+          companies: aggregateCompanies,
+          screenedCount: payload.progress.processedCount,
+          skippedCount: aggregateSkippedCount,
+          warnings: aggregateWarnings,
+          errors:
+            completed && aggregateCompanies.length === 0 &&
+            aggregateErrors.length === 0
+              ? ["No companies produced a matching wheel candidate."]
+              : aggregateErrors,
+        };
+
+        setScreenerResponse(aggregatePayload);
+        setRequestState(
+          completed
+            ? payload.dataFreshness.cacheStatus === "stale"
+              ? "successStale"
+              : "successFresh"
+            : "loading",
+        );
+
+        if (payload.progress.nextCursor == null) {
+          return;
+        }
+
+        cursor = payload.progress.nextCursor;
+        await wait(screenerBatchDelayMs);
+      }
+    } catch (caught) {
+      if (screenerRunRef.current !== runId) {
+        return;
       }
 
-      setResponse(null);
-      setScreenerResponse(payload);
-      setRequestState(
-        payload.dataFreshness.cacheStatus === "stale"
-          ? "successStale"
-          : "successFresh",
-      );
-    } catch (caught) {
       setRequestState("errorNoCache");
       setError(caught instanceof Error ? caught.message : "Analysis failed.");
     }
-  }
+  }, []);
 
   async function analyzeTicker({
     forceRefresh = false,
@@ -117,7 +234,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     const symbol = nextTicker.trim().toUpperCase();
 
     if (!symbol) {
-      await loadCompanyScreener({
+      await runCompanyScreener({
         forceRefresh,
         nextFilters,
         nextPersonaId,
@@ -126,6 +243,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       return;
     }
 
+    screenerRunRef.current += 1;
     setRequestState(response ? "refreshing" : "loading");
     setError(null);
 
@@ -198,7 +316,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setTicker(defaultTicker);
     setResponse(null);
     setPresetName(preset.name);
-    void loadCompanyScreener({
+    void runCompanyScreener({
       nextFilters,
       nextPersonaId: preset.basePersona,
     });
@@ -211,7 +329,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setFilters(nextPersona.filters);
     setTicker(defaultTicker);
     setResponse(null);
-    void loadCompanyScreener({
+    void runCompanyScreener({
       nextFilters: nextPersona.filters,
       nextPersonaId: nextPersona.id,
     });
@@ -227,38 +345,22 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     async function loadInitialData() {
       try {
-        const [presetResponse, screenerApiResponse] = await Promise.all([
-          fetch("/api/presets", { cache: "no-store" }),
-          fetch("/api/wheel/screener", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              persona: defaultPersona.id,
-              filters: defaultPersona.filters,
-              limit: topCompanyLimit,
-              forceRefresh: false,
-            }),
-          }),
-        ]);
+        const presetResponse = await fetch("/api/presets", {
+          cache: "no-store",
+        });
         const presetPayload = (await presetResponse.json()) as {
           presets: SavedPreset[];
         };
-        const screenerPayload =
-          (await screenerApiResponse.json()) as WheelScreenerResponse;
 
         if (cancelled) {
           return;
         }
 
         setPresets(presetPayload.presets);
-        setScreenerResponse(screenerPayload);
-        setRequestState(
-          screenerPayload.dataFreshness.cacheStatus === "stale"
-            ? "successStale"
-            : "successFresh",
-        );
+        void runCompanyScreener({
+          nextFilters: defaultPersona.filters,
+          nextPersonaId: defaultPersona.id,
+        });
       } catch (caught) {
         if (!cancelled) {
           setRequestState("errorNoCache");
@@ -271,8 +373,9 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     return () => {
       cancelled = true;
+      screenerRunRef.current += 1;
     };
-  }, [defaultPersona.filters, defaultPersona.id]);
+  }, [defaultPersona.filters, defaultPersona.id, runCompanyScreener]);
 
   const rows = activeTab === "puts"
     ? response?.shortPuts ?? []
@@ -294,7 +397,11 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           if (response || ticker.trim()) {
             void analyzeTicker({ forceRefresh: true });
           } else {
-            void loadCompanyScreener({ forceRefresh: true });
+            void runCompanyScreener({
+              forceRefresh: true,
+              nextFilters: filters,
+              nextPersonaId: personaId,
+            });
           }
         }}
         onPersonaChange={selectPersona}

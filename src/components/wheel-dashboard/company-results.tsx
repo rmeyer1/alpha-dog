@@ -56,6 +56,8 @@ export function CompanyResults({
   onSelectTicker: (ticker: string) => void;
   requestState: RequestState;
 }) {
+  const isRanking = requestState === "loading" || requestState === "refreshing";
+
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
       <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -64,7 +66,7 @@ export function CompanyResults({
           Top Companies
         </div>
         <div className="shrink-0 text-sm text-zinc-400">
-          {requestState === "loading" || requestState === "refreshing"
+          {isRanking
             ? "Ranking companies..."
             : `${companies.length} ranked companies`}
         </div>
@@ -72,8 +74,9 @@ export function CompanyResults({
 
       {companies.length === 0 ? (
         <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
-          No companies matched this persona. Try widening DTE, delta, or
-          liquidity filters.
+          {isRanking
+            ? "Ranking the first batch of companies..."
+            : "No companies matched this persona. Try widening DTE, delta, or liquidity filters."}
         </div>
       ) : (
         <>

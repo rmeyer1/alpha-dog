@@ -21,8 +21,10 @@ import type {
 const SCREENER_CACHE_VERSION = "v1";
 const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
 const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
+const SCREENER_UNIVERSE_CACHE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_ANALYSIS_RESULT_LIMIT = 5;
 const SCREENER_CONCURRENCY = 4;
+const DEFAULT_LIVE_BATCH_SIZE = 8;
 
 interface WheelScreenerAsset {
   symbol: string;
@@ -34,6 +36,11 @@ interface ScreenerCacheEntry {
   response: WheelScreenerResponse;
   freshUntilMs: number;
   staleUntilMs: number;
+}
+
+interface ScreenerUniverseCacheEntry {
+  assets: WheelScreenerAsset[];
+  freshUntilMs: number;
 }
 
 const demoAssets: WheelScreenerAsset[] = [
@@ -104,6 +111,7 @@ const demoAssets: WheelScreenerAsset[] = [
 }));
 
 const screenerCache = new Map<string, ScreenerCacheEntry>();
+let liveUniverseCache: ScreenerUniverseCacheEntry | null = null;
 
 function stableStringify(value: unknown): string {
   if (value == null || typeof value !== "object") {
@@ -174,6 +182,13 @@ function getFreshScreenerCache(key: string, nowMs = Date.now()) {
       cacheStatus,
       nextSuggestedRefreshAt: new Date(entry.freshUntilMs).toISOString(),
     },
+    progress: {
+      ...entry.response.progress,
+      status: "complete" as const,
+      resultScope: "complete" as const,
+      nextCursor: null,
+      processedCount: entry.response.progress.totalCount,
+    },
   };
 }
 
@@ -199,6 +214,13 @@ function getStaleScreenerCache(key: string, nowMs = Date.now()) {
       ...entry.response.dataFreshness,
       cacheStatus,
       nextSuggestedRefreshAt: null,
+    },
+    progress: {
+      ...entry.response.progress,
+      status: "complete" as const,
+      resultScope: "complete" as const,
+      nextCursor: null,
+      processedCount: entry.response.progress.totalCount,
     },
   };
 }
@@ -329,7 +351,32 @@ async function getUniverse(useDemoData: boolean) {
     return demoAssets;
   }
 
-  return getWheelAssetUniverse();
+  if (liveUniverseCache && Date.now() <= liveUniverseCache.freshUntilMs) {
+    return [...liveUniverseCache.assets];
+  }
+
+  const priority = new Map(
+    demoAssets.map((asset, index) => [asset.symbol, index]),
+  );
+  const assets = await getWheelAssetUniverse();
+  const prioritizedAssets = assets.sort((left, right) => {
+    const leftPriority = priority.get(left.symbol);
+    const rightPriority = priority.get(right.symbol);
+
+    if (leftPriority != null || rightPriority != null) {
+      return (leftPriority ?? Number.MAX_SAFE_INTEGER) -
+        (rightPriority ?? Number.MAX_SAFE_INTEGER);
+    }
+
+    return left.symbol.localeCompare(right.symbol);
+  });
+
+  liveUniverseCache = {
+    assets: prioritizedAssets,
+    freshUntilMs: Date.now() + SCREENER_UNIVERSE_CACHE_TTL_MS,
+  };
+
+  return [...prioritizedAssets];
 }
 
 export async function analyzeTopWheelCompanies(
@@ -340,8 +387,12 @@ export async function analyzeTopWheelCompanies(
   const persona = getPersona(personaId);
   const filters = mergeFilters(personaId, request.filters);
   const limit = request.limit ?? 50;
+  const cursor = request.cursor ?? 0;
   const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
+  const requestedBatchSize =
+    request.batchSize ?? (useDemoData ? demoAssets.length : DEFAULT_LIVE_BATCH_SIZE);
+  const batchSize = Math.max(1, Math.min(requestedBatchSize, 50));
   const cacheKey = buildScreenerCacheKey({
     feed,
     filters,
@@ -350,7 +401,7 @@ export async function analyzeTopWheelCompanies(
     universe: useDemoData ? "demo" : "live",
   });
 
-  if (!request.forceRefresh) {
+  if (cursor === 0 && !request.forceRefresh) {
     const fresh = getFreshScreenerCache(cacheKey);
 
     if (fresh) {
@@ -361,12 +412,17 @@ export async function analyzeTopWheelCompanies(
   try {
     const now = new Date();
     const universe = await getUniverse(useDemoData);
+    const batchStart = Math.min(cursor, universe.length);
+    const batch = universe.slice(batchStart, batchStart + batchSize);
+    const processedCount = batchStart + batch.length;
+    const nextCursor =
+      processedCount < universe.length ? processedCount : null;
     const errors: string[] = [];
     const responses: WheelAnalysisResponse[] = [];
     let skippedCount = 0;
 
     const scoredCompanies = await mapWithConcurrency(
-      universe,
+      batch,
       SCREENER_CONCURRENCY,
       async (asset): Promise<WheelCompanyScore | null> => {
         try {
@@ -432,19 +488,35 @@ export async function analyzeTopWheelCompanies(
         feed,
         cacheStatus: feed === "demo" ? "demo" : "fresh",
         asOf: responses.at(-1)?.dataFreshness.asOf ?? now.toISOString(),
-        nextSuggestedRefreshAt: addMinutes(now, 5),
+        nextSuggestedRefreshAt:
+          nextCursor == null ? addMinutes(now, 5) : null,
       },
       companies,
-      screenedCount: universe.length,
+      screenedCount: processedCount,
       skippedCount,
+      progress: {
+        status: nextCursor == null ? "complete" : "running",
+        resultScope: "batch",
+        cursor: batchStart,
+        nextCursor,
+        batchSize,
+        batchScreenedCount: batch.length,
+        processedCount,
+        totalCount: universe.length,
+      },
       warnings: mergeWarnings(responses),
-      errors:
-        companies.length === 0 && errors.length === 0
-          ? ["No companies produced a matching wheel candidate."]
-          : errors,
+      errors,
     };
 
-    setScreenerCache(cacheKey, response);
+    if (cursor === 0 && nextCursor == null) {
+      setScreenerCache(cacheKey, {
+        ...response,
+        progress: {
+          ...response.progress,
+          resultScope: "complete",
+        },
+      });
+    }
 
     return response;
   } catch (error) {
