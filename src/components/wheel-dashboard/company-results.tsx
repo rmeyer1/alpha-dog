@@ -54,6 +54,19 @@ function candidateStructure(row: WheelCompanyScore) {
   return formatCurrency(bestCandidate.shortStrike);
 }
 
+function structureHeading(strategy: WheelCompanyStrategy) {
+  switch (strategy) {
+    case "short_put":
+      return "Put Strike";
+    case "covered_call":
+      return "Call Strike";
+    case "put_credit_spread":
+      return "Short / Long Put";
+    case "call_credit_spread":
+      return "Short / Long Call";
+  }
+}
+
 export function CompanyResults({
   activeStrategy,
   companies,
@@ -123,7 +136,7 @@ export function CompanyResults({
                     "Price",
                     "Trend",
                     "Best Fit",
-                    "Structure",
+                    structureHeading(activeStrategy),
                     "Exp",
                     "Yield/ROR",
                     "Delta",
@@ -269,7 +282,9 @@ export function CompanyResults({
                     </div>
                   </div>
                   <div>
-                    <div className="text-xs text-zinc-500">Structure</div>
+                    <div className="text-xs text-zinc-500">
+                      {structureHeading(activeStrategy)}
+                    </div>
                     <div className="font-mono">{candidateStructure(row)}</div>
                   </div>
                   <div>
