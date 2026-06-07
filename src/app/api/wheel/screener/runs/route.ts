@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import { getCachedWheelScreenerResponse } from "@/lib/wheel/screener";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
@@ -29,6 +30,16 @@ export async function POST(request: Request) {
         runId: "cached",
         status: "completed",
         result: cached,
+      });
+    }
+
+    const materialized = await getMaterializedWheelScreenerResponse(parsed.data);
+
+    if (materialized) {
+      return NextResponse.json({
+        runId: "materialized",
+        status: "completed",
+        result: materialized,
       });
     }
 

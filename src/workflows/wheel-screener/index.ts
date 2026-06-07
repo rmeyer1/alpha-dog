@@ -8,7 +8,11 @@ import type {
 import {
   cacheScreenerResult,
   closeScreenerProgress,
+  completeScreenerSnapshot,
+  createScreenerSnapshot,
+  failScreenerSnapshot,
   screenWheelCompaniesBatch,
+  upsertScreenerSnapshotCandidates,
   writeScreenerProgress,
 } from "./steps";
 
@@ -119,34 +123,47 @@ export async function wheelScreenerWorkflow(
 
   const limit = request.limit ?? 50;
   const batchSize = request.batchSize ?? workflowBatchSize;
+  const batchResultLimit = Math.max(limit, batchSize);
   let cursor = request.cursor ?? 0;
   let aggregate: WheelScreenerResponse | null = null;
+  const snapshotId = await createScreenerSnapshot(request);
 
-  while (true) {
-    const batchResponse = await screenWheelCompaniesBatch({
-      ...request,
-      cursor,
-      batchSize,
-      limit,
-    });
+  try {
+    while (true) {
+      const batchResponse = await screenWheelCompaniesBatch({
+        ...request,
+        cursor,
+        batchSize,
+        limit: batchResultLimit,
+      });
 
-    aggregate = mergeScreenerResponse(aggregate, batchResponse, limit);
-    await writeScreenerProgress(aggregate);
+      await upsertScreenerSnapshotCandidates(snapshotId, request, batchResponse);
 
-    if (
-      batchResponse.progress.resultScope === "complete" ||
-      batchResponse.progress.nextCursor == null
-    ) {
-      const completed = completeProgress(aggregate);
+      aggregate = mergeScreenerResponse(aggregate, batchResponse, limit);
+      await writeScreenerProgress(aggregate);
 
-      await writeScreenerProgress(completed);
-      await cacheScreenerResult(request, completed);
-      await closeScreenerProgress();
+      if (
+        batchResponse.progress.resultScope === "complete" ||
+        batchResponse.progress.nextCursor == null
+      ) {
+        const completed = completeProgress(aggregate);
 
-      return completed;
+        await writeScreenerProgress(completed);
+        await completeScreenerSnapshot(snapshotId, completed);
+        await cacheScreenerResult(request, completed);
+        await closeScreenerProgress();
+
+        return completed;
+      }
+
+      await sleep(workflowBatchDelay);
+      cursor = batchResponse.progress.nextCursor;
     }
-
-    await sleep(workflowBatchDelay);
-    cursor = batchResponse.progress.nextCursor;
+  } catch (error) {
+    await failScreenerSnapshot(
+      snapshotId,
+      error instanceof Error ? error.message : "Screener workflow failed.",
+    );
+    throw error;
   }
 }

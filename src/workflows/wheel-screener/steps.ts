@@ -3,6 +3,12 @@ import {
   analyzeTopWheelCompanies,
   cacheCompletedWheelScreenerResponse,
 } from "@/lib/wheel/screener";
+import {
+  completeMaterializedWheelScreenerSnapshot,
+  createMaterializedWheelScreenerSnapshot,
+  failMaterializedWheelScreenerSnapshot,
+  upsertMaterializedWheelScreenerCandidates,
+} from "@/lib/wheel/materialized-screener";
 import type {
   WheelScreenerRequest,
   WheelScreenerResponse,
@@ -42,4 +48,42 @@ export async function cacheScreenerResult(
   "use step";
 
   await cacheCompletedWheelScreenerResponse(request, response);
+}
+
+export async function createScreenerSnapshot(request: WheelScreenerRequest) {
+  "use step";
+
+  return createMaterializedWheelScreenerSnapshot(request);
+}
+
+export async function upsertScreenerSnapshotCandidates(
+  snapshotId: string | null,
+  request: WheelScreenerRequest,
+  response: WheelScreenerResponse,
+) {
+  "use step";
+
+  await upsertMaterializedWheelScreenerCandidates(
+    snapshotId,
+    request,
+    response,
+  );
+}
+
+export async function completeScreenerSnapshot(
+  snapshotId: string | null,
+  response: WheelScreenerResponse,
+) {
+  "use step";
+
+  await completeMaterializedWheelScreenerSnapshot(snapshotId, response);
+}
+
+export async function failScreenerSnapshot(
+  snapshotId: string | null,
+  errorMessage: string,
+) {
+  "use step";
+
+  await failMaterializedWheelScreenerSnapshot(snapshotId, errorMessage);
 }
