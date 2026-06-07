@@ -135,6 +135,16 @@ describe("analysis cache", () => {
         ticker: "AAPL",
       }),
     ).not.toBe(base);
+    expect(
+      buildAnalysisCacheKey({
+        feed: "indicative",
+        filters,
+        personaId: "balanced_wheel",
+        resultLimit: 25,
+        strategy: "short_put",
+        ticker: "AAPL",
+      }),
+    ).not.toBe(base);
   });
 
   it("returns fresh, then stale, then expired entries", () => {

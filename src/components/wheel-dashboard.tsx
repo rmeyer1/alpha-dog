@@ -281,6 +281,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           );
         }
 
+        if (payload.status === "completed" && payload.result) {
+          setScreenerResponse(payload.result);
+          setRequestState(
+            payload.result.dataFreshness.cacheStatus === "stale"
+              ? "successStale"
+              : "successFresh",
+          );
+
+          return;
+        }
+
         workflowRunId = payload.runId;
         window.localStorage.setItem(storageKey, workflowRunId);
       }

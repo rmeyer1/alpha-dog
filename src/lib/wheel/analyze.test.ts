@@ -141,6 +141,32 @@ describe("wheel analysis", () => {
     vi.useRealTimers();
   });
 
+  it("limits live analysis to the requested strategy family", async () => {
+    stubLiveEnv();
+    getLiveWheelMarketDataMock.mockResolvedValue(liveMarketData());
+
+    const analyzeWheelCandidates = await importAnalyze();
+    const response = await analyzeWheelCandidates({
+      ticker: "AAPL",
+      persona: "balanced_wheel",
+      resultLimit: 5,
+      strategy: "short_put",
+    });
+
+    expect(getLiveWheelMarketDataMock).toHaveBeenCalledWith(
+      "AAPL",
+      expect.any(Object),
+      "short_put",
+    );
+    expect(response.shortPuts).toHaveLength(1);
+    expect(response.coveredCalls).toEqual([]);
+    expect(response.putCreditSpreads).toEqual([]);
+    expect(response.callCreditSpreads).toEqual([]);
+
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
   it("force refresh bypasses fresh cache and writes a new response", async () => {
     stubLiveEnv();
     getLiveWheelMarketDataMock

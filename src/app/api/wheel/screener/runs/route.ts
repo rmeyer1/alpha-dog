@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { getCachedWheelScreenerResponse } from "@/lib/wheel/screener";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
@@ -21,6 +22,16 @@ export async function POST(request: Request) {
   }
 
   try {
+    const cached = await getCachedWheelScreenerResponse(parsed.data);
+
+    if (cached) {
+      return NextResponse.json({
+        runId: "cached",
+        status: "completed",
+        result: cached,
+      });
+    }
+
     const run = await start(wheelScreenerWorkflow, [parsed.data]);
     const status = await run.status;
 

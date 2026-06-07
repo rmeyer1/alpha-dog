@@ -1,15 +1,20 @@
 import type {
   DataFeed,
   PersonaId,
+  WheelCompanyStrategy,
   WheelAnalysisResponse,
   WheelFilters,
 } from "./types";
+import {
+  getRuntimeCacheValue,
+  setRuntimeCacheValue,
+} from "./vercel-runtime-cache";
 
 export const ANALYSIS_CACHE_VERSION = "v1";
 export const ANALYSIS_CACHE_FRESH_TTL_MS = 2 * 60 * 1000;
 export const ANALYSIS_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 
-interface AnalysisCacheEntry {
+export interface AnalysisCacheEntry {
   response: WheelAnalysisResponse;
   writtenAtMs: number;
   freshUntilMs: number;
@@ -21,6 +26,7 @@ interface AnalysisCacheKeyInput {
   filters: WheelFilters;
   personaId: PersonaId;
   resultLimit: number;
+  strategy?: WheelCompanyStrategy;
   ticker: string;
 }
 
@@ -69,6 +75,7 @@ export function buildAnalysisCacheKey(input: AnalysisCacheKeyInput) {
     input.feed,
     input.ticker.trim().toUpperCase(),
     input.personaId,
+    input.strategy ?? "all",
     String(input.resultLimit),
     stableStringify(input.filters),
   ].join(":");
@@ -137,4 +144,51 @@ export function clearAnalysisCacheForTests() {
 
 export function cachedEntryNextRefresh(entry: AnalysisCacheEntry) {
   return new Date(entry.freshUntilMs).toISOString();
+}
+
+export async function getFreshRuntimeAnalysisCache(
+  key: string,
+  nowMs = Date.now(),
+) {
+  const entry = await getRuntimeCacheValue<AnalysisCacheEntry>(key);
+
+  if (!entry || nowMs > entry.freshUntilMs) {
+    return null;
+  }
+
+  return cloneEntry(entry);
+}
+
+export async function getStaleRuntimeAnalysisCache(
+  key: string,
+  nowMs = Date.now(),
+) {
+  const entry = await getRuntimeCacheValue<AnalysisCacheEntry>(key);
+
+  if (!entry || nowMs > entry.staleUntilMs) {
+    return null;
+  }
+
+  return cloneEntry(entry);
+}
+
+export async function setRuntimeAnalysisCache(
+  key: string,
+  response: WheelAnalysisResponse,
+  nowMs = Date.now(),
+) {
+  await setRuntimeCacheValue(
+    key,
+    {
+      response: cloneResponse(response),
+      writtenAtMs: nowMs,
+      freshUntilMs: nowMs + ANALYSIS_CACHE_FRESH_TTL_MS,
+      staleUntilMs: nowMs + ANALYSIS_CACHE_STALE_TTL_MS,
+    } satisfies AnalysisCacheEntry,
+    {
+      name: "wheel-analysis",
+      tags: ["wheel-analysis"],
+      ttlSeconds: Math.ceil(ANALYSIS_CACHE_STALE_TTL_MS / 1000),
+    },
+  );
 }

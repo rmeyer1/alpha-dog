@@ -41,6 +41,7 @@ export const analyzeRequestSchema = z.object({
     .max(10)
     .regex(/^[A-Za-z0-9.-]+$/),
   persona: personaIdSchema.default("balanced_wheel"),
+  strategy: companyStrategySchema.optional(),
   filters: filtersSchema,
   resultLimit: z.number().int().min(1).max(100).default(25),
   forceRefresh: z.boolean().default(false),

@@ -6,6 +6,7 @@ import type {
   WheelScreenerResponse,
 } from "@/lib/wheel/types";
 import {
+  cacheScreenerResult,
   closeScreenerProgress,
   screenWheelCompaniesBatch,
   writeScreenerProgress,
@@ -15,6 +16,10 @@ const workflowBatchSize = 32;
 const workflowBatchDelay = "1s";
 
 function warningKey(warning: Warning) {
+  if (warning.message.startsWith("Live refresh failed; showing cached analysis")) {
+    return `${warning.type}:${warning.severity}:live-analysis-stale-fallback`;
+  }
+
   return `${warning.type}:${warning.severity}:${warning.message}`;
 }
 
@@ -135,6 +140,7 @@ export async function wheelScreenerWorkflow(
       const completed = completeProgress(aggregate);
 
       await writeScreenerProgress(completed);
+      await cacheScreenerResult(request, completed);
       await closeScreenerProgress();
 
       return completed;

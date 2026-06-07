@@ -1,5 +1,8 @@
 import { getWritable } from "workflow";
-import { analyzeTopWheelCompanies } from "@/lib/wheel/screener";
+import {
+  analyzeTopWheelCompanies,
+  cacheCompletedWheelScreenerResponse,
+} from "@/lib/wheel/screener";
 import type {
   WheelScreenerRequest,
   WheelScreenerResponse,
@@ -30,4 +33,13 @@ export async function closeScreenerProgress() {
   "use step";
 
   await getWritable<Uint8Array>().close();
+}
+
+export async function cacheScreenerResult(
+  request: WheelScreenerRequest,
+  response: WheelScreenerResponse,
+) {
+  "use step";
+
+  await cacheCompletedWheelScreenerResponse(request, response);
 }

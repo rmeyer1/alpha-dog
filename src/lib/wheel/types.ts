@@ -190,6 +190,7 @@ export interface VerticalSpreadCandidate {
 export interface WheelAnalysisRequest {
   ticker: string;
   persona: PersonaId;
+  strategy?: WheelCompanyStrategy;
   filters?: Partial<WheelFilters>;
   resultLimit?: number;
   forceRefresh?: boolean;

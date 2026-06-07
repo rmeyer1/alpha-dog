@@ -2,6 +2,10 @@ import { getWheelAssetUniverse } from "@/lib/alpaca/client";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { analyzeWheelCandidates } from "./analyze";
 import { getPersona, mergeFilters } from "./personas";
+import {
+  getRuntimeCacheValue,
+  setRuntimeCacheValue,
+} from "./vercel-runtime-cache";
 import type {
   CacheStatus,
   DataFeed,
@@ -196,6 +200,28 @@ function getFreshScreenerCache(key: string, nowMs = Date.now()) {
   };
 }
 
+async function getFreshSharedScreenerCache(key: string, nowMs = Date.now()) {
+  const memoryEntry = getFreshScreenerCache(key, nowMs);
+
+  if (memoryEntry) {
+    return memoryEntry;
+  }
+
+  const runtimeEntry = await getRuntimeCacheValue<ScreenerCacheEntry>(key);
+
+  if (!runtimeEntry || nowMs > runtimeEntry.freshUntilMs) {
+    return null;
+  }
+
+  screenerCache.set(key, {
+    response: cloneResponse(runtimeEntry.response),
+    freshUntilMs: runtimeEntry.freshUntilMs,
+    staleUntilMs: runtimeEntry.staleUntilMs,
+  });
+
+  return getFreshScreenerCache(key, nowMs);
+}
+
 function getStaleScreenerCache(key: string, nowMs = Date.now()) {
   const entry = screenerCache.get(key);
 
@@ -229,15 +255,44 @@ function getStaleScreenerCache(key: string, nowMs = Date.now()) {
   };
 }
 
-function setScreenerCache(
+async function getStaleSharedScreenerCache(key: string, nowMs = Date.now()) {
+  const memoryEntry = getStaleScreenerCache(key, nowMs);
+
+  if (memoryEntry) {
+    return memoryEntry;
+  }
+
+  const runtimeEntry = await getRuntimeCacheValue<ScreenerCacheEntry>(key);
+
+  if (!runtimeEntry || nowMs > runtimeEntry.staleUntilMs) {
+    return null;
+  }
+
+  screenerCache.set(key, {
+    response: cloneResponse(runtimeEntry.response),
+    freshUntilMs: runtimeEntry.freshUntilMs,
+    staleUntilMs: runtimeEntry.staleUntilMs,
+  });
+
+  return getStaleScreenerCache(key, nowMs);
+}
+
+async function setScreenerCache(
   key: string,
   response: WheelScreenerResponse,
   nowMs = Date.now(),
 ) {
-  screenerCache.set(key, {
+  const entry: ScreenerCacheEntry = {
     response: cloneResponse(response),
     freshUntilMs: nowMs + SCREENER_CACHE_FRESH_TTL_MS,
     staleUntilMs: nowMs + SCREENER_CACHE_STALE_TTL_MS,
+  };
+
+  screenerCache.set(key, entry);
+  await setRuntimeCacheValue(key, entry, {
+    name: "wheel-screener",
+    tags: ["wheel-screener"],
+    ttlSeconds: Math.ceil(SCREENER_CACHE_STALE_TTL_MS / 1000),
   });
 }
 
@@ -366,6 +421,10 @@ export function selectCompanyCandidateForStrategy(
 }
 
 function warningKey(warning: Warning) {
+  if (warning.message.startsWith("Live refresh failed; showing cached analysis")) {
+    return `${warning.type}:${warning.severity}:live-analysis-stale-fallback`;
+  }
+
   return `${warning.type}:${warning.severity}:${warning.message}`;
 }
 
@@ -420,6 +479,51 @@ async function getUniverse(useDemoData: boolean) {
   return [...prioritizedAssets];
 }
 
+function screenerCacheKeyForRequest(request: WheelScreenerRequest) {
+  const env = getEnv();
+  const personaId = request.persona;
+  const strategy = request.strategy ?? "short_put";
+  const filters = mergeFilters(personaId, request.filters);
+  const limit = request.limit ?? 50;
+  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
+
+  return buildScreenerCacheKey({
+    feed,
+    filters,
+    limit,
+    personaId,
+    strategy,
+    universe: useDemoData ? "demo" : "live",
+  });
+}
+
+export async function getCachedWheelScreenerResponse(
+  request: WheelScreenerRequest,
+) {
+  if (request.forceRefresh || (request.cursor ?? 0) !== 0) {
+    return null;
+  }
+
+  return getFreshSharedScreenerCache(screenerCacheKeyForRequest(request));
+}
+
+export async function cacheCompletedWheelScreenerResponse(
+  request: WheelScreenerRequest,
+  response: WheelScreenerResponse,
+) {
+  await setScreenerCache(screenerCacheKeyForRequest(request), {
+    ...response,
+    progress: {
+      ...response.progress,
+      status: "complete",
+      resultScope: "complete",
+      nextCursor: null,
+      processedCount: response.progress.totalCount,
+    },
+  });
+}
+
 export async function analyzeTopWheelCompanies(
   request: WheelScreenerRequest,
 ): Promise<WheelScreenerResponse> {
@@ -435,17 +539,10 @@ export async function analyzeTopWheelCompanies(
   const requestedBatchSize =
     request.batchSize ?? (useDemoData ? demoAssets.length : DEFAULT_LIVE_BATCH_SIZE);
   const batchSize = Math.max(1, Math.min(requestedBatchSize, 50));
-  const cacheKey = buildScreenerCacheKey({
-    feed,
-    filters,
-    limit,
-    personaId,
-    strategy,
-    universe: useDemoData ? "demo" : "live",
-  });
+  const cacheKey = screenerCacheKeyForRequest(request);
 
   if (cursor === 0 && !request.forceRefresh) {
-    const fresh = getFreshScreenerCache(cacheKey);
+    const fresh = await getFreshSharedScreenerCache(cacheKey);
 
     if (fresh) {
       return fresh;
@@ -472,6 +569,7 @@ export async function analyzeTopWheelCompanies(
           const response = await analyzeWheelCandidatesWithRetry({
             ticker: asset.symbol,
             persona: personaId,
+            strategy,
             filters,
             resultLimit: SCREENER_ANALYSIS_RESULT_LIMIT,
             forceRefresh: request.forceRefresh,
@@ -555,7 +653,7 @@ export async function analyzeTopWheelCompanies(
     };
 
     if (cursor === 0 && nextCursor == null) {
-      setScreenerCache(cacheKey, {
+      await setScreenerCache(cacheKey, {
         ...response,
         progress: {
           ...response.progress,
@@ -566,7 +664,7 @@ export async function analyzeTopWheelCompanies(
 
     return response;
   } catch (error) {
-    const stale = getStaleScreenerCache(cacheKey);
+    const stale = await getStaleSharedScreenerCache(cacheKey);
 
     if (stale) {
       return {

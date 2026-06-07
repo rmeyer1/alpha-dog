@@ -5,6 +5,7 @@ import type {
   RawOptionContract,
   Trend,
   UnderlyingContext,
+  WheelCompanyStrategy,
   WheelFilters,
 } from "@/lib/wheel/types";
 
@@ -385,9 +386,23 @@ function normalizeContract(
   };
 }
 
+function optionTypesForStrategy(strategy?: WheelCompanyStrategy) {
+  switch (strategy) {
+    case "short_put":
+    case "put_credit_spread":
+      return ["put"] as const;
+    case "covered_call":
+    case "call_credit_spread":
+      return ["call"] as const;
+    default:
+      return ["put", "call"] as const;
+  }
+}
+
 export async function getLiveWheelMarketData(
   ticker: string,
   filters: WheelFilters,
+  strategy?: WheelCompanyStrategy,
 ) {
   const env = getEnv();
   const [latestBar, historicalBars] = await Promise.all([
@@ -417,11 +432,13 @@ export async function getLiveWheelMarketData(
       ma200,
     },
   };
-  const [putContracts, callContracts] = await Promise.all([
-    getOptionContracts(ticker, "put", filters, price),
-    getOptionContracts(ticker, "call", filters, price),
-  ]);
-  const contracts = [...putContracts, ...callContracts];
+  const contracts = (
+    await Promise.all(
+      optionTypesForStrategy(strategy).map((optionType) =>
+        getOptionContracts(ticker, optionType, filters, price)
+      ),
+    )
+  ).flat();
   const snapshots = await getSnapshotsBySymbols(
     contracts.map((contract) => contract.symbol),
     env.ALPACA_OPTIONS_FEED,
