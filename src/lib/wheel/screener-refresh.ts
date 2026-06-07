@@ -1,0 +1,140 @@
+import { getEnv } from "@/lib/env";
+import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
+import {
+  getLatestMaterializedWheelScreenerSnapshot,
+  materializedSnapshotAgeMs,
+} from "./materialized-screener";
+import type {
+  PersonaId,
+  WheelCompanyStrategy,
+  WheelScreenerRequest,
+} from "./types";
+import { companyStrategySchema, personaIdSchema } from "./validation";
+
+const RUNNING_SNAPSHOT_TIMEOUT_MS = 45 * 60 * 1000;
+const DEFAULT_REFRESH_BATCH_SIZE = 32;
+const DEFAULT_REFRESH_LIMIT = 50;
+
+export interface ScreenerRefreshDecision {
+  reason: string;
+  request: WheelScreenerRequest;
+  snapshotId: string | null;
+  status: "due" | "recent" | "running" | "not_configured";
+}
+
+function parseCsv(value: string) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parsePositiveInteger(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function unique<T>(values: T[]) {
+  return Array.from(new Set(values));
+}
+
+export function getScreenerRefreshMaxRuns() {
+  return parsePositiveInteger(getEnv().WHEEL_SCREENER_REFRESH_MAX_RUNS, 1);
+}
+
+export function getScreenerRefreshMinAgeMs() {
+  return parsePositiveInteger(
+    getEnv().WHEEL_SCREENER_REFRESH_MIN_AGE_MINUTES,
+    45,
+  ) * 60 * 1000;
+}
+
+export function getScheduledScreenerRefreshRequests(): WheelScreenerRequest[] {
+  const env = getEnv();
+  const personas = unique(
+    parseCsv(env.WHEEL_SCREENER_REFRESH_PERSONAS)
+      .map((persona) => personaIdSchema.safeParse(persona))
+      .filter((result) => result.success)
+      .map((result) => result.data),
+  );
+  const strategies = unique(
+    parseCsv(env.WHEEL_SCREENER_REFRESH_STRATEGIES)
+      .map((strategy) => companyStrategySchema.safeParse(strategy))
+      .filter((result) => result.success)
+      .map((result) => result.data),
+  );
+
+  return personas.flatMap((persona) =>
+    strategies.map((strategy) => ({
+      persona: persona as PersonaId,
+      strategy: strategy as WheelCompanyStrategy,
+      limit: DEFAULT_REFRESH_LIMIT,
+      batchSize: DEFAULT_REFRESH_BATCH_SIZE,
+      forceRefresh: true,
+    })),
+  );
+}
+
+export async function getScreenerRefreshDecision(
+  request: WheelScreenerRequest,
+  minAgeMs = getScreenerRefreshMinAgeMs(),
+  nowMs = Date.now(),
+): Promise<ScreenerRefreshDecision> {
+  if (!getSupabaseServiceConfig()) {
+    return {
+      request,
+      snapshotId: null,
+      status: "not_configured",
+      reason: "Supabase service-role configuration is missing.",
+    };
+  }
+
+  const snapshot = await getLatestMaterializedWheelScreenerSnapshot(request);
+
+  if (!snapshot) {
+    return {
+      request,
+      snapshotId: null,
+      status: "due",
+      reason: "No materialized snapshot exists.",
+    };
+  }
+
+  if (snapshot.status === "running") {
+    const runningAgeMs = nowMs - new Date(snapshot.started_at).getTime();
+
+    if (runningAgeMs <= RUNNING_SNAPSHOT_TIMEOUT_MS) {
+      return {
+        request,
+        snapshotId: snapshot.id,
+        status: "running",
+        reason: "A matching screener snapshot is already running.",
+      };
+    }
+  }
+
+  if (snapshot.status === "complete") {
+    const ageMs = materializedSnapshotAgeMs(snapshot, nowMs);
+
+    if (ageMs < minAgeMs) {
+      return {
+        request,
+        snapshotId: snapshot.id,
+        status: "recent",
+        reason: "Latest materialized snapshot is still within refresh age.",
+      };
+    }
+  }
+
+  return {
+    request,
+    snapshotId: snapshot.id,
+    status: "due",
+    reason: "Latest materialized snapshot is due for refresh.",
+  };
+}

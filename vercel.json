@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/wheel/screener-refresh",
+      "schedule": "*/15 13-22 * * 1-5"
+    }
+  ]
+}
