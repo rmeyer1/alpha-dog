@@ -102,6 +102,26 @@ interface AlpacaAsset {
   attributes?: string[];
 }
 
+interface LiveWheelMarketData {
+  feed: "opra" | "indicative";
+  underlying: UnderlyingContext;
+  rawContracts: RawOptionContract[];
+  asOf: string;
+}
+
+interface LiveWheelMarketDataCacheEntry {
+  data: LiveWheelMarketData;
+  freshUntilMs: number;
+}
+
+const ALPACA_REQUEST_MIN_INTERVAL_MS = 350;
+const LIVE_MARKET_DATA_CACHE_TTL_MS = 2 * 60 * 1000;
+
+const liveMarketDataCache = new Map<string, LiveWheelMarketDataCacheEntry>();
+const liveMarketDataInFlight = new Map<string, Promise<LiveWheelMarketData>>();
+let alpacaRequestQueue = Promise.resolve();
+let nextAlpacaRequestAtMs = 0;
+
 function formatDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -123,7 +143,87 @@ function chunk<T>(values: T[], size: number) {
   return chunks;
 }
 
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+
+  return `{${entries
+    .map(([key, entryValue]) =>
+      `${JSON.stringify(key)}:${stableStringify(entryValue)}`,
+    )
+    .join(",")}}`;
+}
+
+function cloneLiveMarketData(data: LiveWheelMarketData): LiveWheelMarketData {
+  return structuredClone(data);
+}
+
+function buildLiveMarketDataCacheKey(
+  ticker: string,
+  filters: WheelFilters,
+  strategy?: WheelCompanyStrategy,
+) {
+  const env = getEnv();
+
+  return [
+    "alpaca-live-wheel-market-data",
+    "v1",
+    env.ALPACA_OPTIONS_FEED,
+    ticker.trim().toUpperCase(),
+    strategy ?? "all",
+    stableStringify(filters),
+  ].join(":");
+}
+
+function rateLimiterDisabled() {
+  return process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
+}
+
+async function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForAlpacaRequestSlot() {
+  if (rateLimiterDisabled()) {
+    return;
+  }
+
+  const previous = alpacaRequestQueue;
+  let releaseQueue: () => void = () => {};
+
+  alpacaRequestQueue = new Promise<void>((resolve) => {
+    releaseQueue = resolve;
+  });
+
+  await previous;
+
+  try {
+    const nowMs = Date.now();
+    const waitMs = Math.max(0, nextAlpacaRequestAtMs - nowMs);
+
+    nextAlpacaRequestAtMs =
+      Math.max(nowMs, nextAlpacaRequestAtMs) + ALPACA_REQUEST_MIN_INTERVAL_MS;
+
+    if (waitMs > 0) {
+      await wait(waitMs);
+    }
+  } finally {
+    releaseQueue();
+  }
+}
+
 async function fetchAlpacaJson<T>(url: URL): Promise<T> {
+  await waitForAlpacaRequestSlot();
+
   const response = await fetch(url, {
     headers: alpacaHeaders(),
     cache: "no-store",
@@ -403,7 +503,47 @@ export async function getLiveWheelMarketData(
   ticker: string,
   filters: WheelFilters,
   strategy?: WheelCompanyStrategy,
-) {
+  options: { forceRefresh?: boolean } = {},
+): Promise<LiveWheelMarketData> {
+  const cacheKey = buildLiveMarketDataCacheKey(ticker, filters, strategy);
+  const cached = liveMarketDataCache.get(cacheKey);
+  const nowMs = Date.now();
+
+  if (!options.forceRefresh && cached && nowMs <= cached.freshUntilMs) {
+    return cloneLiveMarketData(cached.data);
+  }
+
+  if (!options.forceRefresh) {
+    const inFlight = liveMarketDataInFlight.get(cacheKey);
+
+    if (inFlight) {
+      return cloneLiveMarketData(await inFlight);
+    }
+  }
+
+  const inFlight = fetchLiveWheelMarketData(ticker, filters, strategy)
+    .then((data) => {
+      liveMarketDataCache.set(cacheKey, {
+        data: cloneLiveMarketData(data),
+        freshUntilMs: Date.now() + LIVE_MARKET_DATA_CACHE_TTL_MS,
+      });
+
+      return data;
+    })
+    .finally(() => {
+      liveMarketDataInFlight.delete(cacheKey);
+    });
+
+  liveMarketDataInFlight.set(cacheKey, inFlight);
+
+  return cloneLiveMarketData(await inFlight);
+}
+
+async function fetchLiveWheelMarketData(
+  ticker: string,
+  filters: WheelFilters,
+  strategy?: WheelCompanyStrategy,
+): Promise<LiveWheelMarketData> {
   const env = getEnv();
   const [latestBar, historicalBars] = await Promise.all([
     getLatestStockBar(ticker),

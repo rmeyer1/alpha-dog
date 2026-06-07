@@ -320,7 +320,7 @@ export async function getMaterializedWheelScreenerResponse(
       resultScope: "complete",
       cursor: offset,
       nextCursor: companies.length === limit ? offset + limit : null,
-      batchSize: request.batchSize ?? 32,
+      batchSize: request.batchSize ?? 8,
       batchScreenedCount: companies.length,
       processedCount: snapshot.processed_count,
       totalCount: snapshot.total_count,
