@@ -144,6 +144,33 @@ describe("materialized wheel screener", () => {
     expect(candidateUrl.searchParams.get("strategy")).toBe("eq.short_put");
     expect(candidateUrl.searchParams.get("order")).toBe("score.desc,symbol.asc");
     expect(candidateUrl.searchParams.get("limit")).toBe("50");
+    expect(candidateUrl.searchParams.get("offset")).toBe("0");
+  });
+
+  it("supports offset reads from materialized candidate rows", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([snapshotRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([candidateRow]), { status: 200 }),
+      );
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+    const response = await getMaterializedWheelScreenerResponse({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+      cursor: 50,
+    });
+    const candidateUrl = new URL(String(vi.mocked(fetch).mock.calls[1][0]));
+
+    expect(candidateUrl.searchParams.get("offset")).toBe("50");
+    expect(response?.companies[0].rank).toBe(51);
+    expect(response?.progress.cursor).toBe(50);
   });
 
   it("writes snapshot metadata and candidate rows through service-role REST", async () => {

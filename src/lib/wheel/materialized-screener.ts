@@ -14,10 +14,10 @@ import type {
   WheelScreenerResponse,
 } from "./types";
 
-const MATERIALIZED_FRESH_TTL_MS = 5 * 60 * 1000;
-const MATERIALIZED_STALE_TTL_MS = 30 * 60 * 1000;
+export const MATERIALIZED_FRESH_TTL_MS = 15 * 60 * 1000;
+export const MATERIALIZED_STALE_TTL_MS = 2 * 60 * 60 * 1000;
 
-interface WheelScreenerSnapshotRow {
+export interface WheelScreenerSnapshotRow {
   id: string;
   persona: string;
   strategy: string;
@@ -135,6 +135,14 @@ function cacheStatusForSnapshot(
   return null;
 }
 
+export function materializedSnapshotAgeMs(
+  snapshot: Pick<WheelScreenerSnapshotRow, "completed_at" | "created_at">,
+  nowMs = Date.now(),
+) {
+  return nowMs -
+    new Date(snapshot.completed_at ?? snapshot.created_at).getTime();
+}
+
 function optionTypeForStrategy(strategy: WheelCompanyStrategy) {
   return strategy === "short_put" || strategy === "put_credit_spread"
     ? "put"
@@ -242,11 +250,12 @@ function companyScoreToCandidateRow(
 export async function getMaterializedWheelScreenerResponse(
   request: WheelScreenerRequest,
 ): Promise<WheelScreenerResponse | null> {
-  if (request.forceRefresh || (request.cursor ?? 0) !== 0) {
+  if (request.forceRefresh) {
     return null;
   }
 
   const { feed, filterKey, persona, strategy } = getRequestContext(request);
+  const offset = request.cursor ?? 0;
   const snapshots = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
     "wheel_screener_snapshots",
     {
@@ -281,12 +290,13 @@ export async function getMaterializedWheelScreenerResponse(
         strategy: `eq.${strategy}`,
         order: "score.desc,symbol.asc",
         limit,
+        offset,
       },
     },
   );
 
   const companies = (rows ?? []).map((row, index) =>
-    rowToCompanyScore(row, index + 1),
+    rowToCompanyScore(row, offset + index + 1),
   );
   const asOf = snapshot.completed_at ?? snapshot.created_at;
 
@@ -308,16 +318,40 @@ export async function getMaterializedWheelScreenerResponse(
     progress: {
       status: "complete",
       resultScope: "complete",
-      cursor: 0,
-      nextCursor: null,
+      cursor: offset,
+      nextCursor: companies.length === limit ? offset + limit : null,
       batchSize: request.batchSize ?? 32,
-      batchScreenedCount: snapshot.processed_count,
+      batchScreenedCount: companies.length,
       processedCount: snapshot.processed_count,
       totalCount: snapshot.total_count,
     },
     warnings: [],
     errors: snapshot.error ? [snapshot.error] : [],
   };
+}
+
+export async function getLatestMaterializedWheelScreenerSnapshot(
+  request: WheelScreenerRequest,
+) {
+  const { feed, filterKey, strategy } = getRequestContext(request);
+  const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
+    "wheel_screener_snapshots",
+    {
+      query: {
+        select:
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        persona: `eq.${request.persona}`,
+        strategy: `eq.${strategy}`,
+        filter_key: `eq.${filterKey}`,
+        feed: `eq.${feed}`,
+        status: "in.(running,complete)",
+        order: "created_at.desc",
+        limit: 1,
+      },
+    },
+  );
+
+  return rows?.[0] ?? null;
 }
 
 export async function createMaterializedWheelScreenerSnapshot(
