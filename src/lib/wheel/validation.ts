@@ -54,7 +54,7 @@ export const screenerRequestSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
   forceRefresh: z.boolean().default(false),
   cursor: z.number().int().min(0).default(0),
-  batchSize: z.number().int().min(1).max(50).default(8),
+  batchSize: z.number().int().min(1).max(50).default(32),
 });
 
 export const savedPresetInputSchema = z.object({

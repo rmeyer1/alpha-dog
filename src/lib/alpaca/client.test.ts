@@ -13,6 +13,17 @@ function stubLiveEnv() {
 function jsonResponse(body: unknown) {
   return {
     ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: async () => body,
+  };
+}
+
+function errorResponse(status: number, body: unknown, headers = new Headers()) {
+  return {
+    ok: false,
+    status,
+    headers,
     json: async () => body,
   };
 }
@@ -151,6 +162,77 @@ describe("Alpaca client", () => {
 
     expect(contractUrls).toHaveLength(1);
     expect(contractUrls[0]).toContain("type=put");
+
+    const chainUrls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes("/v1beta1/options/snapshots/AAPL"));
+
+    expect(chainUrls).toHaveLength(1);
+    expect(chainUrls[0]).toContain("type=put");
+    expect(chainUrls[0]).toContain("limit=1000");
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to explicit symbol snapshots when option chain snapshots fail", async () => {
+    stubLiveEnv();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ bar: { c: 100, t: "2026-06-05T20:00:00Z" } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          bars: Array.from({ length: 220 }, (_, index) => ({
+            c: 90 + index * 0.05,
+            h: 0,
+            l: 0,
+            o: 0,
+            t: "2026-06-05T20:00:00Z",
+            v: 1,
+          })),
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          option_contracts: [
+            {
+              symbol: "AAPL260619P00095000",
+              expiration_date: "2026-06-19",
+              type: "put",
+              strike_price: "95",
+              open_interest: "500",
+              tradable: true,
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(errorResponse(403, { message: "chain unavailable" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          snapshots: {
+            AAPL260619P00095000: {
+              latestQuote: { bp: 1, ap: 1.1 },
+              greeks: { delta: -0.24, theta: -0.04 },
+              impliedVolatility: 0.35,
+              dailyBar: { v: 100 },
+            },
+          },
+        }),
+      );
+
+    const { getLiveWheelMarketData } = await import("./client");
+    const data = await getLiveWheelMarketData("AAPL", wheelFilters, "short_put");
+    const snapshotUrls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes("/v1beta1/options/snapshots"));
+
+    expect(snapshotUrls).toHaveLength(2);
+    expect(snapshotUrls[0]).toContain("/v1beta1/options/snapshots/AAPL");
+    expect(snapshotUrls[1]).toContain("/v1beta1/options/snapshots?");
+    expect(snapshotUrls[1]).toContain("symbols=AAPL260619P00095000");
+    expect(data.rawContracts[0]).toMatchObject({
+      contractSymbol: "AAPL260619P00095000",
+      openInterest: 500,
+    });
 
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

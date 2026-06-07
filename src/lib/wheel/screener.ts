@@ -22,13 +22,12 @@ import type {
   VerticalSpreadCandidate,
 } from "./types";
 
-const SCREENER_CACHE_VERSION = "v2";
+const SCREENER_CACHE_VERSION = "v3";
 const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
 const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_UNIVERSE_CACHE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_ANALYSIS_RESULT_LIMIT = 5;
-const SCREENER_CONCURRENCY = 1;
-const DEFAULT_LIVE_BATCH_SIZE = 8;
+const SCREENER_DEMO_CONCURRENCY = 8;
 const SCREENER_RATE_LIMIT_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
 
 interface WheelScreenerAsset {
@@ -323,6 +322,17 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function liveBatchSize() {
+  return Math.min(getEnv().WHEEL_SCREENER_LIVE_BATCH_SIZE, 50);
+}
+
+function liveConcurrency(batchSize: number) {
+  return Math.max(
+    1,
+    Math.min(getEnv().WHEEL_SCREENER_LIVE_CONCURRENCY, batchSize),
+  );
+}
+
 function isRateLimitError(error: unknown) {
   if (!(error instanceof Error)) {
     return false;
@@ -537,9 +547,12 @@ export async function analyzeTopWheelCompanies(
   const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
   const requestedBatchSize =
-    request.batchSize ?? (useDemoData ? demoAssets.length : DEFAULT_LIVE_BATCH_SIZE);
-  const maxBatchSize = useDemoData ? 50 : DEFAULT_LIVE_BATCH_SIZE;
+    request.batchSize ?? (useDemoData ? demoAssets.length : liveBatchSize());
+  const maxBatchSize = useDemoData ? 50 : liveBatchSize();
   const batchSize = Math.max(1, Math.min(requestedBatchSize, maxBatchSize));
+  const concurrency = useDemoData
+    ? Math.min(SCREENER_DEMO_CONCURRENCY, batchSize)
+    : liveConcurrency(batchSize);
   const cacheKey = screenerCacheKeyForRequest(request);
 
   if (cursor === 0 && !request.forceRefresh) {
@@ -564,7 +577,7 @@ export async function analyzeTopWheelCompanies(
 
     const scoredCompanies = await mapWithConcurrency(
       batch,
-      SCREENER_CONCURRENCY,
+      concurrency,
       async (asset): Promise<WheelCompanyScore | null> => {
         try {
           const response = await analyzeWheelCandidatesWithRetry({

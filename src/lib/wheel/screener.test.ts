@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectCompanyCandidateForStrategy } from "./screener";
-import type { WheelAnalysisResponse } from "./types";
+import type { WheelAnalysisRequest, WheelAnalysisResponse } from "./types";
+
+const analyzeWheelCandidatesMock = vi.hoisted(() => vi.fn());
+const getWheelAssetUniverseMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./analyze", () => ({
+  analyzeWheelCandidates: analyzeWheelCandidatesMock,
+}));
+
+vi.mock("@/lib/alpaca/client", () => ({
+  getWheelAssetUniverse: getWheelAssetUniverseMock,
+}));
 
 function responseWithAllStrategies(): WheelAnalysisResponse {
   return {
@@ -91,6 +102,26 @@ function responseWithAllStrategies(): WheelAnalysisResponse {
   };
 }
 
+function responseForTicker(ticker: string): WheelAnalysisResponse {
+  const response = responseWithAllStrategies();
+
+  return {
+    ...response,
+    ticker,
+    underlying: {
+      ...response.underlying,
+      symbol: ticker,
+    },
+  };
+}
+
+beforeEach(() => {
+  vi.resetModules();
+  vi.unstubAllEnvs();
+  analyzeWheelCandidatesMock.mockReset();
+  getWheelAssetUniverseMock.mockReset();
+});
+
 describe("wheel company screener", () => {
   it("selects only the requested strategy family", () => {
     const response = responseWithAllStrategies();
@@ -119,5 +150,66 @@ describe("wheel company screener", () => {
       strategy: "call_credit_spread",
       score: 77,
     });
+  });
+
+  it("uses higher live batch defaults while capping concurrent analysis", async () => {
+    vi.stubEnv("USE_DEMO_DATA", "false");
+    vi.stubEnv("APCA_API_KEY_ID", "key");
+    vi.stubEnv("APCA_API_SECRET_KEY", "secret");
+    vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
+    vi.stubEnv("WHEEL_SCREENER_LIVE_BATCH_SIZE", "32");
+    vi.stubEnv("WHEEL_SCREENER_LIVE_CONCURRENCY", "8");
+
+    getWheelAssetUniverseMock.mockResolvedValue(
+      Array.from({ length: 40 }, (_, index) => ({
+        symbol: `T${index}`,
+        name: `Ticker ${index}`,
+        exchange: "NASDAQ",
+      })),
+    );
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let releaseBatch: () => void = () => {};
+    const batchGate = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+
+    analyzeWheelCandidatesMock.mockImplementation(
+      async (request: WheelAnalysisRequest) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+
+        await batchGate;
+
+        inFlight -= 1;
+
+        return responseForTicker(request.ticker);
+      },
+    );
+
+    const { analyzeTopWheelCompanies } = await import("./screener");
+    const pending = analyzeTopWheelCompanies({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      forceRefresh: true,
+    });
+
+    await vi.waitFor(() => {
+      expect(maxInFlight).toBe(8);
+      expect(analyzeWheelCandidatesMock).toHaveBeenCalledTimes(8);
+    });
+
+    releaseBatch();
+    const response = await pending;
+
+    expect(response.progress).toMatchObject({
+      batchSize: 32,
+      batchScreenedCount: 32,
+      processedCount: 32,
+      totalCount: 40,
+      nextCursor: 32,
+    });
+    expect(maxInFlight).toBe(8);
   });
 });
