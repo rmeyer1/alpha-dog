@@ -12,7 +12,7 @@ import type {
 import { companyStrategySchema, personaIdSchema } from "./validation";
 
 const RUNNING_SNAPSHOT_TIMEOUT_MS = 45 * 60 * 1000;
-const DEFAULT_REFRESH_BATCH_SIZE = 32;
+const DEFAULT_REFRESH_BATCH_SIZE = 8;
 const DEFAULT_REFRESH_LIMIT = 50;
 const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",

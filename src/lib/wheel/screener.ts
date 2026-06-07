@@ -27,8 +27,8 @@ const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
 const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_UNIVERSE_CACHE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_ANALYSIS_RESULT_LIMIT = 5;
-const SCREENER_CONCURRENCY = 2;
-const DEFAULT_LIVE_BATCH_SIZE = 32;
+const SCREENER_CONCURRENCY = 1;
+const DEFAULT_LIVE_BATCH_SIZE = 8;
 const SCREENER_RATE_LIMIT_RETRY_DELAYS_MS = [2000, 5000, 10000, 20000];
 
 interface WheelScreenerAsset {
@@ -538,7 +538,8 @@ export async function analyzeTopWheelCompanies(
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
   const requestedBatchSize =
     request.batchSize ?? (useDemoData ? demoAssets.length : DEFAULT_LIVE_BATCH_SIZE);
-  const batchSize = Math.max(1, Math.min(requestedBatchSize, 50));
+  const maxBatchSize = useDemoData ? 50 : DEFAULT_LIVE_BATCH_SIZE;
+  const batchSize = Math.max(1, Math.min(requestedBatchSize, maxBatchSize));
   const cacheKey = screenerCacheKeyForRequest(request);
 
   if (cursor === 0 && !request.forceRefresh) {

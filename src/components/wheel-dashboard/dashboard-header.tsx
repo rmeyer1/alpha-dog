@@ -5,6 +5,7 @@ import {
   Search,
   ShieldAlert,
 } from "lucide-react";
+import Link from "next/link";
 import type { FormEvent } from "react";
 import type {
   PersonaConfig,
@@ -48,9 +49,30 @@ export function DashboardHeader({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-zinc-400">
-            <ShieldAlert className="size-4 text-amber-200" />
-            Decision support only. Not financial advice.
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <nav
+              aria-label="Workspace"
+              className="max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-1"
+            >
+              <div className="flex w-max gap-1">
+                <Link
+                  className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
+                  href="/screeners"
+                >
+                  Screeners
+                </Link>
+                <Link
+                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                  href="/account"
+                >
+                  Account
+                </Link>
+              </div>
+            </nav>
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <ShieldAlert className="size-4 text-amber-200" />
+              Decision support only. Not financial advice.
+            </div>
           </div>
         </div>
 

@@ -14,7 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Alpha Dog",
-  description: "Wheel strategy decision dashboard",
+  description:
+    "Professional options screeners for wheel, spread, and covered-call strategies.",
 };
 
 export default function RootLayout({

@@ -133,13 +133,23 @@ async function computeWheelCandidates(
     now: Date;
     personaId: PersonaId;
     resultLimit: number;
+    forceRefresh?: boolean;
     strategy?: WheelCompanyStrategy;
     ticker: string;
     useDemoData: boolean;
   },
 ): Promise<WheelAnalysisResponse> {
-  const { env, filters, now, personaId, resultLimit, strategy, ticker, useDemoData } =
-    options;
+  const {
+    env,
+    filters,
+    forceRefresh,
+    now,
+    personaId,
+    resultLimit,
+    strategy,
+    ticker,
+    useDemoData,
+  } = options;
   const persona = getPersona(personaId);
   const demoUnderlying = useDemoData ? getDemoUnderlying(ticker) : null;
   const marketData = demoUnderlying
@@ -149,7 +159,11 @@ async function computeWheelCandidates(
         rawContracts: getDemoContracts(ticker, demoUnderlying),
         asOf: now.toISOString(),
       }
-    : await getLiveWheelMarketData(ticker, filters, strategy);
+    : forceRefresh
+      ? await getLiveWheelMarketData(ticker, filters, strategy, {
+          forceRefresh: true,
+        })
+      : await getLiveWheelMarketData(ticker, filters, strategy);
   const { underlying, rawContracts } = marketData;
   const feed: DataFeed = marketData.feed;
   const candidates = rawContracts
@@ -227,14 +241,15 @@ export async function analyzeWheelCandidates(
   if (useDemoData) {
     return computeWheelCandidates({
       env,
-    filters,
-    now,
-    personaId,
-    resultLimit,
-    strategy: request.strategy,
-    ticker,
-    useDemoData,
-  });
+      filters,
+      forceRefresh: request.forceRefresh,
+      now,
+      personaId,
+      resultLimit,
+      strategy: request.strategy,
+      ticker,
+      useDemoData,
+    });
   }
 
   const cacheKey = buildAnalysisCacheKey({
@@ -275,6 +290,7 @@ export async function analyzeWheelCandidates(
     const response = await computeWheelCandidates({
       env,
       filters,
+      forceRefresh: request.forceRefresh,
       now,
       personaId,
       resultLimit,

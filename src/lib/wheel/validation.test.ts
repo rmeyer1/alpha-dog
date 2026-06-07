@@ -53,7 +53,7 @@ describe("wheel validation", () => {
       limit: 50,
       forceRefresh: false,
       cursor: 0,
-      batchSize: 32,
+      batchSize: 8,
     });
   });
 });
