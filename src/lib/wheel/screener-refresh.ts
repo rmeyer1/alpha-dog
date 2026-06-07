@@ -34,6 +34,7 @@ export interface EasternMarketHoursState {
   easternMinutes: number;
   isMarketDay: boolean;
   isOpen: boolean;
+  isWeekendPrewarm: boolean;
   weekday: string;
 }
 
@@ -72,8 +73,11 @@ export function getEasternMarketHoursState(
     Number.parseInt(parts.hour ?? "0", 10) * 60 +
     Number.parseInt(parts.minute ?? "0", 10);
   const isMarketDay = !["Sat", "Sun"].includes(weekday);
+  const isWeekend = ["Sat", "Sun"].includes(weekday);
   const marketOpenMinutes = 9 * 60 + 30;
   const marketCloseMinutes = 16 * 60;
+  const weekendPrewarmOpenMinutes = 16 * 60;
+  const weekendPrewarmCloseMinutes = 18 * 60;
 
   return {
     easternMinutes,
@@ -82,12 +86,23 @@ export function getEasternMarketHoursState(
       isMarketDay &&
       easternMinutes >= marketOpenMinutes &&
       easternMinutes <= marketCloseMinutes,
+    isWeekendPrewarm:
+      isWeekend &&
+      easternMinutes >= weekendPrewarmOpenMinutes &&
+      easternMinutes <= weekendPrewarmCloseMinutes,
     weekday,
   };
 }
 
 export function getScreenerRefreshMaxRuns() {
   return parsePositiveInteger(getEnv().WHEEL_SCREENER_REFRESH_MAX_RUNS, 1);
+}
+
+export function getScreenerWeekendRefreshMaxRuns() {
+  return parsePositiveInteger(
+    getEnv().WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS,
+    4,
+  );
 }
 
 export function getScreenerRefreshMinAgeMs() {

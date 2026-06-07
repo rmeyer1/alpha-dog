@@ -95,6 +95,7 @@ describe("screener refresh scheduling", () => {
     ).toMatchObject({
       isMarketDay: true,
       isOpen: true,
+      isWeekendPrewarm: false,
       weekday: "Mon",
     });
     expect(
@@ -111,6 +112,48 @@ describe("screener refresh scheduling", () => {
       isOpen: true,
       weekday: "Mon",
     });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-06T19:59:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isWeekendPrewarm: false,
+      weekday: "Sat",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-06T21:00:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isWeekendPrewarm: true,
+      weekday: "Sat",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-07T21:00:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isWeekendPrewarm: true,
+      weekday: "Sun",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-01-03T21:00:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isWeekendPrewarm: true,
+      weekday: "Sat",
+    });
+  });
+
+  it("uses a larger default run budget for weekend prewarm", async () => {
+    const {
+      getScreenerRefreshMaxRuns,
+      getScreenerWeekendRefreshMaxRuns,
+    } = await importRefresh();
+
+    expect(getScreenerRefreshMaxRuns()).toBe(1);
+    expect(getScreenerWeekendRefreshMaxRuns()).toBe(4);
   });
 
   it("does not query snapshots when Supabase service-role config is missing", async () => {

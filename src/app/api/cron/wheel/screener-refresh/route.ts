@@ -7,6 +7,7 @@ import {
   getScheduledScreenerRefreshRequests,
   getScreenerRefreshDecision,
   getScreenerRefreshMaxRuns,
+  getScreenerWeekendRefreshMaxRuns,
   type ScreenerRefreshDecision,
 } from "@/lib/wheel/screener-refresh";
 import type { WheelScreenerRequest } from "@/lib/wheel/types";
@@ -105,7 +106,7 @@ async function handleRefresh(request: Request) {
   const force = url.searchParams.get("force") === "true";
   const marketHours = getEasternMarketHoursState();
 
-  if (!marketHours.isOpen && !dryRun && !force) {
+  if (!marketHours.isOpen && !marketHours.isWeekendPrewarm && !dryRun && !force) {
     return NextResponse.json({
       ok: true,
       skippedMarketHours: true,
@@ -116,8 +117,11 @@ async function handleRefresh(request: Request) {
     });
   }
 
+  const defaultMaxRuns = marketHours.isWeekendPrewarm
+    ? getScreenerWeekendRefreshMaxRuns()
+    : getScreenerRefreshMaxRuns();
   const maxRuns = Math.min(
-    getScreenerRefreshMaxRuns(),
+    defaultMaxRuns,
     Number.parseInt(url.searchParams.get("maxRuns") ?? "", 10) ||
       Number.MAX_SAFE_INTEGER,
   );
