@@ -12,12 +12,14 @@ import {
   createScreenerSnapshot,
   failScreenerSnapshot,
   screenWheelCompaniesBatch,
+  updateScreenerSnapshotProgress,
   upsertScreenerSnapshotCandidates,
   writeScreenerProgress,
 } from "./steps";
 
 const workflowBatchSize = 32;
 const workflowBatchDelay = "5s";
+const workflowRateLimitBatchDelay = "30s";
 
 function warningKey(warning: Warning) {
   if (warning.message.startsWith("Live refresh failed; showing cached analysis")) {
@@ -116,6 +118,12 @@ function completeProgress(response: WheelScreenerResponse) {
   };
 }
 
+function hasRateLimitErrors(response: WheelScreenerResponse) {
+  return response.errors.some((error) =>
+    /429|too many requests|rate limit/i.test(error)
+  );
+}
+
 export async function wheelScreenerWorkflow(
   request: WheelScreenerRequest,
 ): Promise<WheelScreenerResponse> {
@@ -141,6 +149,7 @@ export async function wheelScreenerWorkflow(
 
       aggregate = mergeScreenerResponse(aggregate, batchResponse, limit);
       await writeScreenerProgress(aggregate);
+      await updateScreenerSnapshotProgress(snapshotId, aggregate);
 
       if (
         batchResponse.progress.resultScope === "complete" ||
@@ -156,13 +165,18 @@ export async function wheelScreenerWorkflow(
         return completed;
       }
 
-      await sleep(workflowBatchDelay);
+      await sleep(
+        hasRateLimitErrors(batchResponse)
+          ? workflowRateLimitBatchDelay
+          : workflowBatchDelay,
+      );
       cursor = batchResponse.progress.nextCursor;
     }
   } catch (error) {
     await failScreenerSnapshot(
       snapshotId,
       error instanceof Error ? error.message : "Screener workflow failed.",
+      aggregate,
     );
     throw error;
   }

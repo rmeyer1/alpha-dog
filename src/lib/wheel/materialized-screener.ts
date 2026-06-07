@@ -4,6 +4,7 @@ import { getPersona, mergeFilters } from "./personas";
 import type {
   CacheStatus,
   DataFeed,
+  PersonaId,
   QualityLabel,
   Trend,
   Warning,
@@ -11,11 +12,13 @@ import type {
   WheelCompanyScore,
   WheelCompanyStrategy,
   WheelScreenerRequest,
+  WheelScreenerRunResponse,
   WheelScreenerResponse,
 } from "./types";
 
 export const MATERIALIZED_FRESH_TTL_MS = 15 * 60 * 1000;
 export const MATERIALIZED_STALE_TTL_MS = 2 * 60 * 60 * 1000;
+export const MATERIALIZED_RUNNING_STALE_MS = 45 * 60 * 1000;
 
 export interface WheelScreenerSnapshotRow {
   id: string;
@@ -26,6 +29,7 @@ export interface WheelScreenerSnapshotRow {
   feed: DataFeed;
   status: "running" | "complete" | "failed";
   started_at: string;
+  heartbeat_at: string;
   completed_at: string | null;
   total_count: number;
   processed_count: number;
@@ -207,6 +211,75 @@ function rowToCompanyScore(
   };
 }
 
+function getSnapshotPersona(snapshot: Pick<WheelScreenerSnapshotRow, "persona">) {
+  return getPersona(snapshot.persona as PersonaId);
+}
+
+async function getCandidateRowsForSnapshot(
+  snapshotId: string,
+  strategy: string,
+  limit: number,
+  offset: number,
+) {
+  return await requestSupabaseRest<WheelOptionCandidateRow[]>(
+    "wheel_option_candidates",
+    {
+      query: {
+        select:
+          "snapshot_id,persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of",
+        snapshot_id: `eq.${snapshotId}`,
+        strategy: `eq.${strategy}`,
+        order: "score.desc,symbol.asc",
+        limit,
+        offset,
+      },
+    },
+  );
+}
+
+function snapshotToScreenerResponse(
+  snapshot: WheelScreenerSnapshotRow,
+  rows: WheelOptionCandidateRow[],
+  limit: number,
+  offset: number,
+): WheelScreenerResponse {
+  const persona = getSnapshotPersona(snapshot);
+  const companies = rows.map((row, index) =>
+    rowToCompanyScore(row, offset + index + 1),
+  );
+  const asOf =
+    snapshot.completed_at ?? snapshot.heartbeat_at ?? snapshot.created_at;
+
+  return {
+    persona: {
+      id: persona.id,
+      name: persona.name,
+      motto: persona.motto,
+    },
+    dataFreshness: {
+      feed: snapshot.feed,
+      cacheStatus: cacheStatusForSnapshot(snapshot) ?? "stale",
+      asOf,
+      nextSuggestedRefreshAt: nextSuggestedRefreshAt(snapshot),
+    },
+    companies,
+    screenedCount: snapshot.total_count,
+    skippedCount: snapshot.skipped_count,
+    progress: {
+      status: snapshot.status === "complete" ? "complete" : "running",
+      resultScope: snapshot.status === "complete" ? "complete" : "batch",
+      cursor: offset,
+      nextCursor: companies.length === limit ? offset + limit : null,
+      batchSize: limit,
+      batchScreenedCount: companies.length,
+      processedCount: snapshot.processed_count,
+      totalCount: snapshot.total_count,
+    },
+    warnings: [],
+    errors: snapshot.error ? [snapshot.error] : [],
+  };
+}
+
 function companyScoreToCandidateRow(
   snapshotId: string,
   request: WheelScreenerRequest,
@@ -254,14 +327,14 @@ export async function getMaterializedWheelScreenerResponse(
     return null;
   }
 
-  const { feed, filterKey, persona, strategy } = getRequestContext(request);
+  const { feed, filterKey, strategy } = getRequestContext(request);
   const offset = request.cursor ?? 0;
   const snapshots = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
     "wheel_screener_snapshots",
     {
       query: {
         select:
-          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,heartbeat_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
         persona: `eq.${request.persona}`,
         strategy: `eq.${strategy}`,
         filter_key: `eq.${filterKey}`,
@@ -280,54 +353,13 @@ export async function getMaterializedWheelScreenerResponse(
   }
 
   const limit = request.limit ?? 50;
-  const rows = await requestSupabaseRest<WheelOptionCandidateRow[]>(
-    "wheel_option_candidates",
-    {
-      query: {
-        select:
-          "snapshot_id,persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of",
-        snapshot_id: `eq.${snapshot.id}`,
-        strategy: `eq.${strategy}`,
-        order: "score.desc,symbol.asc",
-        limit,
-        offset,
-      },
-    },
+  return snapshotToScreenerResponse(
+    snapshot,
+    (await getCandidateRowsForSnapshot(snapshot.id, strategy, limit, offset)) ??
+      [],
+    limit,
+    offset,
   );
-
-  const companies = (rows ?? []).map((row, index) =>
-    rowToCompanyScore(row, offset + index + 1),
-  );
-  const asOf = snapshot.completed_at ?? snapshot.created_at;
-
-  return {
-    persona: {
-      id: persona.id,
-      name: persona.name,
-      motto: persona.motto,
-    },
-    dataFreshness: {
-      feed: snapshot.feed,
-      cacheStatus,
-      asOf,
-      nextSuggestedRefreshAt: nextSuggestedRefreshAt(snapshot),
-    },
-    companies,
-    screenedCount: snapshot.total_count,
-    skippedCount: snapshot.skipped_count,
-    progress: {
-      status: "complete",
-      resultScope: "complete",
-      cursor: offset,
-      nextCursor: companies.length === limit ? offset + limit : null,
-      batchSize: request.batchSize ?? 8,
-      batchScreenedCount: companies.length,
-      processedCount: snapshot.processed_count,
-      totalCount: snapshot.total_count,
-    },
-    warnings: [],
-    errors: snapshot.error ? [snapshot.error] : [],
-  };
 }
 
 export async function getLatestMaterializedWheelScreenerSnapshot(
@@ -339,7 +371,7 @@ export async function getLatestMaterializedWheelScreenerSnapshot(
     {
       query: {
         select:
-          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,heartbeat_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
         persona: `eq.${request.persona}`,
         strategy: `eq.${strategy}`,
         filter_key: `eq.${filterKey}`,
@@ -352,6 +384,95 @@ export async function getLatestMaterializedWheelScreenerSnapshot(
   );
 
   return rows?.[0] ?? null;
+}
+
+export async function getActiveMaterializedWheelScreenerSnapshot(
+  request: WheelScreenerRequest,
+  nowMs = Date.now(),
+) {
+  const { feed, filterKey, strategy } = getRequestContext(request);
+  const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
+    "wheel_screener_snapshots",
+    {
+      query: {
+        select:
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,heartbeat_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        persona: `eq.${request.persona}`,
+        strategy: `eq.${strategy}`,
+        filter_key: `eq.${filterKey}`,
+        feed: `eq.${feed}`,
+        status: "eq.running",
+        order: "heartbeat_at.desc",
+        limit: 1,
+      },
+    },
+  );
+  const snapshot = rows?.[0];
+
+  if (!snapshot) {
+    return null;
+  }
+
+  const heartbeatMs = new Date(snapshot.heartbeat_at ?? snapshot.started_at)
+    .getTime();
+
+  return nowMs - heartbeatMs <= MATERIALIZED_RUNNING_STALE_MS
+    ? snapshot
+    : null;
+}
+
+export async function getMaterializedWheelScreenerRunResponse(
+  snapshotId: string,
+  limit = 50,
+): Promise<WheelScreenerRunResponse | null> {
+  const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
+    "wheel_screener_snapshots",
+    {
+      query: {
+        select:
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,heartbeat_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        id: `eq.${snapshotId}`,
+        limit: 1,
+      },
+    },
+  );
+  const snapshot = rows?.[0];
+
+  if (!snapshot) {
+    return null;
+  }
+
+  if (snapshot.status === "running") {
+    return {
+      runId: `snapshot:${snapshot.id}`,
+      status: "running",
+      result: null,
+    };
+  }
+
+  if (snapshot.status === "failed") {
+    return {
+      runId: `snapshot:${snapshot.id}`,
+      status: "failed",
+      result: null,
+    };
+  }
+
+  return {
+    runId: `snapshot:${snapshot.id}`,
+    status: "completed",
+    result: snapshotToScreenerResponse(
+      snapshot,
+      (await getCandidateRowsForSnapshot(
+        snapshot.id,
+        snapshot.strategy,
+        limit,
+        0,
+      )) ?? [],
+      limit,
+      0,
+    ),
+  };
 }
 
 export async function createMaterializedWheelScreenerSnapshot(
@@ -403,6 +524,31 @@ export async function upsertMaterializedWheelScreenerCandidates(
   });
 }
 
+export async function updateMaterializedWheelScreenerSnapshotProgress(
+  snapshotId: string | null,
+  response: WheelScreenerResponse,
+) {
+  if (!snapshotId) {
+    return;
+  }
+
+  await requestSupabaseRest<null>("wheel_screener_snapshots", {
+    method: "PATCH",
+    body: {
+      heartbeat_at: new Date().toISOString(),
+      total_count: response.progress.totalCount,
+      processed_count: response.progress.processedCount,
+      skipped_count: response.skippedCount,
+      error: response.errors[0] ?? null,
+    },
+    prefer: "return=minimal",
+    query: {
+      id: `eq.${snapshotId}`,
+      status: "eq.running",
+    },
+  });
+}
+
 export async function completeMaterializedWheelScreenerSnapshot(
   snapshotId: string | null,
   response: WheelScreenerResponse,
@@ -416,6 +562,7 @@ export async function completeMaterializedWheelScreenerSnapshot(
     body: {
       status: "complete",
       completed_at: new Date().toISOString(),
+      heartbeat_at: new Date().toISOString(),
       total_count: response.progress.totalCount,
       processed_count: response.progress.processedCount,
       skipped_count: response.skippedCount,
@@ -431,17 +578,25 @@ export async function completeMaterializedWheelScreenerSnapshot(
 export async function failMaterializedWheelScreenerSnapshot(
   snapshotId: string | null,
   error: unknown,
+  response?: WheelScreenerResponse | null,
 ) {
   if (!snapshotId) {
     return;
   }
+
+  const errorMessage =
+    error instanceof Error ? error.message : "Screener workflow failed.";
 
   await requestSupabaseRest<null>("wheel_screener_snapshots", {
     method: "PATCH",
     body: {
       status: "failed",
       completed_at: new Date().toISOString(),
-      error: error instanceof Error ? error.message : "Screener workflow failed.",
+      heartbeat_at: new Date().toISOString(),
+      total_count: response?.progress.totalCount ?? 0,
+      processed_count: response?.progress.processedCount ?? 0,
+      skipped_count: response?.skippedCount ?? 0,
+      error: response?.errors[0] ?? errorMessage,
     },
     prefer: "return=minimal",
     query: {

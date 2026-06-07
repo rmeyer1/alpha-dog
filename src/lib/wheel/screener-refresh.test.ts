@@ -9,6 +9,7 @@ const runningSnapshot = {
   feed: "indicative",
   status: "running",
   started_at: "2026-06-07T13:50:00.000Z",
+  heartbeat_at: "2026-06-07T13:50:00.000Z",
   completed_at: null,
   total_count: 0,
   processed_count: 0,
@@ -186,6 +187,62 @@ describe("screener refresh scheduling", () => {
       status: "running",
       snapshotId: runningSnapshot.id,
     });
+  });
+
+  it("uses running snapshot heartbeat instead of start time for stale detection", async () => {
+    stubLiveEnv();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            ...runningSnapshot,
+            started_at: "2026-06-07T12:00:00.000Z",
+            heartbeat_at: "2026-06-07T13:58:00.000Z",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const { getScreenerRefreshDecision } = await importRefresh();
+    const decision = await getScreenerRefreshDecision(
+      {
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      },
+      45 * 60 * 1000,
+    );
+
+    expect(decision.status).toBe("running");
+    expect(decision.ageMs).toBe(2 * 60 * 1000);
+  });
+
+  it("refreshes stale running snapshots with old heartbeats", async () => {
+    stubLiveEnv();
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            ...runningSnapshot,
+            started_at: "2026-06-07T12:00:00.000Z",
+            heartbeat_at: "2026-06-07T13:00:00.000Z",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const { getScreenerRefreshDecision } = await importRefresh();
+    const decision = await getScreenerRefreshDecision(
+      {
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      },
+      45 * 60 * 1000,
+    );
+
+    expect(decision.status).toBe("due");
+    expect(decision.ageMs).toBeNull();
   });
 
   it("skips recent completed snapshots and refreshes old snapshots", async () => {

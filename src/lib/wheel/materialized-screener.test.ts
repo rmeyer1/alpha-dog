@@ -9,6 +9,7 @@ const snapshotRow = {
   feed: "indicative",
   status: "complete",
   started_at: "2026-06-07T13:00:00.000Z",
+  heartbeat_at: "2026-06-07T13:03:00.000Z",
   completed_at: "2026-06-07T13:03:00.000Z",
   total_count: 4376,
   processed_count: 4376,
@@ -308,6 +309,94 @@ describe("materialized wheel screener", () => {
       headers: expect.objectContaining({
         Prefer: "return=minimal",
       }),
+    });
+  });
+
+  it("updates running snapshot progress after each batch", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    const { updateMaterializedWheelScreenerSnapshotProgress } =
+      await importMaterializedScreener();
+
+    await updateMaterializedWheelScreenerSnapshotProgress(snapshotRow.id, {
+      companies: [],
+      screenedCount: 64,
+      skippedCount: 12,
+      progress: {
+        status: "running",
+        resultScope: "batch",
+        cursor: 32,
+        nextCursor: 64,
+        batchSize: 32,
+        batchScreenedCount: 32,
+        processedCount: 64,
+        totalCount: 4376,
+      },
+      warnings: [],
+      errors: ["AAPL: too many requests."],
+    } as never);
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0];
+    const body = JSON.parse(String(options?.body));
+
+    expect(new URL(String(url)).searchParams.get("status")).toBe("eq.running");
+    expect(body).toMatchObject({
+      total_count: 4376,
+      processed_count: 64,
+      skipped_count: 12,
+      error: "AAPL: too many requests.",
+    });
+    expect(body.heartbeat_at).toBe("2026-06-07T13:04:00.000Z");
+  });
+
+  it("finds only heartbeat-fresh running snapshots as active", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...snapshotRow,
+              status: "running",
+              completed_at: null,
+              heartbeat_at: "2026-06-07T12:00:00.000Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...snapshotRow,
+              status: "running",
+              completed_at: null,
+              heartbeat_at: "2026-06-07T13:03:00.000Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const { getActiveMaterializedWheelScreenerSnapshot } =
+      await importMaterializedScreener();
+    const request = {
+      persona: "balanced_wheel" as const,
+      strategy: "short_put" as const,
+    };
+
+    await expect(
+      getActiveMaterializedWheelScreenerSnapshot(request),
+    ).resolves.toBeNull();
+    await expect(
+      getActiveMaterializedWheelScreenerSnapshot(request),
+    ).resolves.toMatchObject({
+      id: snapshotRow.id,
+      heartbeat_at: "2026-06-07T13:03:00.000Z",
     });
   });
 });
