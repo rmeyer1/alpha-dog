@@ -105,7 +105,7 @@ async function handleRefresh(request: Request) {
   const force = url.searchParams.get("force") === "true";
   const marketHours = getEasternMarketHoursState();
 
-  if (!marketHours.isOpen && !marketHours.isSundayPrewarm && !dryRun && !force) {
+  if (!marketHours.isOpen && !dryRun && !force) {
     return NextResponse.json({
       ok: true,
       skippedMarketHours: true,

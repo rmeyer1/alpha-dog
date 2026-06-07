@@ -34,7 +34,6 @@ export interface EasternMarketHoursState {
   easternMinutes: number;
   isMarketDay: boolean;
   isOpen: boolean;
-  isSundayPrewarm: boolean;
   weekday: string;
 }
 
@@ -75,8 +74,6 @@ export function getEasternMarketHoursState(
   const isMarketDay = !["Sat", "Sun"].includes(weekday);
   const marketOpenMinutes = 9 * 60 + 30;
   const marketCloseMinutes = 16 * 60;
-  const sundayPrewarmOpenMinutes = 16 * 60;
-  const sundayPrewarmCloseMinutes = 21 * 60;
 
   return {
     easternMinutes,
@@ -85,10 +82,6 @@ export function getEasternMarketHoursState(
       isMarketDay &&
       easternMinutes >= marketOpenMinutes &&
       easternMinutes <= marketCloseMinutes,
-    isSundayPrewarm:
-      weekday === "Sun" &&
-      easternMinutes >= sundayPrewarmOpenMinutes &&
-      easternMinutes <= sundayPrewarmCloseMinutes,
     weekday,
   };
 }

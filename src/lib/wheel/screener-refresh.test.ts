@@ -109,32 +109,7 @@ describe("screener refresh scheduling", () => {
     ).toMatchObject({
       isMarketDay: true,
       isOpen: true,
-      isSundayPrewarm: false,
       weekday: "Mon",
-    });
-    expect(
-      getEasternMarketHoursState(new Date("2026-06-07T19:59:00.000Z")),
-    ).toMatchObject({
-      isMarketDay: false,
-      isOpen: false,
-      isSundayPrewarm: false,
-      weekday: "Sun",
-    });
-    expect(
-      getEasternMarketHoursState(new Date("2026-06-07T20:00:00.000Z")),
-    ).toMatchObject({
-      isMarketDay: false,
-      isOpen: false,
-      isSundayPrewarm: true,
-      weekday: "Sun",
-    });
-    expect(
-      getEasternMarketHoursState(new Date("2026-06-08T01:00:00.000Z")),
-    ).toMatchObject({
-      isMarketDay: false,
-      isOpen: false,
-      isSundayPrewarm: true,
-      weekday: "Sun",
     });
   });
 
