@@ -80,6 +80,39 @@ describe("screener refresh scheduling", () => {
     ]);
   });
 
+  it("detects Eastern market hours across daylight saving offsets", async () => {
+    const { getEasternMarketHoursState } = await importRefresh();
+
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-08T13:29:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: true,
+      isOpen: false,
+      weekday: "Mon",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-08T13:30:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: true,
+      isOpen: true,
+      weekday: "Mon",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-08T20:30:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: true,
+      isOpen: false,
+      weekday: "Mon",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-01-05T14:30:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: true,
+      isOpen: true,
+      weekday: "Mon",
+    });
+  });
+
   it("does not query snapshots when Supabase service-role config is missing", async () => {
     const { getScreenerRefreshDecision } = await importRefresh();
     const decision = await getScreenerRefreshDecision({

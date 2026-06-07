@@ -14,12 +14,26 @@ import { companyStrategySchema, personaIdSchema } from "./validation";
 const RUNNING_SNAPSHOT_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_REFRESH_BATCH_SIZE = 32;
 const DEFAULT_REFRESH_LIMIT = 50;
+const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 
 export interface ScreenerRefreshDecision {
   reason: string;
   request: WheelScreenerRequest;
   snapshotId: string | null;
   status: "due" | "recent" | "running" | "not_configured";
+}
+
+export interface EasternMarketHoursState {
+  easternMinutes: number;
+  isMarketDay: boolean;
+  isOpen: boolean;
+  weekday: string;
 }
 
 function parseCsv(value: string) {
@@ -41,6 +55,34 @@ function parsePositiveInteger(value: string, fallback: number) {
 
 function unique<T>(values: T[]) {
   return Array.from(new Set(values));
+}
+
+export function getEasternMarketHoursState(
+  date = new Date(),
+): EasternMarketHoursState {
+  const parts = Object.fromEntries(
+    easternTimeFormatter
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  const weekday = parts.weekday ?? "";
+  const easternMinutes =
+    Number.parseInt(parts.hour ?? "0", 10) * 60 +
+    Number.parseInt(parts.minute ?? "0", 10);
+  const isMarketDay = !["Sat", "Sun"].includes(weekday);
+  const marketOpenMinutes = 9 * 60 + 30;
+  const marketCloseMinutes = 16 * 60;
+
+  return {
+    easternMinutes,
+    isMarketDay,
+    isOpen:
+      isMarketDay &&
+      easternMinutes >= marketOpenMinutes &&
+      easternMinutes <= marketCloseMinutes,
+    weekday,
+  };
 }
 
 export function getScreenerRefreshMaxRuns() {

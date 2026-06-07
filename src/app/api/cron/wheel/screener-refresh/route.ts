@@ -3,6 +3,7 @@ import { start } from "workflow/api";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
+  getEasternMarketHoursState,
   getScheduledScreenerRefreshRequests,
   getScreenerRefreshDecision,
   getScreenerRefreshMaxRuns,
@@ -93,6 +94,19 @@ async function handleRefresh(request: Request) {
   const url = new URL(request.url);
   const dryRun = url.searchParams.get("dryRun") === "true";
   const force = url.searchParams.get("force") === "true";
+  const marketHours = getEasternMarketHoursState();
+
+  if (!marketHours.isOpen && !dryRun && !force) {
+    return NextResponse.json({
+      ok: true,
+      skippedMarketHours: true,
+      marketHours,
+      message: "Screener refresh skipped outside US market hours.",
+      started: [],
+      skipped: [],
+    });
+  }
+
   const maxRuns = Math.min(
     getScreenerRefreshMaxRuns(),
     Number.parseInt(url.searchParams.get("maxRuns") ?? "", 10) ||
@@ -136,6 +150,7 @@ async function handleRefresh(request: Request) {
     ok: true,
     dryRun,
     force,
+    marketHours,
     maxRuns,
     configuredCount: getScheduledScreenerRefreshRequests().length,
     dueCount: due.length,
