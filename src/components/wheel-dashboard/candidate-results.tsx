@@ -149,7 +149,7 @@ export function CandidateResults({
             onClick={() => onTabChange("puts")}
             type="button"
           >
-            Short Puts
+            Cash-Secured Puts
           </button>
           <button
             className={`rounded-md px-4 py-2 text-sm font-medium ${

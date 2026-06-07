@@ -190,6 +190,7 @@ export interface VerticalSpreadCandidate {
 export interface WheelAnalysisRequest {
   ticker: string;
   persona: PersonaId;
+  strategy?: WheelCompanyStrategy;
   filters?: Partial<WheelFilters>;
   resultLimit?: number;
   forceRefresh?: boolean;
@@ -232,11 +233,25 @@ export interface WheelCompanyScore {
 
 export interface WheelScreenerRequest {
   persona: PersonaId;
+  strategy: WheelCompanyStrategy;
   filters?: Partial<WheelFilters>;
   limit?: number;
   forceRefresh?: boolean;
   cursor?: number;
   batchSize?: number;
+}
+
+export type WheelScreenerRunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface WheelScreenerRunResponse {
+  runId: string;
+  status: WheelScreenerRunStatus;
+  result: WheelScreenerResponse | null;
 }
 
 export interface WheelScreenerProgress {

@@ -4,6 +4,9 @@ import {
   buildAnalysisCacheKey,
   cachedEntryNextRefresh,
   getAnalysisCacheStore,
+  getFreshRuntimeAnalysisCache,
+  getStaleRuntimeAnalysisCache,
+  setRuntimeAnalysisCache,
 } from "./analysis-cache";
 import { buildCandidate, buildVerticalSpreads } from "./calculations";
 import { getDemoContracts, getDemoUnderlying } from "./mock-data";
@@ -13,6 +16,7 @@ import type {
   DataFeed,
   PersonaId,
   Warning,
+  WheelCompanyStrategy,
   WheelAnalysisRequest,
   WheelAnalysisResponse,
   WheelFilters,
@@ -67,6 +71,34 @@ function withRanks<T extends { score: number; rank: number }>(rows: T[]) {
     }));
 }
 
+function strategyNeedsContracts(
+  strategy: WheelCompanyStrategy | undefined,
+  optionType: "put" | "call",
+) {
+  if (!strategy) {
+    return true;
+  }
+
+  if (optionType === "put") {
+    return strategy === "short_put" || strategy === "put_credit_spread";
+  }
+
+  return strategy === "covered_call" || strategy === "call_credit_spread";
+}
+
+function strategyNeedsSpreads(
+  strategy: WheelCompanyStrategy | undefined,
+  optionType: "put" | "call",
+) {
+  if (!strategy) {
+    return true;
+  }
+
+  return optionType === "put"
+    ? strategy === "put_credit_spread"
+    : strategy === "call_credit_spread";
+}
+
 function applyCacheFreshness(
   response: WheelAnalysisResponse,
   cacheStatus: "fresh" | "stale",
@@ -101,11 +133,12 @@ async function computeWheelCandidates(
     now: Date;
     personaId: PersonaId;
     resultLimit: number;
+    strategy?: WheelCompanyStrategy;
     ticker: string;
     useDemoData: boolean;
   },
 ): Promise<WheelAnalysisResponse> {
-  const { env, filters, now, personaId, resultLimit, ticker, useDemoData } =
+  const { env, filters, now, personaId, resultLimit, strategy, ticker, useDemoData } =
     options;
   const persona = getPersona(personaId);
   const demoUnderlying = useDemoData ? getDemoUnderlying(ticker) : null;
@@ -116,7 +149,7 @@ async function computeWheelCandidates(
         rawContracts: getDemoContracts(ticker, demoUnderlying),
         asOf: now.toISOString(),
       }
-    : await getLiveWheelMarketData(ticker, filters);
+    : await getLiveWheelMarketData(ticker, filters, strategy);
   const { underlying, rawContracts } = marketData;
   const feed: DataFeed = marketData.feed;
   const candidates = rawContracts
@@ -125,24 +158,32 @@ async function computeWheelCandidates(
     .map((candidate) =>
       scoreCandidate(candidate, persona, filters, underlying),
     );
-  const shortPuts = withRanks(
-    candidates.filter((candidate) => candidate.optionType === "put"),
-  ).slice(0, resultLimit);
-  const coveredCalls = withRanks(
-    candidates.filter((candidate) => candidate.optionType === "call"),
-  ).slice(0, resultLimit);
-  const putCreditSpreads = withRanks(
-    buildVerticalSpreads(rawContracts, underlying, filters, "put", now).map(
-      (candidate) =>
-        scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
-    ),
-  ).slice(0, resultLimit);
-  const callCreditSpreads = withRanks(
-    buildVerticalSpreads(rawContracts, underlying, filters, "call", now).map(
-      (candidate) =>
-        scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
-    ),
-  ).slice(0, resultLimit);
+  const shortPuts = strategyNeedsContracts(strategy, "put")
+    ? withRanks(
+        candidates.filter((candidate) => candidate.optionType === "put"),
+      ).slice(0, resultLimit)
+    : [];
+  const coveredCalls = strategyNeedsContracts(strategy, "call")
+    ? withRanks(
+        candidates.filter((candidate) => candidate.optionType === "call"),
+      ).slice(0, resultLimit)
+    : [];
+  const putCreditSpreads = strategyNeedsSpreads(strategy, "put")
+    ? withRanks(
+        buildVerticalSpreads(rawContracts, underlying, filters, "put", now).map(
+          (candidate) =>
+            scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
+        ),
+      ).slice(0, resultLimit)
+    : [];
+  const callCreditSpreads = strategyNeedsSpreads(strategy, "call")
+    ? withRanks(
+        buildVerticalSpreads(rawContracts, underlying, filters, "call", now).map(
+          (candidate) =>
+            scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
+        ),
+      ).slice(0, resultLimit)
+    : [];
 
   return {
     ticker,
@@ -186,13 +227,14 @@ export async function analyzeWheelCandidates(
   if (useDemoData) {
     return computeWheelCandidates({
       env,
-      filters,
-      now,
-      personaId,
-      resultLimit,
-      ticker,
-      useDemoData,
-    });
+    filters,
+    now,
+    personaId,
+    resultLimit,
+    strategy: request.strategy,
+    ticker,
+    useDemoData,
+  });
   }
 
   const cacheKey = buildAnalysisCacheKey({
@@ -200,6 +242,7 @@ export async function analyzeWheelCandidates(
     filters,
     personaId,
     resultLimit,
+    strategy: request.strategy,
     ticker,
   });
   const cache = getAnalysisCacheStore();
@@ -214,6 +257,18 @@ export async function analyzeWheelCandidates(
         cachedEntryNextRefresh(freshEntry),
       );
     }
+
+    const runtimeFreshEntry = await getFreshRuntimeAnalysisCache(cacheKey);
+
+    if (runtimeFreshEntry) {
+      cache.set(cacheKey, runtimeFreshEntry.response);
+
+      return applyCacheFreshness(
+        runtimeFreshEntry.response,
+        "fresh",
+        cachedEntryNextRefresh(runtimeFreshEntry),
+      );
+    }
   }
 
   try {
@@ -223,11 +278,13 @@ export async function analyzeWheelCandidates(
       now,
       personaId,
       resultLimit,
+      strategy: request.strategy,
       ticker,
       useDemoData,
     });
 
     cache.set(cacheKey, response);
+    await setRuntimeAnalysisCache(cacheKey, response);
 
     return response;
   } catch (error) {
@@ -239,6 +296,24 @@ export async function analyzeWheelCandidates(
         "stale",
         null,
         [staleFallbackWarning(error, staleEntry.response.dataFreshness.asOf)],
+      );
+    }
+
+    const runtimeStaleEntry = await getStaleRuntimeAnalysisCache(cacheKey);
+
+    if (runtimeStaleEntry) {
+      cache.set(cacheKey, runtimeStaleEntry.response);
+
+      return applyCacheFreshness(
+        runtimeStaleEntry.response,
+        "stale",
+        null,
+        [
+          staleFallbackWarning(
+            error,
+            runtimeStaleEntry.response.dataFreshness.asOf,
+          ),
+        ],
       );
     }
 
