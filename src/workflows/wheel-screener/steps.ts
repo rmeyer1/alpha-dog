@@ -7,6 +7,7 @@ import {
   completeMaterializedWheelScreenerSnapshot,
   createMaterializedWheelScreenerSnapshot,
   failMaterializedWheelScreenerSnapshot,
+  updateMaterializedWheelScreenerSnapshotProgress,
   upsertMaterializedWheelScreenerCandidates,
 } from "@/lib/wheel/materialized-screener";
 import type {
@@ -70,6 +71,15 @@ export async function upsertScreenerSnapshotCandidates(
   );
 }
 
+export async function updateScreenerSnapshotProgress(
+  snapshotId: string | null,
+  response: WheelScreenerResponse,
+) {
+  "use step";
+
+  await updateMaterializedWheelScreenerSnapshotProgress(snapshotId, response);
+}
+
 export async function completeScreenerSnapshot(
   snapshotId: string | null,
   response: WheelScreenerResponse,
@@ -82,8 +92,13 @@ export async function completeScreenerSnapshot(
 export async function failScreenerSnapshot(
   snapshotId: string | null,
   errorMessage: string,
+  response?: WheelScreenerResponse | null,
 ) {
   "use step";
 
-  await failMaterializedWheelScreenerSnapshot(snapshotId, errorMessage);
+  await failMaterializedWheelScreenerSnapshot(
+    snapshotId,
+    errorMessage,
+    response,
+  );
 }

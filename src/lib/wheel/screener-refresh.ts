@@ -166,7 +166,8 @@ export async function getScreenerRefreshDecision(
   }
 
   if (snapshot.status === "running") {
-    const runningAgeMs = nowMs - new Date(snapshot.started_at).getTime();
+    const runningAgeMs = nowMs -
+      new Date(snapshot.heartbeat_at ?? snapshot.started_at).getTime();
 
     if (runningAgeMs <= RUNNING_SNAPSHOT_TIMEOUT_MS) {
       return {

@@ -25,6 +25,22 @@ export async function GET(
   }
 
   try {
+    if (runId.startsWith("snapshot:")) {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+          },
+        },
+      );
+    }
+
     const run = getRun<unknown>(runId);
 
     if (!(await run.exists)) {

@@ -36,8 +36,8 @@ const envSchema = z.object({
     .default("https://paper-api.alpaca.markets"),
   ALPACA_MARKET_DATA_RATE_LIMIT_PER_MINUTE: optionalPositiveInteger("9500"),
   ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
-  WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
-  WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
+  WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("8"),
+  WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("2"),
   SIGNAL_SCRIBE_SUPABASE_URL: z
     .preprocess(emptyStringToUndefined, z.string().url().optional())
     .default("https://kauwcybbiwsmmljovmit.supabase.co"),

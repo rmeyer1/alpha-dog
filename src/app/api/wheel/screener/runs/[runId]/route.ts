@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRun } from "workflow/api";
+import { getMaterializedWheelScreenerRunResponse } from "@/lib/wheel/materialized-screener";
 import type {
   WheelScreenerResponse,
   WheelScreenerRunResponse,
@@ -24,6 +25,26 @@ export async function GET(
   }
 
   try {
+    if (runId.startsWith("snapshot:")) {
+      const response = await getMaterializedWheelScreenerRunResponse(
+        runId.slice("snapshot:".length),
+      );
+
+      if (!response) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "SCREENER_RUN_NOT_FOUND",
+              message: "Wheel screener snapshot run was not found.",
+            },
+          },
+          { status: 404 },
+        );
+      }
+
+      return NextResponse.json(response);
+    }
+
     const run = getRun<WheelScreenerResponse>(runId);
 
     if (!(await run.exists)) {
