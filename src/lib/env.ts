@@ -3,6 +3,25 @@ import { z } from "zod";
 const emptyStringToUndefined = (value: unknown) =>
   value === "" ? undefined : value;
 
+const optionalPositiveInteger = (defaultValue: string) =>
+  z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default(defaultValue)
+    .transform((value, context) => {
+      const parsed = Number(value);
+
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        context.addIssue({
+          code: "custom",
+          message: "Expected a positive integer.",
+        });
+
+        return z.NEVER;
+      }
+
+      return parsed;
+    });
+
 const envSchema = z.object({
   APCA_API_KEY_ID: z.string().optional(),
   APCA_API_SECRET_KEY: z.string().optional(),
@@ -15,6 +34,10 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://paper-api.alpaca.markets"),
+  ALPACA_MARKET_DATA_RATE_LIMIT_PER_MINUTE: optionalPositiveInteger("9500"),
+  ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
+  WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
+  WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   SIGNAL_SCRIBE_SUPABASE_URL: z
     .preprocess(emptyStringToUndefined, z.string().url().optional())
     .default("https://kauwcybbiwsmmljovmit.supabase.co"),

@@ -16,8 +16,8 @@ import {
   writeScreenerProgress,
 } from "./steps";
 
-const workflowBatchSize = 8;
-const workflowBatchDelay = "20s";
+const workflowBatchSize = 32;
+const workflowBatchDelay = "5s";
 
 function warningKey(warning: Warning) {
   if (warning.message.startsWith("Live refresh failed; showing cached analysis")) {
