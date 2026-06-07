@@ -23,6 +23,7 @@ const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 export interface ScreenerRefreshDecision {
+  ageMs: number | null;
   reason: string;
   request: WheelScreenerRequest;
   snapshotId: string | null;
@@ -33,6 +34,7 @@ export interface EasternMarketHoursState {
   easternMinutes: number;
   isMarketDay: boolean;
   isOpen: boolean;
+  isSundayPrewarm: boolean;
   weekday: string;
 }
 
@@ -73,6 +75,8 @@ export function getEasternMarketHoursState(
   const isMarketDay = !["Sat", "Sun"].includes(weekday);
   const marketOpenMinutes = 9 * 60 + 30;
   const marketCloseMinutes = 16 * 60;
+  const sundayPrewarmOpenMinutes = 16 * 60;
+  const sundayPrewarmCloseMinutes = 21 * 60;
 
   return {
     easternMinutes,
@@ -81,6 +85,10 @@ export function getEasternMarketHoursState(
       isMarketDay &&
       easternMinutes >= marketOpenMinutes &&
       easternMinutes <= marketCloseMinutes,
+    isSundayPrewarm:
+      weekday === "Sun" &&
+      easternMinutes >= sundayPrewarmOpenMinutes &&
+      easternMinutes <= sundayPrewarmCloseMinutes,
     weekday,
   };
 }
@@ -129,6 +137,7 @@ export async function getScreenerRefreshDecision(
 ): Promise<ScreenerRefreshDecision> {
   if (!getSupabaseServiceConfig()) {
     return {
+      ageMs: null,
       request,
       snapshotId: null,
       status: "not_configured",
@@ -140,6 +149,7 @@ export async function getScreenerRefreshDecision(
 
   if (!snapshot) {
     return {
+      ageMs: null,
       request,
       snapshotId: null,
       status: "due",
@@ -152,6 +162,7 @@ export async function getScreenerRefreshDecision(
 
     if (runningAgeMs <= RUNNING_SNAPSHOT_TIMEOUT_MS) {
       return {
+        ageMs: runningAgeMs,
         request,
         snapshotId: snapshot.id,
         status: "running",
@@ -165,6 +176,7 @@ export async function getScreenerRefreshDecision(
 
     if (ageMs < minAgeMs) {
       return {
+        ageMs,
         request,
         snapshotId: snapshot.id,
         status: "recent",
@@ -174,6 +186,9 @@ export async function getScreenerRefreshDecision(
   }
 
   return {
+    ageMs: snapshot.status === "complete"
+      ? materializedSnapshotAgeMs(snapshot, nowMs)
+      : null,
     request,
     snapshotId: snapshot.id,
     status: "due",

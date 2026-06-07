@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/wheel/screener-refresh",
       "schedule": "*/30 13-21 * * 1-5"
+    },
+    {
+      "path": "/api/cron/wheel/screener-refresh",
+      "schedule": "0 0-2,20-23 * * 0,1"
     }
   ]
 }

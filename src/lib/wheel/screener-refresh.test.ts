@@ -109,7 +109,32 @@ describe("screener refresh scheduling", () => {
     ).toMatchObject({
       isMarketDay: true,
       isOpen: true,
+      isSundayPrewarm: false,
       weekday: "Mon",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-07T19:59:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isSundayPrewarm: false,
+      weekday: "Sun",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-07T20:00:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isSundayPrewarm: true,
+      weekday: "Sun",
+    });
+    expect(
+      getEasternMarketHoursState(new Date("2026-06-08T01:00:00.000Z")),
+    ).toMatchObject({
+      isMarketDay: false,
+      isOpen: false,
+      isSundayPrewarm: true,
+      weekday: "Sun",
     });
   });
 
@@ -181,6 +206,8 @@ describe("screener refresh scheduling", () => {
     );
 
     expect(recent.status).toBe("recent");
+    expect(recent.ageMs).toBe(20 * 60 * 1000);
     expect(old.status).toBe("due");
+    expect(old.ageMs).toBe(2 * 60 * 60 * 1000);
   });
 });

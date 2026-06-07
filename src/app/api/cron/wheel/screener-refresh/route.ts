@@ -7,6 +7,7 @@ import {
   getScheduledScreenerRefreshRequests,
   getScreenerRefreshDecision,
   getScreenerRefreshMaxRuns,
+  type ScreenerRefreshDecision,
 } from "@/lib/wheel/screener-refresh";
 import type { WheelScreenerRequest } from "@/lib/wheel/types";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
@@ -18,6 +19,14 @@ interface StartedRefresh {
   runId: string;
   status: string;
   strategy: WheelScreenerRequest["strategy"];
+}
+
+function refreshPriority(decision: ScreenerRefreshDecision) {
+  if (decision.status !== "due") {
+    return -1;
+  }
+
+  return decision.ageMs ?? Number.MAX_SAFE_INTEGER;
 }
 
 function unauthorized() {
@@ -96,7 +105,7 @@ async function handleRefresh(request: Request) {
   const force = url.searchParams.get("force") === "true";
   const marketHours = getEasternMarketHoursState();
 
-  if (!marketHours.isOpen && !dryRun && !force) {
+  if (!marketHours.isOpen && !marketHours.isSundayPrewarm && !dryRun && !force) {
     return NextResponse.json({
       ok: true,
       skippedMarketHours: true,
@@ -113,18 +122,27 @@ async function handleRefresh(request: Request) {
       Number.MAX_SAFE_INTEGER,
   );
   const started: StartedRefresh[] = [];
-  const skipped = [];
-  const due = [];
+  const decisions = [];
+  const configuredRequests = getScheduledScreenerRefreshRequests();
 
-  for (const refreshRequest of getScheduledScreenerRefreshRequests()) {
+  for (const refreshRequest of configuredRequests) {
     const decision = await getScreenerRefreshDecision(refreshRequest);
+
+    decisions.push(decision);
+  }
+
+  const due = decisions
+    .filter((decision) =>
+      decision.status === "due" ||
+      (force && decision.status === "recent")
+    )
+    .sort((left, right) => refreshPriority(right) - refreshPriority(left));
+  const skipped = decisions.filter((decision) => !due.includes(decision));
+
+  for (const decision of due) {
     const shouldStart =
       decision.status === "due" ||
       (force && decision.status === "recent");
-
-    if (shouldStart) {
-      due.push(decision);
-    }
 
     if (!shouldStart || dryRun || started.length >= maxRuns) {
       skipped.push(decision);
@@ -152,7 +170,7 @@ async function handleRefresh(request: Request) {
     force,
     marketHours,
     maxRuns,
-    configuredCount: getScheduledScreenerRefreshRequests().length,
+    configuredCount: configuredRequests.length,
     dueCount: due.length,
     started,
     skipped,
