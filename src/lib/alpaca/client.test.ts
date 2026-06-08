@@ -6,7 +6,7 @@ function stubLiveEnv() {
   vi.stubEnv("APCA_API_KEY_ID", "key");
   vi.stubEnv("APCA_API_SECRET_KEY", "secret");
   vi.stubEnv("ALPACA_MARKET_DATA_BASE_URL", "https://data.alpaca.markets");
-  vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
+  vi.stubEnv("ALPACA_OPTIONS_FEED", "opra");
   vi.stubEnv("ALPACA_TRADING_BASE_URL", "https://paper-api.alpaca.markets");
 }
 
@@ -94,61 +94,6 @@ beforeEach(() => {
 });
 
 describe("Alpaca client", () => {
-  it("keeps optionable NYSE and NASDAQ assets when Alpaca omits asset_class", async () => {
-    stubLiveEnv();
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            symbol: "ZIP",
-            name: "Zip Co.",
-            status: "active",
-            tradable: true,
-            exchange: "NYSE",
-            attributes: ["has_options"],
-          },
-          {
-            symbol: "NOPE",
-            name: "No Options Co.",
-            status: "active",
-            tradable: true,
-            exchange: "NYSE",
-            attributes: [],
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            symbol: "AAPL",
-            name: "Apple Inc.",
-            status: "active",
-            tradable: true,
-            exchange: "NASDAQ",
-            attributes: ["fractional_eh_enabled", "has_options"],
-          },
-        ]),
-      );
-
-    const { getWheelAssetUniverse } = await import("./client");
-
-    await expect(getWheelAssetUniverse()).resolves.toEqual([
-      {
-        symbol: "AAPL",
-        name: "Apple Inc.",
-        exchange: "NASDAQ",
-      },
-      {
-        symbol: "ZIP",
-        name: "Zip Co.",
-        exchange: "NYSE",
-      },
-    ]);
-
-    vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
-  });
-
   it("fetches only put option contracts for cash-secured put analysis", async () => {
     stubLiveEnv();
     mockLiveWheelMarketDataFetches();
@@ -169,6 +114,7 @@ describe("Alpaca client", () => {
 
     expect(chainUrls).toHaveLength(1);
     expect(chainUrls[0]).toContain("type=put");
+    expect(chainUrls[0]).toContain("feed=opra");
     expect(chainUrls[0]).toContain("limit=1000");
 
     vi.unstubAllEnvs();
@@ -227,7 +173,9 @@ describe("Alpaca client", () => {
 
     expect(snapshotUrls).toHaveLength(2);
     expect(snapshotUrls[0]).toContain("/v1beta1/options/snapshots/AAPL");
+    expect(snapshotUrls[0]).toContain("feed=opra");
     expect(snapshotUrls[1]).toContain("/v1beta1/options/snapshots?");
+    expect(snapshotUrls[1]).toContain("feed=opra");
     expect(snapshotUrls[1]).toContain("symbols=AAPL260619P00095000");
     expect(data.rawContracts[0]).toMatchObject({
       contractSymbol: "AAPL260619P00095000",

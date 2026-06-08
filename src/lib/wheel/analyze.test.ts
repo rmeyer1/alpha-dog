@@ -54,7 +54,7 @@ const rawContracts: RawOptionContract[] = [
 
 function liveMarketData(asOf = "2026-05-27T16:00:00.000Z") {
   return {
-    feed: "indicative" as const,
+    feed: "opra" as const,
     underlying: {
       ...underlying,
       asOf,
@@ -69,7 +69,7 @@ function stubLiveEnv() {
   vi.stubEnv("EARNINGS_PROVIDER_ENABLED", "true");
   vi.stubEnv("APCA_API_KEY_ID", "key");
   vi.stubEnv("APCA_API_SECRET_KEY", "secret");
-  vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
+  vi.stubEnv("ALPACA_OPTIONS_FEED", "opra");
 }
 
 async function importAnalyze() {

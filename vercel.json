@@ -1,8 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/wheel/options-index-refresh",
-      "schedule": "17 15 * * 1-5"
-    }
-  ]
-}
