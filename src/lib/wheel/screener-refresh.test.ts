@@ -156,6 +156,41 @@ describe("screener refresh scheduling", () => {
     expect(getScreenerWeekendRefreshMaxRuns()).toBe(4);
   });
 
+  it("builds options index refresh defaults for all strategy screeners", async () => {
+    const {
+      getOptionsIndexRefreshMaxRuns,
+      getOptionsIndexRefreshMinAgeMs,
+      getOptionsIndexRefreshRequests,
+      getOptionsIndexWeekendRefreshMaxRuns,
+    } = await importRefresh();
+
+    expect(getOptionsIndexRefreshMaxRuns()).toBe(4);
+    expect(getOptionsIndexWeekendRefreshMaxRuns()).toBe(4);
+    expect(getOptionsIndexRefreshMinAgeMs()).toBe(15 * 60 * 1000);
+    expect(getOptionsIndexRefreshRequests()).toEqual([
+      expect.objectContaining({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+        forceRefresh: true,
+      }),
+      expect.objectContaining({
+        persona: "balanced_wheel",
+        strategy: "put_credit_spread",
+        forceRefresh: true,
+      }),
+      expect.objectContaining({
+        persona: "balanced_wheel",
+        strategy: "covered_call",
+        forceRefresh: true,
+      }),
+      expect.objectContaining({
+        persona: "balanced_wheel",
+        strategy: "call_credit_spread",
+        forceRefresh: true,
+      }),
+    ]);
+  });
+
   it("does not query snapshots when Supabase service-role config is missing", async () => {
     const { getScreenerRefreshDecision } = await importRefresh();
     const decision = await getScreenerRefreshDecision({
