@@ -112,16 +112,25 @@ export function getScreenerRefreshMinAgeMs() {
   ) * 60 * 1000;
 }
 
-export function getScheduledScreenerRefreshRequests(): WheelScreenerRequest[] {
-  const env = getEnv();
+function getRefreshRequests({
+  batchSize = DEFAULT_REFRESH_BATCH_SIZE,
+  limit = DEFAULT_REFRESH_LIMIT,
+  personasCsv,
+  strategiesCsv,
+}: {
+  batchSize?: number;
+  limit?: number;
+  personasCsv: string;
+  strategiesCsv: string;
+}): WheelScreenerRequest[] {
   const personas = unique(
-    parseCsv(env.WHEEL_SCREENER_REFRESH_PERSONAS)
+    parseCsv(personasCsv)
       .map((persona) => personaIdSchema.safeParse(persona))
       .filter((result) => result.success)
       .map((result) => result.data),
   );
   const strategies = unique(
-    parseCsv(env.WHEEL_SCREENER_REFRESH_STRATEGIES)
+    parseCsv(strategiesCsv)
       .map((strategy) => companyStrategySchema.safeParse(strategy))
       .filter((result) => result.success)
       .map((result) => result.data),
@@ -131,11 +140,50 @@ export function getScheduledScreenerRefreshRequests(): WheelScreenerRequest[] {
     strategies.map((strategy) => ({
       persona: persona as PersonaId,
       strategy: strategy as WheelCompanyStrategy,
-      limit: DEFAULT_REFRESH_LIMIT,
-      batchSize: DEFAULT_REFRESH_BATCH_SIZE,
+      limit,
+      batchSize,
       forceRefresh: true,
     })),
   );
+}
+
+export function getScheduledScreenerRefreshRequests(): WheelScreenerRequest[] {
+  const env = getEnv();
+
+  return getRefreshRequests({
+    personasCsv: env.WHEEL_SCREENER_REFRESH_PERSONAS,
+    strategiesCsv: env.WHEEL_SCREENER_REFRESH_STRATEGIES,
+  });
+}
+
+export function getOptionsIndexRefreshMaxRuns() {
+  return parsePositiveInteger(
+    getEnv().WHEEL_OPTIONS_INDEX_REFRESH_MAX_RUNS,
+    4,
+  );
+}
+
+export function getOptionsIndexWeekendRefreshMaxRuns() {
+  return parsePositiveInteger(
+    getEnv().WHEEL_OPTIONS_INDEX_WEEKEND_REFRESH_MAX_RUNS,
+    4,
+  );
+}
+
+export function getOptionsIndexRefreshMinAgeMs() {
+  return parsePositiveInteger(
+    getEnv().WHEEL_OPTIONS_INDEX_REFRESH_MIN_AGE_MINUTES,
+    15,
+  ) * 60 * 1000;
+}
+
+export function getOptionsIndexRefreshRequests(): WheelScreenerRequest[] {
+  const env = getEnv();
+
+  return getRefreshRequests({
+    personasCsv: env.WHEEL_OPTIONS_INDEX_REFRESH_PERSONAS,
+    strategiesCsv: env.WHEEL_OPTIONS_INDEX_REFRESH_STRATEGIES,
+  });
 }
 
 export async function getScreenerRefreshDecision(

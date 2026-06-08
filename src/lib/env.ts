@@ -54,6 +54,10 @@ const envSchema = z.object({
     z.string().optional(),
   ),
   CRON_SECRET: z.preprocess(emptyStringToUndefined, z.string().optional()),
+  OPTIONS_INDEX_CRON_SECRET: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
   WHEEL_SCREENER_REFRESH_PERSONAS: z
     .preprocess(emptyStringToUndefined, z.string().optional())
     .default("balanced_wheel"),
@@ -71,6 +75,23 @@ const envSchema = z.object({
   WHEEL_SCREENER_REFRESH_MIN_AGE_MINUTES: z
     .preprocess(emptyStringToUndefined, z.string().optional())
     .default("45"),
+  WHEEL_OPTIONS_INDEX_REFRESH_PERSONAS: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default("balanced_wheel"),
+  WHEEL_OPTIONS_INDEX_REFRESH_STRATEGIES: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default(
+      "short_put,put_credit_spread,covered_call,call_credit_spread",
+    ),
+  WHEEL_OPTIONS_INDEX_REFRESH_MAX_RUNS: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default("4"),
+  WHEEL_OPTIONS_INDEX_WEEKEND_REFRESH_MAX_RUNS: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default("4"),
+  WHEEL_OPTIONS_INDEX_REFRESH_MIN_AGE_MINUTES: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default("15"),
   EARNINGS_PROVIDER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

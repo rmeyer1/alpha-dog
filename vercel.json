@@ -1,12 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/wheel/screener-refresh",
-      "schedule": "30 13 * * 1-5"
-    },
-    {
-      "path": "/api/cron/wheel/screener-refresh",
-      "schedule": "0 21 * * 6,0"
+      "path": "/api/cron/wheel/options-index-refresh",
+      "schedule": "17 15 * * 1-5"
     }
   ]
 }
