@@ -25,7 +25,7 @@ const optionalPositiveInteger = (defaultValue: string) =>
 const envSchema = z.object({
   APCA_API_KEY_ID: z.string().optional(),
   APCA_API_SECRET_KEY: z.string().optional(),
-  ALPACA_OPTIONS_FEED: z.enum(["opra", "indicative"]).default("indicative"),
+  ALPACA_OPTIONS_FEED: z.enum(["opra", "indicative"]).default("opra"),
   ALPACA_MARKET_DATA_BASE_URL: z
     .string()
     .url()
@@ -36,8 +36,6 @@ const envSchema = z.object({
     .default("https://paper-api.alpaca.markets"),
   ALPACA_MARKET_DATA_RATE_LIMIT_PER_MINUTE: optionalPositiveInteger("9500"),
   ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
-  WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("8"),
-  WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("2"),
   SIGNAL_SCRIBE_SUPABASE_URL: z
     .preprocess(emptyStringToUndefined, z.string().url().optional())
     .default("https://kauwcybbiwsmmljovmit.supabase.co"),
@@ -53,45 +51,6 @@ const envSchema = z.object({
     emptyStringToUndefined,
     z.string().optional(),
   ),
-  CRON_SECRET: z.preprocess(emptyStringToUndefined, z.string().optional()),
-  OPTIONS_INDEX_CRON_SECRET: z.preprocess(
-    emptyStringToUndefined,
-    z.string().optional(),
-  ),
-  WHEEL_SCREENER_REFRESH_PERSONAS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("balanced_wheel"),
-  WHEEL_SCREENER_REFRESH_STRATEGIES: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default(
-      "short_put,put_credit_spread,covered_call,call_credit_spread",
-    ),
-  WHEEL_SCREENER_REFRESH_MAX_RUNS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("1"),
-  WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("4"),
-  WHEEL_SCREENER_REFRESH_MIN_AGE_MINUTES: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("45"),
-  WHEEL_OPTIONS_INDEX_REFRESH_PERSONAS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("balanced_wheel"),
-  WHEEL_OPTIONS_INDEX_REFRESH_STRATEGIES: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default(
-      "short_put,put_credit_spread,covered_call,call_credit_spread",
-    ),
-  WHEEL_OPTIONS_INDEX_REFRESH_MAX_RUNS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("4"),
-  WHEEL_OPTIONS_INDEX_WEEKEND_REFRESH_MAX_RUNS: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("4"),
-  WHEEL_OPTIONS_INDEX_REFRESH_MIN_AGE_MINUTES: z
-    .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("15"),
   EARNINGS_PROVIDER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

@@ -4,7 +4,7 @@ import { BarChart3, UserCircle } from "lucide-react";
 
 const destinations = [
   {
-    label: "Wheel Screener",
+    label: "Ticker Analysis",
     href: "/screeners",
     icon: BarChart3,
     variant:
@@ -27,7 +27,7 @@ export default function Home() {
           <h1 className="sr-only">Alpha Dog</h1>
 
           <div className="relative flex w-full max-w-[780px] justify-center px-2">
-            <div className="absolute inset-x-0 top-[18%] bottom-[12%] rounded-lg bg-[#eef7ef]/10 blur-3xl" />
+            <div className="absolute inset-x-0 bottom-[12%] top-[18%] rounded-lg bg-[#eef7ef]/10 blur-3xl" />
             <Image
               alt="Alpha Dog"
               className="relative h-auto w-full drop-shadow-[0_24px_60px_rgba(0,0,0,0.45)]"

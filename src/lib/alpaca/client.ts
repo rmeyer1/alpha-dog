@@ -18,12 +18,6 @@ export interface AlpacaFeedProbeResult {
   sampleContractCount?: number;
 }
 
-export interface AlpacaWheelAsset {
-  symbol: string;
-  name: string;
-  exchange: "NYSE" | "NASDAQ";
-}
-
 function alpacaHeaders() {
   const env = getEnv();
 
@@ -97,16 +91,6 @@ interface AlpacaHttpErrorOptions {
   requestId: string | null;
   retryAfterMs: number | null;
   status: number;
-}
-
-interface AlpacaAsset {
-  symbol: string;
-  name?: string | null;
-  exchange: string;
-  asset_class: string;
-  status: string;
-  tradable: boolean;
-  attributes?: string[];
 }
 
 interface LiveWheelMarketData {
@@ -436,53 +420,6 @@ async function fetchAlpacaJson<T>(url: URL): Promise<T> {
   }
 
   throw new Error("Alpaca request failed after retries.");
-}
-
-async function getAssetsByExchange(exchange: "NYSE" | "NASDAQ") {
-  const env = getEnv();
-  const url = new URL("/v2/assets", env.ALPACA_TRADING_BASE_URL);
-
-  url.searchParams.set("status", "active");
-  url.searchParams.set("asset_class", "us_equity");
-  url.searchParams.set("exchange", exchange);
-
-  return fetchAlpacaJson<AlpacaAsset[]>(url);
-}
-
-export async function getWheelAssetUniverse(): Promise<AlpacaWheelAsset[]> {
-  const [nyseAssets, nasdaqAssets] = await Promise.all([
-    getAssetsByExchange("NYSE"),
-    getAssetsByExchange("NASDAQ"),
-  ]);
-  const seen = new Set<string>();
-
-  return [...nyseAssets, ...nasdaqAssets]
-    .filter((asset) => {
-      if (
-        (asset.asset_class != null && asset.asset_class !== "us_equity") ||
-        asset.status !== "active" ||
-        !asset.tradable ||
-        (asset.exchange !== "NYSE" && asset.exchange !== "NASDAQ") ||
-        !asset.attributes?.includes("has_options") ||
-        !/^[A-Z0-9.-]+$/.test(asset.symbol)
-      ) {
-        return false;
-      }
-
-      if (seen.has(asset.symbol)) {
-        return false;
-      }
-
-      seen.add(asset.symbol);
-
-      return true;
-    })
-    .map((asset) => ({
-      symbol: asset.symbol,
-      name: asset.name?.trim() || asset.symbol,
-      exchange: asset.exchange as "NYSE" | "NASDAQ",
-    }))
-    .sort((left, right) => left.symbol.localeCompare(right.symbol));
 }
 
 async function getOptionContractsPage(
