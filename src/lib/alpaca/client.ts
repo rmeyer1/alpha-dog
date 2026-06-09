@@ -18,6 +18,12 @@ export interface AlpacaFeedProbeResult {
   sampleContractCount?: number;
 }
 
+export interface AlpacaWheelAsset {
+  symbol: string;
+  name: string;
+  exchange: "NYSE" | "NASDAQ";
+}
+
 function alpacaHeaders() {
   const env = getEnv();
 
@@ -40,7 +46,7 @@ interface AlpacaOptionContract {
   tradable?: boolean;
 }
 
-interface AlpacaBar {
+export interface AlpacaBar {
   c: number;
   h: number;
   l: number;
@@ -50,7 +56,7 @@ interface AlpacaBar {
   vw?: number;
 }
 
-interface AlpacaOptionSnapshot {
+export interface AlpacaOptionSnapshot {
   dailyBar?: AlpacaBar;
   greeks?: {
     delta?: number;
@@ -81,8 +87,37 @@ interface AlpacaBarsResponse {
   message?: string;
 }
 
+interface AlpacaMultiBarsResponse {
+  bars?: Record<string, AlpacaBar[]> | AlpacaBar[];
+  next_page_token?: string | null;
+  message?: string;
+}
+
 interface AlpacaLatestBarResponse {
   bar?: AlpacaBar;
+  message?: string;
+}
+
+export interface AlpacaStockSnapshot {
+  dailyBar?: AlpacaBar;
+  latestQuote?: {
+    ap?: number;
+    as?: number;
+    bp?: number;
+    bs?: number;
+    t?: string;
+  };
+  latestTrade?: {
+    p?: number;
+    s?: number;
+    t?: string;
+  };
+  minuteBar?: AlpacaBar;
+  prevDailyBar?: AlpacaBar;
+}
+
+interface AlpacaStockSnapshotsResponse {
+  snapshots?: Record<string, AlpacaStockSnapshot>;
   message?: string;
 }
 
@@ -91,6 +126,16 @@ interface AlpacaHttpErrorOptions {
   requestId: string | null;
   retryAfterMs: number | null;
   status: number;
+}
+
+interface AlpacaAsset {
+  symbol: string;
+  name?: string | null;
+  exchange: string;
+  asset_class: string;
+  status: string;
+  tradable: boolean;
+  attributes?: string[];
 }
 
 interface LiveWheelMarketData {
@@ -422,6 +467,53 @@ async function fetchAlpacaJson<T>(url: URL): Promise<T> {
   throw new Error("Alpaca request failed after retries.");
 }
 
+async function getAssetsByExchange(exchange: "NYSE" | "NASDAQ") {
+  const env = getEnv();
+  const url = new URL("/v2/assets", env.ALPACA_TRADING_BASE_URL);
+
+  url.searchParams.set("status", "active");
+  url.searchParams.set("asset_class", "us_equity");
+  url.searchParams.set("exchange", exchange);
+
+  return fetchAlpacaJson<AlpacaAsset[]>(url);
+}
+
+export async function getWheelAssetUniverse(): Promise<AlpacaWheelAsset[]> {
+  const [nyseAssets, nasdaqAssets] = await Promise.all([
+    getAssetsByExchange("NYSE"),
+    getAssetsByExchange("NASDAQ"),
+  ]);
+  const seen = new Set<string>();
+
+  return [...nyseAssets, ...nasdaqAssets]
+    .filter((asset) => {
+      if (
+        (asset.asset_class != null && asset.asset_class !== "us_equity") ||
+        asset.status !== "active" ||
+        !asset.tradable ||
+        (asset.exchange !== "NYSE" && asset.exchange !== "NASDAQ") ||
+        !asset.attributes?.includes("has_options") ||
+        !/^[A-Z0-9.-]+$/.test(asset.symbol)
+      ) {
+        return false;
+      }
+
+      if (seen.has(asset.symbol)) {
+        return false;
+      }
+
+      seen.add(asset.symbol);
+
+      return true;
+    })
+    .map((asset) => ({
+      symbol: asset.symbol,
+      name: asset.name?.trim() || asset.symbol,
+      exchange: asset.exchange as "NYSE" | "NASDAQ",
+    }))
+    .sort((left, right) => left.symbol.localeCompare(right.symbol));
+}
+
 async function getOptionContractsPage(
   ticker: string,
   optionType: OptionType,
@@ -562,6 +654,40 @@ async function getSnapshotsBySymbols(symbols: string[], feed: "opra" | "indicati
   return snapshots;
 }
 
+export async function getStockSnapshotsBySymbols(
+  symbols: string[],
+  options: {
+    chunkSize?: number;
+    feed?: "sip" | "iex" | "delayed_sip";
+  } = {},
+) {
+  const env = getEnv();
+  const snapshots: Record<string, AlpacaStockSnapshot> = {};
+  const chunkSize = Math.max(1, Math.min(options.chunkSize ?? 1000, 1000));
+
+  await Promise.all(
+    chunk(symbols, chunkSize).map(async (symbolChunk) => {
+      const url = new URL(
+        "/v2/stocks/snapshots",
+        env.ALPACA_MARKET_DATA_BASE_URL,
+      );
+
+      url.searchParams.set("feed", options.feed ?? "sip");
+      url.searchParams.set("symbols", symbolChunk.join(","));
+
+      const body = await fetchAlpacaJson<AlpacaStockSnapshotsResponse>(url);
+      const responseSnapshots = body.snapshots ??
+        Object.fromEntries(
+          Object.entries(body).filter(([key]) => key !== "message"),
+        ) as Record<string, AlpacaStockSnapshot>;
+
+      Object.assign(snapshots, responseSnapshots);
+    }),
+  );
+
+  return snapshots;
+}
+
 async function getHistoricalDailyBars(ticker: string) {
   const env = getEnv();
   const url = new URL(
@@ -578,6 +704,73 @@ async function getHistoricalDailyBars(ticker: string) {
   const body = await fetchAlpacaJson<AlpacaBarsResponse>(url);
 
   return body.bars ?? [];
+}
+
+function mergeMultiBars(
+  target: Record<string, AlpacaBar[]>,
+  bars: AlpacaMultiBarsResponse["bars"],
+) {
+  if (!bars) {
+    return;
+  }
+
+  if (Array.isArray(bars)) {
+    return;
+  }
+
+  for (const [symbol, symbolBars] of Object.entries(bars)) {
+    target[symbol] = [...(target[symbol] ?? []), ...symbolBars];
+  }
+}
+
+export async function getHistoricalDailyBarsBySymbols(
+  symbols: string[],
+  options: {
+    daysBack?: number;
+    feed?: "sip" | "iex";
+    symbolChunkSize?: number;
+  } = {},
+) {
+  const env = getEnv();
+  const barsBySymbol: Record<string, AlpacaBar[]> = {};
+  const symbolChunkSize = Math.max(
+    1,
+    Math.min(options.symbolChunkSize ?? 40, 100),
+  );
+
+  await Promise.all(
+    chunk(symbols, symbolChunkSize).map(async (symbolChunk) => {
+      let pageToken: string | undefined;
+
+      do {
+        const url = new URL(
+          "/v2/stocks/bars",
+          env.ALPACA_MARKET_DATA_BASE_URL,
+        );
+
+        url.searchParams.set("symbols", symbolChunk.join(","));
+        url.searchParams.set("timeframe", "1Day");
+        url.searchParams.set(
+          "start",
+          formatDate(addDays(new Date(), -(options.daysBack ?? 520))),
+        );
+        url.searchParams.set("limit", "10000");
+        url.searchParams.set("adjustment", "raw");
+        url.searchParams.set("feed", options.feed ?? "sip");
+
+        if (pageToken) {
+          url.searchParams.set("page_token", pageToken);
+        }
+
+        const body = await fetchAlpacaJson<AlpacaMultiBarsResponse>(url);
+
+        mergeMultiBars(barsBySymbol, body.bars);
+        pageToken = body.next_page_token ?? undefined;
+      } while (pageToken);
+    }),
+  );
+
+  return barsBySymbol;
 }
 
 async function getLatestStockBar(ticker: string) {
@@ -817,6 +1010,26 @@ async function getLiveOptionContracts(
     .map(([symbol, snapshot]) =>
       normalizeSnapshotContract(symbol, snapshot, metadata.get(symbol))
     )
+    .filter((contract) => contract != null);
+}
+
+export async function getLiveOptionSnapshotContracts(
+  ticker: string,
+  filters: WheelFilters,
+  strategy: WheelCompanyStrategy | undefined,
+  underlyingPrice: number,
+  feed: "opra" | "indicative",
+) {
+  const snapshots = await getChainSnapshotsForOptionTypes(
+    ticker,
+    optionTypesForStrategy(strategy),
+    filters,
+    underlyingPrice,
+    feed,
+  );
+
+  return Object.entries(snapshots)
+    .map(([symbol, snapshot]) => normalizeSnapshotContract(symbol, snapshot))
     .filter((contract) => contract != null);
 }
 

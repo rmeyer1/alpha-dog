@@ -18,9 +18,9 @@ function normalizeBaseUrl(url: string) {
 
 export function getSupabaseServiceConfig(): SupabaseServiceConfig | null {
   const env = getEnv();
-  const url = env.SIGNAL_SCRIBE_SUPABASE_URL ?? env.SUPABASE_URL;
+  const url = env.ALPHA_DOG_SUPABASE_URL ?? env.SUPABASE_URL;
   const serviceRoleKey =
-    env.SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY ??
+    env.ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY ??
     env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!url || !serviceRoleKey) {

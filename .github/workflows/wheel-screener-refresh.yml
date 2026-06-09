@@ -1,0 +1,31 @@
+name: Wheel Screener Refresh
+
+on:
+  schedule:
+    - cron: "*/15 * * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger wheel screener refresh
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          WHEEL_SCREENER_CRON_URL: ${{ secrets.WHEEL_SCREENER_CRON_URL }}
+        run: |
+          if [ -z "$WHEEL_SCREENER_CRON_URL" ]; then
+            echo "WHEEL_SCREENER_CRON_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET secret is required."
+            exit 1
+          fi
+
+          curl --fail-with-body --show-error --silent \
+            --request GET \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$WHEEL_SCREENER_CRON_URL"

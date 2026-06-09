@@ -186,6 +186,79 @@ describe("Alpaca client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("fetches stock snapshots in symbol chunks", async () => {
+    stubLiveEnv();
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          AAPL: {
+            latestTrade: { p: 100, t: "2026-06-05T20:00:00Z" },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          MSFT: {
+            latestTrade: { p: 200, t: "2026-06-05T20:00:00Z" },
+          },
+        }),
+      );
+
+    const { getStockSnapshotsBySymbols } = await import("./client");
+    const snapshots = await getStockSnapshotsBySymbols(["AAPL", "MSFT"], {
+      chunkSize: 1,
+      feed: "sip",
+    });
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toContain("/v2/stocks/snapshots");
+    expect(urls[0]).toContain("symbols=AAPL");
+    expect(urls[1]).toContain("symbols=MSFT");
+    expect(snapshots.AAPL.latestTrade?.p).toBe(100);
+    expect(snapshots.MSFT.latestTrade?.p).toBe(200);
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches staged option snapshots without option contract metadata calls", async () => {
+    stubLiveEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        snapshots: {
+          AAPL260619P00095000: {
+            latestQuote: { bp: 1, ap: 1.1 },
+            greeks: { delta: -0.24, theta: -0.04 },
+            impliedVolatility: 0.35,
+            dailyBar: { v: 100 },
+          },
+        },
+      }),
+    );
+
+    const { getLiveOptionSnapshotContracts } = await import("./client");
+    const contracts = await getLiveOptionSnapshotContracts(
+      "AAPL",
+      wheelFilters,
+      "short_put",
+      100,
+      "indicative",
+    );
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("/v1beta1/options/snapshots/AAPL");
+    expect(urls[0]).not.toContain("/v2/options/contracts");
+    expect(contracts[0]).toMatchObject({
+      contractSymbol: "AAPL260619P00095000",
+      openInterest: null,
+    });
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("reuses live market data for repeated ticker requests", async () => {
     stubLiveEnv();
     mockLiveWheelMarketDataFetches();

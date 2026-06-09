@@ -47,6 +47,16 @@ export const analyzeRequestSchema = z.object({
   forceRefresh: z.boolean().default(false),
 });
 
+export const screenerRequestSchema = z.object({
+  persona: personaIdSchema.default("balanced_wheel"),
+  strategy: companyStrategySchema.default("short_put"),
+  filters: filtersSchema,
+  limit: z.number().int().min(1).max(100).default(50),
+  forceRefresh: z.boolean().default(false),
+  cursor: z.number().int().min(0).default(0),
+  batchSize: z.number().int().min(1).max(50).default(32),
+});
+
 export const savedPresetInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   basePersona: personaIdSchema,
