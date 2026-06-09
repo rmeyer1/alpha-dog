@@ -25,7 +25,30 @@ jobs:
             exit 1
           fi
 
-          curl --fail-with-body --show-error --silent \
-            --request GET \
-            --header "Authorization: Bearer $CRON_SECRET" \
-            "$WHEEL_DEEP_SCAN_CRON_URL"
+          for attempt in {1..20}; do
+            body_file="$(mktemp)"
+            status_code="$(curl --show-error --silent \
+              --output "$body_file" \
+              --write-out "%{http_code}" \
+              --request GET \
+              --header "Authorization: Bearer $CRON_SECRET" \
+              "$WHEEL_DEEP_SCAN_CRON_URL")"
+
+            cat "$body_file"
+
+            if [ "$status_code" -ge 200 ] && [ "$status_code" -lt 300 ]; then
+              exit 0
+            fi
+
+            if [ "$status_code" = "404" ] || [ "$status_code" -ge 500 ]; then
+              echo "Deep scan endpoint returned $status_code on attempt $attempt; retrying after deploy/cache propagation."
+              sleep 15
+              continue
+            fi
+
+            echo "Deep scan endpoint returned non-retryable status $status_code."
+            exit 1
+          done
+
+          echo "Deep scan endpoint did not become available after retries."
+          exit 1
