@@ -1,0 +1,31 @@
+name: Wheel Deep Scan Coverage
+
+on:
+  schedule:
+    - cron: "0 * * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  deep-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger wheel deep scan coverage
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          WHEEL_DEEP_SCAN_CRON_URL: ${{ secrets.WHEEL_DEEP_SCAN_CRON_URL }}
+        run: |
+          if [ -z "$WHEEL_DEEP_SCAN_CRON_URL" ]; then
+            echo "WHEEL_DEEP_SCAN_CRON_URL secret is required."
+            exit 1
+          fi
+
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET secret is required."
+            exit 1
+          fi
+
+          curl --fail-with-body --show-error --silent \
+            --request GET \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            "$WHEEL_DEEP_SCAN_CRON_URL"

@@ -40,6 +40,12 @@ const envSchema = z.object({
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),
   WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE: optionalPositiveInteger("1000"),
+  WHEEL_UNIVERSE_BACKGROUND_BATCH_SIZE: optionalPositiveInteger("100"),
+  WHEEL_UNIVERSE_BACKGROUND_CANDIDATE_MAX_AGE_HOURS:
+    optionalPositiveInteger("24"),
+  WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS:
+    optionalPositiveInteger("24"),
+  WHEEL_UNIVERSE_BACKGROUND_MAX_RUNS: optionalPositiveInteger("4"),
   ALPHA_DOG_SUPABASE_URL: z.preprocess(
     emptyStringToUndefined,
     z.string().url().optional(),

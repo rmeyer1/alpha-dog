@@ -77,8 +77,69 @@ interface OptionMarketSnapshotRow {
   volume: number | null;
 }
 
+interface DeepScanCoverageRow {
+  best_score: number | null;
+  error: string | null;
+  last_scanned_at: string | null;
+  option_contract_count: number;
+  status: "pending" | "complete" | "failed" | "no_candidate";
+  symbol: string;
+}
+
+interface DeepScanContext {
+  filterKey: string;
+  filters: WheelFilters;
+  persona: WheelScreenerRequest["persona"];
+  strategy: WheelCompanyStrategy;
+}
+
+export interface UniverseDeepScanCoverageRequest {
+  batchSize?: number;
+  filters?: Partial<WheelFilters>;
+  forceRefresh?: boolean;
+  persona: WheelScreenerRequest["persona"];
+  strategy: WheelCompanyStrategy;
+}
+
+export interface UniverseDeepScanCoverageResult {
+  batchSize: number;
+  candidateCount: number;
+  errorCount: number;
+  errors: string[];
+  filterKey: string;
+  persona: WheelScreenerRequest["persona"];
+  runId: string | null;
+  scannedCount: number;
+  scannedSymbols: string[];
+  selectedCount: number;
+  skippedReason: string | null;
+  staleBefore: string;
+  strategy: WheelCompanyStrategy;
+  totalEligibleCount: number;
+}
+
 const TECHNICAL_REFRESH_TTL_MS = 20 * 60 * 60 * 1000;
 const DEFAULT_STOCK_SNAPSHOT_CHUNK_SIZE = 1000;
+
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+
+  return `{${entries
+    .map(([key, entryValue]) =>
+      `${JSON.stringify(key)}:${stableStringify(entryValue)}`
+    )
+    .join(",")}}`;
+}
 
 function chunk<T>(values: T[], size: number) {
   const chunks: T[][] = [];
@@ -706,6 +767,261 @@ async function persistRankedCandidates(
   );
 }
 
+function deepScanContext(
+  request: UniverseDeepScanCoverageRequest,
+): DeepScanContext {
+  const strategy = request.strategy ?? "short_put";
+  const filters = mergeFilters(request.persona, request.filters);
+
+  return {
+    filterKey: stableStringify(filters),
+    filters,
+    persona: request.persona,
+    strategy,
+  };
+}
+
+async function createDeepScanRun(
+  context: DeepScanContext,
+  batchSize: number,
+) {
+  const rows = await requestSupabaseRest<Array<{ id: string }>>(
+    "wheel_deep_scan_runs",
+    {
+      method: "POST",
+      body: [{
+        persona: context.persona,
+        strategy: context.strategy,
+        filter_key: context.filterKey,
+        filters: context.filters,
+        status: "running",
+        requested_batch_size: batchSize,
+      }],
+      prefer: "return=representation",
+      query: {
+        select: "id",
+      },
+    },
+  );
+
+  return rows?.[0]?.id ?? null;
+}
+
+async function completeDeepScanRun(
+  runId: string | null,
+  result: Pick<
+    UniverseDeepScanCoverageResult,
+    "candidateCount" | "errorCount" | "scannedCount" | "selectedCount"
+  >,
+) {
+  if (!runId) {
+    return;
+  }
+
+  await requestSupabaseRest<null>("wheel_deep_scan_runs", {
+    method: "PATCH",
+    body: {
+      status: "complete",
+      completed_at: new Date().toISOString(),
+      selected_count: result.selectedCount,
+      scanned_count: result.scannedCount,
+      candidate_count: result.candidateCount,
+      error_count: result.errorCount,
+    },
+    prefer: "return=minimal",
+    query: {
+      id: `eq.${runId}`,
+    },
+  });
+}
+
+async function failDeepScanRun(runId: string | null, error: unknown) {
+  if (!runId) {
+    return;
+  }
+
+  await requestSupabaseRest<null>("wheel_deep_scan_runs", {
+    method: "PATCH",
+    body: {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error: error instanceof Error ? error.message : "Deep scan failed.",
+    },
+    prefer: "return=minimal",
+    query: {
+      id: `eq.${runId}`,
+    },
+  });
+}
+
+async function getDeepScanCoverage(context: DeepScanContext) {
+  const rows = await requestSupabaseRest<DeepScanCoverageRow[]>(
+    "wheel_deep_scan_coverage",
+    {
+      query: {
+        select:
+          "symbol,status,last_scanned_at,option_contract_count,best_score,error",
+        persona: `eq.${context.persona}`,
+        strategy: `eq.${context.strategy}`,
+        filter_key: `eq.${context.filterKey}`,
+        limit: 10000,
+      },
+    },
+  );
+
+  return new Map((rows ?? []).map((row) => [row.symbol, row]));
+}
+
+function coverageLastScannedMs(row: DeepScanCoverageRow | undefined) {
+  if (!row?.last_scanned_at) {
+    return 0;
+  }
+
+  const parsed = new Date(row.last_scanned_at).getTime();
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function selectDeepScanCoverageBatch(
+  ranked: RankedUnderlying[],
+  coverage: Map<string, DeepScanCoverageRow>,
+  batchSize: number,
+  staleBeforeMs: number,
+  forceRefresh: boolean,
+) {
+  return ranked
+    .filter((item) => {
+      if (forceRefresh) {
+        return true;
+      }
+
+      const row = coverage.get(item.asset.symbol);
+
+      return !row || coverageLastScannedMs(row) < staleBeforeMs;
+    })
+    .sort((left, right) => {
+      const leftCoverage = coverage.get(left.asset.symbol);
+      const rightCoverage = coverage.get(right.asset.symbol);
+      const leftNeverScanned = leftCoverage?.last_scanned_at ? 0 : 1;
+      const rightNeverScanned = rightCoverage?.last_scanned_at ? 0 : 1;
+
+      if (leftNeverScanned !== rightNeverScanned) {
+        return rightNeverScanned - leftNeverScanned;
+      }
+
+      const scannedDiff =
+        coverageLastScannedMs(leftCoverage) -
+        coverageLastScannedMs(rightCoverage);
+
+      return scannedDiff ||
+        right.stockScore - left.stockScore ||
+        left.asset.symbol.localeCompare(right.asset.symbol);
+    })
+    .slice(0, batchSize);
+}
+
+function deepScanCandidateRow(
+  context: DeepScanContext,
+  runId: string | null,
+  company: WheelCompanyScore,
+) {
+  return {
+    scan_run_id: runId,
+    persona: context.persona,
+    strategy: company.bestCandidate.strategy,
+    filter_key: context.filterKey,
+    symbol: company.ticker,
+    company_name: company.name,
+    exchange: company.exchange,
+    score: company.score,
+    option_type: optionTypeForStrategy(company.bestCandidate.strategy),
+    expiration: company.bestCandidate.expirationDate,
+    dte: company.bestCandidate.dte,
+    short_strike: company.bestCandidate.shortStrike,
+    long_strike: company.bestCandidate.longStrike ?? null,
+    premium_yield: company.bestCandidate.premiumYield ?? null,
+    annualized_yield: company.bestCandidate.annualizedYield ?? null,
+    return_on_risk: company.bestCandidate.returnOnRisk ?? null,
+    annualized_return_on_risk:
+      company.bestCandidate.annualizedReturnOnRisk ?? null,
+    delta: company.bestCandidate.delta,
+    implied_volatility: company.bestCandidate.impliedVolatility,
+    liquidity_quality: company.bestCandidate.liquidityQuality,
+    warning_count: company.bestCandidate.warningCount,
+    underlying_price: company.underlying.price,
+    underlying_as_of: company.underlying.asOf,
+    trend: company.underlying.trend,
+    rsi14: company.underlying.rsi14,
+    ma20: company.underlying.movingAverages.ma20,
+    ma50: company.underlying.movingAverages.ma50,
+    ma200: company.underlying.movingAverages.ma200,
+    warnings: company.warnings,
+    errors: company.errors,
+    as_of: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function upsertDeepScanCandidates(
+  context: DeepScanContext,
+  runId: string | null,
+  companies: WheelCompanyScore[],
+) {
+  await upsertRows(
+    "wheel_deep_scan_candidates",
+    companies.map((company) => deepScanCandidateRow(context, runId, company)),
+    "persona,strategy,filter_key,symbol",
+  );
+}
+
+async function deleteDeepScanCandidate(
+  context: DeepScanContext,
+  symbol: string,
+) {
+  await requestSupabaseRest<null>("wheel_deep_scan_candidates", {
+    method: "DELETE",
+    prefer: "return=minimal",
+    query: {
+      persona: `eq.${context.persona}`,
+      strategy: `eq.${context.strategy}`,
+      filter_key: `eq.${context.filterKey}`,
+      symbol: `eq.${symbol}`,
+    },
+  });
+}
+
+async function upsertDeepScanCoverageRows(
+  context: DeepScanContext,
+  rows: Array<{
+    bestScore: number | null;
+    error: string | null;
+    optionContractCount: number;
+    runId: string | null;
+    status: DeepScanCoverageRow["status"];
+    symbol: string;
+  }>,
+) {
+  const now = new Date().toISOString();
+
+  await upsertRows(
+    "wheel_deep_scan_coverage",
+    rows.map((row) => ({
+      symbol: row.symbol,
+      persona: context.persona,
+      strategy: context.strategy,
+      filter_key: context.filterKey,
+      status: row.status,
+      scan_run_id: row.runId,
+      last_scanned_at: now,
+      option_contract_count: row.optionContractCount,
+      best_score: row.bestScore,
+      error: row.error,
+      updated_at: now,
+    })),
+    "symbol,persona,strategy,filter_key",
+  );
+}
+
 function globalWarnings(feed: DataFeed): Warning[] {
   return feed === "indicative"
     ? [{
@@ -873,6 +1189,211 @@ export async function analyzeStagedUniverseWheelCompanies(
     return response;
   } catch (error) {
     await failUniverseScanRun(runId, error);
+    throw error;
+  }
+}
+
+export async function runUniverseDeepScanCoverage(
+  request: UniverseDeepScanCoverageRequest,
+): Promise<UniverseDeepScanCoverageResult> {
+  if (!getSupabaseServiceConfig()) {
+    throw new Error(
+      "Alpha Dog Supabase service-role configuration is required for background universe deep scans.",
+    );
+  }
+
+  const env = getEnv();
+  const context = deepScanContext(request);
+  const batchSize = request.batchSize ??
+    env.WHEEL_UNIVERSE_BACKGROUND_BATCH_SIZE;
+  const staleBeforeMs =
+    Date.now() -
+    env.WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS * 60 * 60 * 1000;
+  const staleBefore = new Date(staleBeforeMs).toISOString();
+  const runId = await createDeepScanRun(context, batchSize);
+
+  try {
+    const assets = await getWheelAssetUniverse();
+    const snapshots = await getStockSnapshotsBySymbols(
+      assets.map((asset) => asset.symbol),
+      {
+        chunkSize:
+          env.WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE ??
+          DEFAULT_STOCK_SNAPSHOT_CHUNK_SIZE,
+        feed: "sip",
+      },
+    );
+    const ranked = rankUnderlyingUniverse(assets, snapshots);
+
+    await persistUniverseAssets(assets);
+    await persistStockSnapshots(null, ranked);
+
+    const coverage = await getDeepScanCoverage(context);
+    const selected = selectDeepScanCoverageBatch(
+      ranked,
+      coverage,
+      batchSize,
+      staleBeforeMs,
+      request.forceRefresh === true,
+    );
+
+    if (selected.length === 0) {
+      const result: UniverseDeepScanCoverageResult = {
+        batchSize,
+        candidateCount: 0,
+        errorCount: 0,
+        errors: [],
+        filterKey: context.filterKey,
+        persona: context.persona,
+        runId,
+        scannedCount: 0,
+        scannedSymbols: [],
+        selectedCount: 0,
+        skippedReason:
+          "No eligible symbols are due for background deep scan coverage.",
+        staleBefore,
+        strategy: context.strategy,
+        totalEligibleCount: ranked.length,
+      };
+
+      await completeDeepScanRun(runId, result);
+
+      return result;
+    }
+
+    const technicals = await ensureTechnicals(selected);
+    const optionSnapshotRows: OptionMarketSnapshotRow[] = [];
+    const companies: WheelCompanyScore[] = [];
+    const coverageRows: Parameters<typeof upsertDeepScanCoverageRows>[1] = [];
+    const errors: string[] = [];
+
+    await mapWithConcurrency(
+      selected,
+      env.ALPACA_MARKET_DATA_MAX_CONCURRENCY,
+      async (item) => {
+        let contractCount = 0;
+
+        try {
+          const underlying = rowToUnderlyingContext(
+            item,
+            technicals.get(item.asset.symbol),
+          );
+          const contracts = await getLiveOptionSnapshotContracts(
+            item.asset.symbol,
+            context.filters,
+            context.strategy,
+            item.price,
+            env.ALPACA_OPTIONS_FEED,
+          );
+
+          contractCount = contracts.length;
+          optionSnapshotRows.push(
+            ...optionMarketSnapshotRows(null, item.asset.symbol, contracts),
+          );
+
+          const bestCandidate = selectBestCandidate(
+            contracts,
+            underlying,
+            context.persona,
+            context.strategy,
+            context.filters,
+          );
+
+          if (!bestCandidate) {
+            await deleteDeepScanCandidate(context, item.asset.symbol);
+            coverageRows.push({
+              bestScore: null,
+              error: null,
+              optionContractCount: contractCount,
+              runId,
+              status: "no_candidate",
+              symbol: item.asset.symbol,
+            });
+
+            return;
+          }
+
+          const company: WheelCompanyScore = {
+            rank: 0,
+            ticker: item.asset.symbol,
+            name: item.asset.name,
+            exchange: item.asset.exchange,
+            score: bestCandidate.score,
+            underlying,
+            bestCandidate: {
+              ...bestCandidate,
+              liquidityQuality:
+                bestCandidate.liquidityQuality as QualityLabel,
+            },
+            warnings: [],
+            errors: [],
+          };
+
+          companies.push(company);
+          coverageRows.push({
+            bestScore: company.score,
+            error: null,
+            optionContractCount: contractCount,
+            runId,
+            status: "complete",
+            symbol: item.asset.symbol,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Deep scan failed.";
+
+          await deleteDeepScanCandidate(context, item.asset.symbol);
+          coverageRows.push({
+            bestScore: null,
+            error: message,
+            optionContractCount: contractCount,
+            runId,
+            status: "failed",
+            symbol: item.asset.symbol,
+          });
+
+          if (errors.length < 25) {
+            errors.push(`${item.asset.symbol}: ${message}`);
+          }
+        }
+      },
+    );
+
+    const rankedCompanies = companies
+      .sort((left, right) =>
+        right.score - left.score || left.ticker.localeCompare(right.ticker)
+      )
+      .map((company, index) => ({
+        ...company,
+        rank: index + 1,
+      }));
+
+    await persistOptionMarketSnapshots(optionSnapshotRows);
+    await upsertDeepScanCandidates(context, runId, rankedCompanies);
+    await upsertDeepScanCoverageRows(context, coverageRows);
+
+    const result: UniverseDeepScanCoverageResult = {
+      batchSize,
+      candidateCount: rankedCompanies.length,
+      errorCount: errors.length,
+      errors,
+      filterKey: context.filterKey,
+      persona: context.persona,
+      runId,
+      scannedCount: selected.length,
+      scannedSymbols: selected.map((item) => item.asset.symbol),
+      selectedCount: selected.length,
+      skippedReason: null,
+      staleBefore,
+      strategy: context.strategy,
+      totalEligibleCount: ranked.length,
+    };
+
+    await completeDeepScanRun(runId, result);
+
+    return result;
+  } catch (error) {
+    await failDeepScanRun(runId, error);
     throw error;
   }
 }
