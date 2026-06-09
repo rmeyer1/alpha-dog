@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   PersonaConfig,
   PersonaId,
   SavedPreset,
+  WheelCompanyStrategy,
   WheelAnalysisResponse,
   WheelFilters,
+  WheelScreenerResponse,
+  WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
 import { CandidateResults } from "./wheel-dashboard/candidate-results";
+import { CompanyResults } from "./wheel-dashboard/company-results";
+import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
 import { MarketOverview } from "./wheel-dashboard/market-overview";
@@ -25,25 +30,40 @@ interface WheelDashboardProps {
 }
 
 const defaultTicker = "";
+const defaultScreenerStrategy: WheelCompanyStrategy = "short_put";
 
-function EmptyWorkspace() {
+type ApiErrorPayload = {
+  error: {
+    message: string;
+  };
+};
+
+function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
   return (
-    <section className="rounded-lg border border-white/10 bg-[#151718] p-8">
-      <div className="max-w-2xl">
-        <div className="text-sm font-medium uppercase text-emerald-200">
-          Ticker analysis
-        </div>
-        <h2 className="mt-3 text-3xl font-semibold tracking-normal text-white">
-          Enter a ticker to rank option candidates.
-        </h2>
-        <p className="mt-4 text-sm leading-6 text-zinc-400">
-          Alpha Dog now focuses on single-symbol wheel analysis. Add a ticker
-          above to compare cash-secured puts, covered calls, put credit spreads,
-          and call credit spreads using the filters on this page.
-        </p>
-      </div>
-    </section>
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof (payload as ApiErrorPayload).error?.message === "string"
   );
+}
+
+function isScreenerRunResponse(
+  payload: WheelScreenerResponse | WheelScreenerRunResponse,
+): payload is WheelScreenerRunResponse {
+  return "runId" in payload;
+}
+
+function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
+  switch (strategy) {
+    case "covered_call":
+      return "calls";
+    case "put_credit_spread":
+      return "putSpreads";
+    case "call_credit_spread":
+      return "callSpreads";
+    case "short_put":
+      return "puts";
+  }
 }
 
 export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
@@ -54,10 +74,15 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [filters, setFilters] = useState<WheelFilters>(defaultPersona.filters);
   const [activeTab, setActiveTab] = useState<StrategyTab>("puts");
   const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
+  const [screenerResponse, setScreenerResponse] =
+    useState<WheelScreenerResponse | null>(null);
+  const [screenerStrategy, setScreenerStrategy] =
+    useState<WheelCompanyStrategy>(defaultScreenerStrategy);
   const [requestState, setRequestState] = useState<RequestState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
   const [presetName, setPresetName] = useState("Balanced 21-30 DTE");
+  const didLoadInitialScreener = useRef(false);
   const activePersona = useMemo(
     () => personaById(initialPersonas, personaId, defaultPersona),
     [defaultPersona, initialPersonas, personaId],
@@ -72,8 +97,120 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   function clearTickerResult() {
     setResponse(null);
     setError(null);
-    setRequestState("idle");
+    setRequestState(screenerResponse ? "successFresh" : "idle");
   }
+
+  const pollScreenerRun = useCallback(async (runId: string) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const apiResponse = await fetch(
+        `/api/wheel/screener/runs/${encodeURIComponent(runId)}`,
+        { cache: "no-store" },
+      );
+      const payload = (await apiResponse.json()) as
+        | WheelScreenerRunResponse
+        | ApiErrorPayload;
+
+      if (!apiResponse.ok || isApiErrorPayload(payload)) {
+        throw new Error(
+          isApiErrorPayload(payload)
+            ? payload.error.message
+            : "Unable to load screener run.",
+        );
+      }
+
+      if (payload.status === "completed" && payload.result) {
+        return payload.result;
+      }
+
+      if (payload.status === "failed" || payload.status === "cancelled") {
+        throw new Error("Universe screener run did not complete.");
+      }
+    }
+
+    throw new Error("Universe screener run is still in progress.");
+  }, []);
+
+  const loadTopCompanies = useCallback(
+    async ({
+      forceRefresh = false,
+      nextFilters = filters,
+      nextPersonaId = personaId,
+      nextStrategy = screenerStrategy,
+    }: {
+      forceRefresh?: boolean;
+      nextFilters?: WheelFilters;
+      nextPersonaId?: PersonaId;
+      nextStrategy?: WheelCompanyStrategy;
+    } = {}) => {
+      await Promise.resolve();
+
+      const strategyChanged = nextStrategy !== screenerStrategy;
+      const filtersChanged = nextFilters !== filters;
+
+      setRequestState(screenerResponse ? "refreshing" : "loading");
+      setError(null);
+      setScreenerStrategy(nextStrategy);
+
+      if (strategyChanged || filtersChanged || nextPersonaId !== personaId) {
+        setScreenerResponse(null);
+      }
+
+      try {
+        const apiResponse = await fetch("/api/wheel/screener", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            persona: nextPersonaId,
+            strategy: nextStrategy,
+            filters: nextFilters,
+            limit: 50,
+            forceRefresh,
+          }),
+        });
+        const payload = (await apiResponse.json()) as
+          | WheelScreenerResponse
+          | WheelScreenerRunResponse
+          | ApiErrorPayload;
+
+        if (!apiResponse.ok || isApiErrorPayload(payload)) {
+          throw new Error(
+            isApiErrorPayload(payload)
+              ? payload.error.message
+              : "Unable to load top companies.",
+          );
+        }
+
+        const nextResponse = isScreenerRunResponse(payload)
+          ? payload.result ?? await pollScreenerRun(payload.runId)
+          : payload;
+
+        setScreenerResponse(nextResponse);
+        setRequestState(
+          nextResponse.dataFreshness.cacheStatus === "stale"
+            ? "successStale"
+            : "successFresh",
+        );
+      } catch (caught) {
+        setRequestState("errorNoCache");
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : "Unable to load top companies.",
+        );
+      }
+    },
+    [
+      filters,
+      personaId,
+      pollScreenerRun,
+      screenerResponse,
+      screenerStrategy,
+    ],
+  );
 
   async function analyzeTicker({
     forceRefresh = false,
@@ -108,6 +245,14 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         body: JSON.stringify({
           ticker: symbol,
           persona: nextPersonaId,
+          strategy:
+            nextActiveTab === "calls"
+              ? "covered_call"
+              : nextActiveTab === "putSpreads"
+                ? "put_credit_spread"
+                : nextActiveTab === "callSpreads"
+                  ? "call_credit_spread"
+                  : "short_put",
           filters: nextFilters,
           resultLimit: 25,
           forceRefresh,
@@ -167,6 +312,13 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setFilters(nextFilters);
     setPresetName(preset.name);
     clearTickerResult();
+
+    if (!ticker.trim()) {
+      void loadTopCompanies({
+        nextFilters,
+        nextPersonaId: preset.basePersona,
+      });
+    }
   }
 
   function selectPersona(nextPersonaId: PersonaId) {
@@ -175,16 +327,77 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setPersonaId(nextPersona.id);
     setFilters(nextPersona.filters);
     clearTickerResult();
+
+    if (!ticker.trim()) {
+      void loadTopCompanies({
+        nextFilters: nextPersona.filters,
+        nextPersonaId: nextPersona.id,
+      });
+    }
   }
 
   function handleFiltersChange(nextFilters: WheelFilters) {
     setFilters(nextFilters);
     clearTickerResult();
+
+    if (!ticker.trim()) {
+      void loadTopCompanies({ nextFilters });
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void analyzeTicker();
+  }
+
+  function handleTickerChange(nextTicker: string) {
+    setTicker(nextTicker);
+
+    if (!nextTicker.trim()) {
+      setResponse(null);
+
+      if (!screenerResponse) {
+        void loadTopCompanies();
+      }
+
+      return;
+    }
+
+    if (
+      response &&
+      response.ticker !== nextTicker.trim().toUpperCase()
+    ) {
+      setResponse(null);
+      setRequestState("idle");
+      setError(null);
+    }
+  }
+
+  function handleForceRefresh() {
+    if (ticker.trim()) {
+      void analyzeTicker({ forceRefresh: true });
+
+      return;
+    }
+
+    void loadTopCompanies({ forceRefresh: true });
+  }
+
+  function handleSelectCompanyTicker(
+    nextTicker: string,
+    strategy: WheelCompanyStrategy,
+  ) {
+    const nextActiveTab = tabForStrategy(strategy);
+
+    setTicker(nextTicker);
+    void analyzeTicker({
+      nextActiveTab,
+      nextTicker,
+    });
+  }
+
+  function handleScreenerStrategyChange(strategy: WheelCompanyStrategy) {
+    void loadTopCompanies({ nextStrategy: strategy });
   }
 
   useEffect(() => {
@@ -210,12 +423,24 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       }
     }
 
+    let screenerLoadTimer: number | null = null;
+
+    if (!didLoadInitialScreener.current) {
+      didLoadInitialScreener.current = true;
+      screenerLoadTimer = window.setTimeout(() => {
+        void loadTopCompanies();
+      }, 0);
+    }
+
     void loadInitialData();
 
     return () => {
       cancelled = true;
+      if (screenerLoadTimer) {
+        window.clearTimeout(screenerLoadTimer);
+      }
     };
-  }, []);
+  }, [loadTopCompanies]);
 
   const rows = activeTab === "puts"
     ? response?.shortPuts ?? []
@@ -233,12 +458,12 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     <main className="min-h-screen bg-[#0b0c0d] text-zinc-100">
       <DashboardHeader
         canAnalyze={hasTicker}
-        canRefresh={Boolean(response) && hasTicker}
+        canRefresh={hasTicker ? Boolean(response) : true}
         initialPersonas={initialPersonas}
         onAnalyze={handleSubmit}
-        onForceRefresh={() => void analyzeTicker({ forceRefresh: true })}
+        onForceRefresh={handleForceRefresh}
         onPersonaChange={selectPersona}
-        onTickerChange={setTicker}
+        onTickerChange={handleTickerChange}
         personaId={personaId}
         requestState={requestState}
         ticker={ticker}
@@ -246,7 +471,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
       <div className="mx-auto grid max-w-[1600px] items-start gap-4 px-4 py-5 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:px-8">
         <section className="grid min-w-0 content-start gap-4">
-          {response ? (
+          {hasTicker ? (
             <>
               <MarketOverview
                 activePersona={activePersona}
@@ -257,23 +482,34 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                 ticker={ticker}
               />
 
-              <CandidateResults
-                activeTab={activeTab}
-                onTabChange={setActiveTab}
-                requestState={requestState}
-                rows={rows}
-                spreadRows={spreadRows}
-                underlyingPrice={response?.underlying.price}
-              />
+              {response ? (
+                <CandidateResults
+                  activeTab={activeTab}
+                  onTabChange={setActiveTab}
+                  requestState={requestState}
+                  rows={rows}
+                  spreadRows={spreadRows}
+                  underlyingPrice={response.underlying.price}
+                />
+              ) : null}
             </>
           ) : (
             <>
-              <EmptyWorkspace />
-              {error ? (
-                <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-4 text-sm text-red-100">
-                  {error}
-                </div>
-              ) : null}
+              <CompanyScreenerOverview
+                activePersona={activePersona}
+                error={error}
+                filters={filters}
+                requestState={requestState}
+                response={screenerResponse}
+                strategy={screenerStrategy}
+              />
+              <CompanyResults
+                activeStrategy={screenerStrategy}
+                companies={screenerResponse?.companies ?? []}
+                onSelectStrategy={handleScreenerStrategyChange}
+                onSelectTicker={handleSelectCompanyTicker}
+                requestState={requestState}
+              />
             </>
           )}
         </section>

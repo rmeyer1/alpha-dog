@@ -110,6 +110,10 @@ function parseNumber(value: number | string | null | undefined) {
   return typeof value === "number" ? value : Number(value);
 }
 
+function displayLiquidityQuality(quality: QualityLabel): QualityLabel {
+  return quality === "unknown" ? "weak" : quality;
+}
+
 function cacheStatusForSnapshot(
   snapshot: Pick<WheelScreenerSnapshotRow, "completed_at" | "feed">,
   nowMs = Date.now(),
@@ -179,7 +183,7 @@ function rowToCompanyScore(
       parseNumber(row.annualized_return_on_risk) ?? undefined,
     delta: parseNumber(row.delta),
     impliedVolatility: parseNumber(row.implied_volatility),
-    liquidityQuality: row.liquidity_quality,
+    liquidityQuality: displayLiquidityQuality(row.liquidity_quality),
     warningCount: row.warning_count,
   };
 

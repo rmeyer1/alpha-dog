@@ -63,7 +63,8 @@ describe("wheel calculations", () => {
     expect(liquidityQuality(600, 250, 0.04)).toBe("excellent");
     expect(liquidityQuality(600, 250, 0.08)).toBe("good");
     expect(liquidityQuality(150, 60, 0.18)).toBe("acceptable");
-    expect(liquidityQuality(null, 60, 0.18)).toBe("unknown");
+    expect(liquidityQuality(null, 60, 0.04)).toBe("good");
+    expect(liquidityQuality(null, 60, 0.18)).toBe("weak");
     expect(liquidityQuality(600, 250, 0.4)).toBe("poor");
   });
 
