@@ -102,6 +102,9 @@ describe("materialized wheel screener", () => {
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify([candidateRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), { status: 200 }),
       );
 
     const { getMaterializedWheelScreenerResponse } =
@@ -147,7 +150,7 @@ describe("materialized wheel screener", () => {
     );
     expect(candidateUrl.searchParams.get("strategy")).toBe("eq.short_put");
     expect(candidateUrl.searchParams.get("order")).toBe("score.desc,symbol.asc");
-    expect(candidateUrl.searchParams.get("limit")).toBe("50");
+    expect(candidateUrl.searchParams.get("limit")).toBe("200");
     expect(candidateUrl.searchParams.get("offset")).toBe("0");
   });
 
@@ -194,6 +197,9 @@ describe("materialized wheel screener", () => {
           ]),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), { status: 200 }),
       );
 
     const { getMaterializedWheelScreenerResponse } =
@@ -205,6 +211,51 @@ describe("materialized wheel screener", () => {
     });
 
     expect(response?.companies[0].bestCandidate.liquidityQuality).toBe("weak");
+  });
+
+  it("merges recent background deep-scan candidates into the first page", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([snapshotRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([candidateRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...candidateRow,
+              symbol: "MSFT",
+              company_name: "Microsoft Corporation",
+              score: 99,
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+    const response = await getMaterializedWheelScreenerResponse({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+    });
+    const deepCandidateUrl = new URL(String(vi.mocked(fetch).mock.calls[2][0]));
+
+    expect(deepCandidateUrl.pathname).toBe(
+      "/rest/v1/wheel_deep_scan_candidates",
+    );
+    expect(deepCandidateUrl.searchParams.get("filter_key")).toContain(
+      '"dteMin":21',
+    );
+    expect(response?.companies.map((company) => company.ticker)).toEqual([
+      "MSFT",
+      "AAPL",
+    ]);
   });
 
   it("writes snapshot metadata and candidate rows through service-role REST", async () => {

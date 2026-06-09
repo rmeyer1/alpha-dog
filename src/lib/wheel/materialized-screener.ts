@@ -35,7 +35,7 @@ export interface WheelScreenerSnapshotRow {
 }
 
 interface WheelOptionCandidateRow {
-  snapshot_id: string;
+  snapshot_id?: string;
   persona: string;
   strategy: WheelCompanyStrategy;
   symbol: string;
@@ -112,6 +112,32 @@ function parseNumber(value: number | string | null | undefined) {
 
 function displayLiquidityQuality(quality: QualityLabel): QualityLabel {
   return quality === "unknown" ? "weak" : quality;
+}
+
+function rankCompanyScores(
+  rows: WheelCompanyScore[],
+  offset: number,
+  limit: number,
+) {
+  const byTicker = new Map<string, WheelCompanyScore>();
+
+  for (const row of rows) {
+    const existing = byTicker.get(row.ticker);
+
+    if (!existing || row.score > existing.score) {
+      byTicker.set(row.ticker, row);
+    }
+  }
+
+  return Array.from(byTicker.values())
+    .sort((left, right) =>
+      right.score - left.score || left.ticker.localeCompare(right.ticker)
+    )
+    .slice(offset, offset + limit)
+    .map((company, index) => ({
+      ...company,
+      rank: offset + index + 1,
+    }));
 }
 
 function cacheStatusForSnapshot(
@@ -284,6 +310,7 @@ export async function getMaterializedWheelScreenerResponse(
   }
 
   const limit = request.limit ?? 50;
+  const candidateReadLimit = offset === 0 ? Math.max(limit * 4, 200) : limit;
   const rows = await requestSupabaseRest<WheelOptionCandidateRow[]>(
     "wheel_option_candidates",
     {
@@ -293,15 +320,36 @@ export async function getMaterializedWheelScreenerResponse(
         snapshot_id: `eq.${snapshot.id}`,
         strategy: `eq.${strategy}`,
         order: "score.desc,symbol.asc",
-        limit,
-        offset,
+        limit: candidateReadLimit,
+        offset: offset === 0 ? 0 : offset,
       },
     },
   );
+  const recentDeepRows = offset === 0
+    ? await getRecentDeepScanCandidateRows({
+        filterKey,
+        limit: candidateReadLimit,
+        persona: request.persona,
+        strategy,
+      })
+    : [];
 
-  const companies = (rows ?? []).map((row, index) =>
-    rowToCompanyScore(row, offset + index + 1),
-  );
+  const companies = offset === 0
+    ? rankCompanyScores(
+        [
+          ...(rows ?? []).map((row, index) =>
+            rowToCompanyScore(row, index + 1)
+          ),
+          ...recentDeepRows.map((row, index) =>
+            rowToCompanyScore(row, (rows?.length ?? 0) + index + 1)
+          ),
+        ],
+        0,
+        limit,
+      )
+    : (rows ?? []).map((row, index) =>
+        rowToCompanyScore(row, offset + index + 1)
+      );
   const asOf = snapshot.completed_at ?? snapshot.created_at;
 
   return {
@@ -332,6 +380,39 @@ export async function getMaterializedWheelScreenerResponse(
     warnings: [],
     errors: snapshot.error ? [snapshot.error] : [],
   };
+}
+
+async function getRecentDeepScanCandidateRows({
+  filterKey,
+  limit,
+  persona,
+  strategy,
+}: {
+  filterKey: string;
+  limit: number;
+  persona: WheelScreenerRequest["persona"];
+  strategy: WheelCompanyStrategy;
+}) {
+  const maxAgeHours = getEnv().WHEEL_UNIVERSE_BACKGROUND_CANDIDATE_MAX_AGE_HOURS;
+  const minAsOf = new Date(
+    Date.now() - maxAgeHours * 60 * 60 * 1000,
+  ).toISOString();
+
+  return await requestSupabaseRest<WheelOptionCandidateRow[]>(
+    "wheel_deep_scan_candidates",
+    {
+      query: {
+        select:
+          "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of",
+        persona: `eq.${persona}`,
+        strategy: `eq.${strategy}`,
+        filter_key: `eq.${filterKey}`,
+        as_of: `gte.${minAsOf}`,
+        order: "score.desc,symbol.asc",
+        limit,
+      },
+    },
+  ) ?? [];
 }
 
 export async function getLatestMaterializedWheelScreenerSnapshot(
