@@ -53,20 +53,26 @@ export function DashboardHeader({
               </p>
             </div>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
             <nav
               aria-label="Workspace"
-              className="max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-1"
+              className="w-full max-w-full rounded-lg border border-white/10 bg-black/25 p-1 sm:w-auto"
             >
-              <div className="flex w-max gap-1">
+              <div className="grid min-w-0 grid-cols-3 gap-1 sm:flex sm:w-max">
                 <Link
-                  className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
+                  className="flex min-h-10 min-w-0 items-center justify-center rounded-md bg-emerald-300 px-2 py-2 text-center text-sm font-medium leading-snug text-black sm:px-3"
                   href="/screeners"
                 >
                   Screeners
                 </Link>
                 <Link
-                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.08] hover:text-white"
+                  className="flex min-h-10 min-w-0 items-center justify-center rounded-md px-2 py-2 text-center text-sm font-medium leading-snug text-zinc-300 transition hover:bg-white/[0.08] hover:text-white sm:px-3"
+                  href="/traders"
+                >
+                  Traders
+                </Link>
+                <Link
+                  className="flex min-h-10 min-w-0 items-center justify-center rounded-md px-2 py-2 text-center text-sm font-medium leading-snug text-zinc-300 transition hover:bg-white/[0.08] hover:text-white sm:px-3"
                   href="/account"
                 >
                   Account
