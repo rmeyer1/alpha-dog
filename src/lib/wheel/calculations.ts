@@ -58,7 +58,15 @@ export function liquidityQuality(
   }
 
   if (openInterest == null || volume == null) {
-    return "unknown";
+    if (spreadPctOfMid <= 0.05) {
+      return "good";
+    }
+
+    if (spreadPctOfMid <= 0.1) {
+      return "acceptable";
+    }
+
+    return "weak";
   }
 
   if (openInterest >= 500 && volume >= 200 && spreadPctOfMid <= 0.05) {

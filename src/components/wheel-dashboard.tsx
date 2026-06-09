@@ -146,9 +146,16 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     } = {}) => {
       await Promise.resolve();
 
+      const strategyChanged = nextStrategy !== screenerStrategy;
+      const filtersChanged = nextFilters !== filters;
+
       setRequestState(screenerResponse ? "refreshing" : "loading");
       setError(null);
       setScreenerStrategy(nextStrategy);
+
+      if (strategyChanged || filtersChanged || nextPersonaId !== personaId) {
+        setScreenerResponse(null);
+      }
 
       try {
         const apiResponse = await fetch("/api/wheel/screener", {

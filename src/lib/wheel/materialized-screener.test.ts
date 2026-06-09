@@ -177,6 +177,36 @@ describe("materialized wheel screener", () => {
     expect(response?.progress.cursor).toBe(50);
   });
 
+  it("normalizes unknown liquidity from existing materialized rows", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([snapshotRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...candidateRow,
+              liquidity_quality: "unknown",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+    const response = await getMaterializedWheelScreenerResponse({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+    });
+
+    expect(response?.companies[0].bestCandidate.liquidityQuality).toBe("weak");
+  });
+
   it("writes snapshot metadata and candidate rows through service-role REST", async () => {
     stubSupabaseEnv();
 
