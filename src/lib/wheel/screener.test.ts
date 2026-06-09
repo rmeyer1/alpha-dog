@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectCompanyCandidateForStrategy } from "./screener";
-import type { WheelAnalysisRequest, WheelAnalysisResponse } from "./types";
+import type { WheelAnalysisResponse } from "./types";
 
 const analyzeWheelCandidatesMock = vi.hoisted(() => vi.fn());
+const analyzeStagedUniverseWheelCompaniesMock = vi.hoisted(() => vi.fn());
 const getWheelAssetUniverseMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./analyze", () => ({
   analyzeWheelCandidates: analyzeWheelCandidatesMock,
+}));
+
+vi.mock("./universe-scanner", () => ({
+  analyzeStagedUniverseWheelCompanies: analyzeStagedUniverseWheelCompaniesMock,
 }));
 
 vi.mock("@/lib/alpaca/client", () => ({
@@ -119,6 +124,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.unstubAllEnvs();
   analyzeWheelCandidatesMock.mockReset();
+  analyzeStagedUniverseWheelCompaniesMock.mockReset();
   getWheelAssetUniverseMock.mockReset();
 });
 
@@ -152,7 +158,7 @@ describe("wheel company screener", () => {
     });
   });
 
-  it("uses higher live batch defaults while capping concurrent analysis", async () => {
+  it("delegates live first-page scans to the staged universe scanner", async () => {
     vi.stubEnv("USE_DEMO_DATA", "false");
     vi.stubEnv("APCA_API_KEY_ID", "key");
     vi.stubEnv("APCA_API_SECRET_KEY", "secret");
@@ -160,56 +166,39 @@ describe("wheel company screener", () => {
     vi.stubEnv("WHEEL_SCREENER_LIVE_BATCH_SIZE", "32");
     vi.stubEnv("WHEEL_SCREENER_LIVE_CONCURRENCY", "8");
 
-    getWheelAssetUniverseMock.mockResolvedValue(
-      Array.from({ length: 40 }, (_, index) => ({
-        symbol: `T${index}`,
-        name: `Ticker ${index}`,
-        exchange: "NASDAQ",
-      })),
-    );
-
-    let inFlight = 0;
-    let maxInFlight = 0;
-    let releaseBatch: () => void = () => {};
-    const batchGate = new Promise<void>((resolve) => {
-      releaseBatch = resolve;
+    analyzeStagedUniverseWheelCompaniesMock.mockResolvedValue({
+      ...responseForTicker("AAPL"),
+      companies: [],
+      screenedCount: 40,
+      skippedCount: 40,
+      progress: {
+        status: "complete",
+        resultScope: "complete",
+        cursor: 0,
+        nextCursor: null,
+        batchSize: 32,
+        batchScreenedCount: 32,
+        processedCount: 40,
+        totalCount: 40,
+      },
     });
 
-    analyzeWheelCandidatesMock.mockImplementation(
-      async (request: WheelAnalysisRequest) => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-
-        await batchGate;
-
-        inFlight -= 1;
-
-        return responseForTicker(request.ticker);
-      },
-    );
-
     const { analyzeTopWheelCompanies } = await import("./screener");
-    const pending = analyzeTopWheelCompanies({
+    const response = await analyzeTopWheelCompanies({
       persona: "balanced_wheel",
       strategy: "short_put",
       forceRefresh: true,
     });
 
-    await vi.waitFor(() => {
-      expect(maxInFlight).toBe(8);
-      expect(analyzeWheelCandidatesMock).toHaveBeenCalledTimes(8);
-    });
-
-    releaseBatch();
-    const response = await pending;
-
-    expect(response.progress).toMatchObject({
-      batchSize: 32,
-      batchScreenedCount: 32,
-      processedCount: 32,
-      totalCount: 40,
-      nextCursor: 32,
-    });
-    expect(maxInFlight).toBe(8);
+    expect(analyzeStagedUniverseWheelCompaniesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        batchSize: 32,
+        cursor: 0,
+        limit: 50,
+        strategy: "short_put",
+      }),
+    );
+    expect(analyzeWheelCandidatesMock).not.toHaveBeenCalled();
+    expect(response.progress.resultScope).toBe("complete");
   });
 });

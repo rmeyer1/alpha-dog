@@ -30,8 +30,10 @@ function stubLiveEnv() {
   vi.stubEnv("APCA_API_KEY_ID", "alpaca-key");
   vi.stubEnv("APCA_API_SECRET_KEY", "alpaca-secret");
   vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
-  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_URL", "https://example.supabase.co");
-  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+  vi.stubEnv("ALPHA_DOG_SUPABASE_URL", "https://alpha-dog.supabase.co");
+  vi.stubEnv("ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_URL", "https://signal-scribe.supabase.co");
+  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY", "signal-key");
 }
 
 async function importRefresh() {

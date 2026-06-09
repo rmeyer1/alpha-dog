@@ -38,6 +38,16 @@ const envSchema = z.object({
   ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
   WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
+  WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),
+  WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE: optionalPositiveInteger("1000"),
+  ALPHA_DOG_SUPABASE_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.string().url().optional(),
+  ),
+  ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
   SIGNAL_SCRIBE_SUPABASE_URL: z
     .preprocess(emptyStringToUndefined, z.string().url().optional())
     .default("https://kauwcybbiwsmmljovmit.supabase.co"),
@@ -70,7 +80,7 @@ const envSchema = z.object({
     .default("4"),
   WHEEL_SCREENER_REFRESH_MIN_AGE_MINUTES: z
     .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("45"),
+    .default("15"),
   EARNINGS_PROVIDER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

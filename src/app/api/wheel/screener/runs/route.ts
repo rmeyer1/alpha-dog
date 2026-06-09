@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import {
   cacheCompletedWheelScreenerResponse,
@@ -46,6 +48,23 @@ export async function POST(request: Request) {
         status: "completed",
         result: materialized,
       });
+    }
+
+    const env = getEnv();
+    const liveUniverse = !env.USE_DEMO_DATA && hasAlpacaCredentials();
+
+    if (liveUniverse && !getSupabaseServiceConfig()) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "ALPHA_DOG_SUPABASE_NOT_CONFIGURED",
+            message:
+              "Alpha Dog Supabase service-role configuration is required before starting a live universe scan.",
+            retryable: false,
+          },
+        },
+        { status: 503 },
+      );
     }
 
     const run = await start(wheelScreenerWorkflow, [parsed.data]);

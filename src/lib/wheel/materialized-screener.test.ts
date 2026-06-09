@@ -55,8 +55,10 @@ function stubSupabaseEnv() {
   vi.stubEnv("APCA_API_KEY_ID", "alpaca-key");
   vi.stubEnv("APCA_API_SECRET_KEY", "alpaca-secret");
   vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
-  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_URL", "https://example.supabase.co");
-  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+  vi.stubEnv("ALPHA_DOG_SUPABASE_URL", "https://alpha-dog.supabase.co");
+  vi.stubEnv("ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY", "service-role-key");
+  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_URL", "https://signal-scribe.supabase.co");
+  vi.stubEnv("SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY", "signal-key");
 }
 
 async function importMaterializedScreener() {
@@ -136,7 +138,9 @@ describe("materialized wheel screener", () => {
       ],
     });
 
+    const snapshotUrl = new URL(String(vi.mocked(fetch).mock.calls[0][0]));
     const candidateUrl = new URL(String(vi.mocked(fetch).mock.calls[1][0]));
+    expect(snapshotUrl.origin).toBe("https://alpha-dog.supabase.co");
     expect(candidateUrl.pathname).toBe("/rest/v1/wheel_option_candidates");
     expect(candidateUrl.searchParams.get("snapshot_id")).toBe(
       `eq.${snapshotRow.id}`,

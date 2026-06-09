@@ -2,6 +2,7 @@ import { getWheelAssetUniverse } from "@/lib/alpaca/client";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { analyzeWheelCandidates } from "./analyze";
 import { getPersona, mergeFilters } from "./personas";
+import { analyzeStagedUniverseWheelCompanies } from "./universe-scanner";
 import {
   getRuntimeCacheValue,
   setRuntimeCacheValue,
@@ -554,6 +555,31 @@ export async function analyzeTopWheelCompanies(
     ? Math.min(SCREENER_DEMO_CONCURRENCY, batchSize)
     : liveConcurrency(batchSize);
   const cacheKey = screenerCacheKeyForRequest(request);
+
+  if (!useDemoData && cursor === 0) {
+    if (!request.forceRefresh) {
+      const fresh = await getFreshSharedScreenerCache(cacheKey);
+
+      if (fresh) {
+        return fresh;
+      }
+    }
+
+    const response = await analyzeStagedUniverseWheelCompanies({
+      ...request,
+      strategy,
+      filters,
+      limit,
+      cursor: 0,
+      batchSize,
+    });
+
+    if (response.progress.status === "complete") {
+      await setScreenerCache(cacheKey, response);
+    }
+
+    return response;
+  }
 
   if (cursor === 0 && !request.forceRefresh) {
     const fresh = await getFreshSharedScreenerCache(cacheKey);
