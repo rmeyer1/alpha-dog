@@ -14,6 +14,8 @@ import type {
 import type { RequestState } from "./types";
 
 export function DashboardHeader({
+  canAnalyze,
+  canRefresh,
   initialPersonas,
   onAnalyze,
   onForceRefresh,
@@ -23,6 +25,8 @@ export function DashboardHeader({
   requestState,
   ticker,
 }: {
+  canAnalyze: boolean;
+  canRefresh: boolean;
   initialPersonas: PersonaConfig[];
   onAnalyze: (event: FormEvent<HTMLFormElement>) => void;
   onForceRefresh: () => void;
@@ -88,7 +92,7 @@ export function DashboardHeader({
                 aria-label="Ticker symbol"
                 className="w-full bg-transparent font-mono text-base text-white outline-none"
                 onChange={(event) => onTickerChange(event.target.value.toUpperCase())}
-                placeholder="TOP 50"
+                placeholder="AAPL"
                 value={ticker}
               />
             </div>
@@ -111,7 +115,11 @@ export function DashboardHeader({
 
           <button
             className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={requestState === "loading" || requestState === "refreshing"}
+            disabled={
+              !canAnalyze ||
+              requestState === "loading" ||
+              requestState === "refreshing"
+            }
             type="submit"
           >
             <Activity className="size-4" />
@@ -119,7 +127,12 @@ export function DashboardHeader({
           </button>
 
           <button
-            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.08]"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={
+              !canRefresh ||
+              requestState === "loading" ||
+              requestState === "refreshing"
+            }
             onClick={onForceRefresh}
             type="button"
           >

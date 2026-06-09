@@ -25,7 +25,7 @@ const optionalPositiveInteger = (defaultValue: string) =>
 const envSchema = z.object({
   APCA_API_KEY_ID: z.string().optional(),
   APCA_API_SECRET_KEY: z.string().optional(),
-  ALPACA_OPTIONS_FEED: z.enum(["opra", "indicative"]).default("indicative"),
+  ALPACA_OPTIONS_FEED: z.enum(["opra", "indicative"]).default("opra"),
   ALPACA_MARKET_DATA_BASE_URL: z
     .string()
     .url()
