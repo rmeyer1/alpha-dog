@@ -36,6 +36,15 @@ const envSchema = z.object({
     .default("https://paper-api.alpaca.markets"),
   ALPACA_MARKET_DATA_RATE_LIMIT_PER_MINUTE: optionalPositiveInteger("9500"),
   ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
+  POLYMARKET_DATA_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://data-api.polymarket.com"),
+  POLYMARKET_GAMMA_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://gamma-api.polymarket.com"),
+  POLYMARKET_REFRESH_TTL_MINUTES: optionalPositiveInteger("15"),
   WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),

@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { BarChart3, UserCircle } from "lucide-react";
+import { BarChart3, UserCircle, UserRoundSearch } from "lucide-react";
 
 const destinations = [
   {
@@ -9,6 +9,13 @@ const destinations = [
     icon: BarChart3,
     variant:
       "bg-emerald-300 text-[#051626] shadow-[0_18px_45px_rgba(31,199,55,0.16)] hover:bg-emerald-200",
+  },
+  {
+    label: "Trader Intelligence",
+    href: "/traders",
+    icon: UserRoundSearch,
+    variant:
+      "bg-cyan-300 text-[#051626] shadow-[0_18px_45px_rgba(34,211,238,0.16)] hover:bg-cyan-200",
   },
   {
     label: "Account",
@@ -41,7 +48,7 @@ export default function Home() {
 
           <nav
             aria-label="Destination"
-            className="grid w-full max-w-xl grid-cols-1 gap-3 sm:grid-cols-2"
+            className="grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-3"
           >
             {destinations.map((destination) => (
               <Link
