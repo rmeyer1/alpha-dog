@@ -30,6 +30,7 @@ const candidateRow = {
   dte: 22,
   short_strike: "173.49",
   long_strike: null,
+  premium_received: "312.28",
   premium_yield: "0.018",
   annualized_yield: "0.2986",
   return_on_risk: null,
@@ -134,6 +135,7 @@ describe("materialized wheel screener", () => {
           bestCandidate: {
             strategy: "short_put",
             shortStrike: 173.49,
+            premiumReceived: 312.28,
             premiumYield: 0.018,
             delta: -0.28,
           },
@@ -178,6 +180,50 @@ describe("materialized wheel screener", () => {
     expect(candidateUrl.searchParams.get("offset")).toBe("50");
     expect(response?.companies[0].rank).toBe(51);
     expect(response?.progress.cursor).toBe(50);
+  });
+
+  it("falls back to legacy candidate reads before premium column migration", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([snapshotRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            message: "column wheel_option_candidates.premium_received does not exist",
+            code: "42703",
+          }),
+          { status: 400 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...candidateRow,
+              premium_received: undefined,
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+    const response = await getMaterializedWheelScreenerResponse({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+    });
+    const retryUrl = new URL(String(vi.mocked(fetch).mock.calls[2][0]));
+
+    expect(retryUrl.searchParams.get("select")).not.toContain(
+      "premium_received",
+    );
+    expect(response?.companies[0].bestCandidate.premiumReceived).toBe(312.28);
   });
 
   it("normalizes unknown liquidity from existing materialized rows", async () => {
@@ -321,6 +367,7 @@ describe("materialized wheel screener", () => {
             expirationDate: "2026-06-29",
             dte: 22,
             shortStrike: 173.49,
+            premiumReceived: 312.28,
             premiumYield: 0.018,
             annualizedYield: 0.2986,
             delta: -0.28,
@@ -383,6 +430,7 @@ describe("materialized wheel screener", () => {
         strategy: "short_put",
         option_type: "put",
         symbol: "AAPL",
+        premium_received: 312.28,
       },
     ]);
     expect(new URL(String(upsertCall[0])).searchParams.get("on_conflict")).toBe(

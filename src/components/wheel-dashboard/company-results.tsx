@@ -42,6 +42,10 @@ function candidateYield(row: WheelCompanyScore) {
   return formatPercent(bestCandidate.premiumYield);
 }
 
+function candidatePremium(row: WheelCompanyScore) {
+  return formatCurrency(row.bestCandidate.premiumReceived);
+}
+
 function candidateStructure(row: WheelCompanyScore) {
   const { bestCandidate } = row;
 
@@ -137,6 +141,7 @@ export function CompanyResults({
                     "Trend",
                     "Best Fit",
                     structureHeading(activeStrategy),
+                    "Premium",
                     "Exp",
                     "Yield/ROR",
                     "Delta",
@@ -199,6 +204,9 @@ export function CompanyResults({
                     </td>
                     <td className="px-4 py-3 font-mono">
                       {candidateStructure(row)}
+                    </td>
+                    <td className="px-4 py-3 font-mono">
+                      {candidatePremium(row)}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       {row.bestCandidate.expirationDate}
@@ -286,6 +294,10 @@ export function CompanyResults({
                       {structureHeading(activeStrategy)}
                     </div>
                     <div className="font-mono">{candidateStructure(row)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-zinc-500">Premium</div>
+                    <div className="font-mono">{candidatePremium(row)}</div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500">Expiration</div>

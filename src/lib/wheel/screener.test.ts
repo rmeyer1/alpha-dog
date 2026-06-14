@@ -50,6 +50,7 @@ function responseWithAllStrategies(): WheelAnalysisResponse {
         expirationDate: "2026-07-17",
         dte: 41,
         strike: 95,
+        midpoint: 1.9,
         premiumYield: 0.02,
         annualizedYield: 0.18,
         delta: -0.24,
@@ -64,6 +65,7 @@ function responseWithAllStrategies(): WheelAnalysisResponse {
         expirationDate: "2026-07-17",
         dte: 41,
         strike: 105,
+        midpoint: 3,
         premiumYield: 0.03,
         annualizedYield: 0.24,
         delta: 0.25,
@@ -79,6 +81,7 @@ function responseWithAllStrategies(): WheelAnalysisResponse {
         dte: 41,
         shortLeg: { strike: 95 },
         longLeg: { strike: 90 },
+        netCredit: 0.76,
         returnOnRisk: 0.18,
         annualizedReturnOnRisk: 1.6,
         shortDelta: -0.24,
@@ -94,6 +97,7 @@ function responseWithAllStrategies(): WheelAnalysisResponse {
         dte: 41,
         shortLeg: { strike: 105 },
         longLeg: { strike: 110 },
+        netCredit: 0.69,
         returnOnRisk: 0.16,
         annualizedReturnOnRisk: 1.4,
         shortDelta: 0.24,
@@ -137,24 +141,28 @@ describe("wheel company screener", () => {
     ).toMatchObject({
       strategy: "short_put",
       score: 10,
+      premiumReceived: 190,
     });
     expect(
       selectCompanyCandidateForStrategy(response, "put_credit_spread"),
     ).toMatchObject({
       strategy: "put_credit_spread",
       score: 88,
+      premiumReceived: 76,
     });
     expect(
       selectCompanyCandidateForStrategy(response, "covered_call"),
     ).toMatchObject({
       strategy: "covered_call",
       score: 99,
+      premiumReceived: 300,
     });
     expect(
       selectCompanyCandidateForStrategy(response, "call_credit_spread"),
     ).toMatchObject({
       strategy: "call_credit_spread",
       score: 77,
+      premiumReceived: 69,
     });
   });
 
