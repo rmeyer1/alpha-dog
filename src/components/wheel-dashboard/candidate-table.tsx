@@ -1,5 +1,6 @@
 import type { WheelCandidate } from "@/lib/wheel/types";
 import {
+  contractValue,
   formatCurrency,
   formatPercent,
 } from "./formatters";
@@ -29,8 +30,8 @@ export function CandidateTable({
               "Exp",
               "DTE",
               "Bid/Ask",
-              "Mid",
-              "Prem",
+              "Premium",
+              "Yield",
               "Ann.",
               "Delta",
               "Theta",
@@ -74,7 +75,7 @@ export function CandidateTable({
                 {formatCurrency(row.bid)}/{formatCurrency(row.ask)}
               </td>
               <td className="px-4 py-3 font-mono">
-                {formatCurrency(row.midpoint)}
+                {contractValue(row.midpoint)}
               </td>
               <td className="px-4 py-3 font-mono">
                 {formatPercent(row.premiumYield)}

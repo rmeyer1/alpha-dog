@@ -1,6 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
-import { formatCurrency, formatPercent } from "./formatters";
+import { contractValue, formatCurrency, formatPercent } from "./formatters";
 import { qualityClass, warningTone } from "./styles";
 
 export function SpreadMobileCards({
@@ -42,8 +42,8 @@ export function SpreadMobileCards({
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div>
-              <div className="text-xs text-zinc-500">Credit</div>
-              <div className="font-mono">{formatCurrency(row.netCredit)}</div>
+              <div className="text-xs text-zinc-500">Premium</div>
+              <div className="font-mono">{contractValue(row.netCredit)}</div>
             </div>
             <div>
               <div className="text-xs text-zinc-500">Max loss</div>

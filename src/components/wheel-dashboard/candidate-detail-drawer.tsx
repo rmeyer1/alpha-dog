@@ -180,7 +180,7 @@ export function CandidateDetailDrawer({
       <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:hidden">
         <CandidateHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <DetailMetric label="Premium" value={formatCurrency(candidate.midpoint)} />
+          <DetailMetric label="Premium" value={contractValue(candidate.midpoint)} />
           <DetailMetric
             label="Premium Yield"
             value={formatPercent(candidate.premiumYield)}

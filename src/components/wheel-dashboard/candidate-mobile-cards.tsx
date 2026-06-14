@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import type { WheelCandidate } from "@/lib/wheel/types";
 import {
+  contractValue,
   formatCurrency,
   formatPercent,
 } from "./formatters";
@@ -45,16 +46,17 @@ export function CandidateMobileCards({
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <div>
               <div className="text-xs text-zinc-500">Premium</div>
-              <div className="font-mono">{formatPercent(row.premiumYield)}</div>
+              <div className="font-mono">{contractValue(row.midpoint)}</div>
             </div>
             <div>
               <div className="text-xs text-zinc-500">Annualized</div>
               <div className="font-mono">{formatPercent(row.annualizedYield)}</div>
             </div>
             <div>
-              <div className="text-xs text-zinc-500">Delta / Mid</div>
+              <div className="text-xs text-zinc-500">Delta / Yield</div>
               <div className="font-mono">
-                {row.delta?.toFixed(2) ?? "-"} / {formatCurrency(row.midpoint)}
+                {row.delta?.toFixed(2) ?? "-"} /{" "}
+                {formatPercent(row.premiumYield)}
               </div>
             </div>
             <div>

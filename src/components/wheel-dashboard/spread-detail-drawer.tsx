@@ -2,6 +2,7 @@ import { AlertTriangle, BarChart3, X } from "lucide-react";
 import type { SpreadLeg, VerticalSpreadCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
+  contractValue,
   formatCompactNumber,
   formatCurrency,
   formatPercent,
@@ -103,7 +104,7 @@ function SpreadScorePanel({ candidate }: { candidate: VerticalSpreadCandidate })
 function SpreadMetrics({ candidate }: { candidate: VerticalSpreadCandidate }) {
   return (
     <div className="grid grid-cols-2 gap-3">
-      <DetailMetric label="Net credit" value={formatCurrency(candidate.netCredit)} />
+      <DetailMetric label="Premium" value={contractValue(candidate.netCredit)} />
       <DetailMetric label="Max loss" value={formatCurrency(candidate.maxLoss)} />
       <DetailMetric
         label="Return on risk"

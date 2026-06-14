@@ -1,5 +1,6 @@
 import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
 import {
+  contractValue,
   formatCompactNumber,
   formatCurrency,
   formatPercent,
@@ -30,7 +31,7 @@ export function SpreadTable({
               "Width",
               "Exp",
               "DTE",
-              "Credit",
+              "Premium",
               "Max Loss",
               "ROR",
               "B/E",
@@ -73,7 +74,7 @@ export function SpreadTable({
               </td>
               <td className="px-4 py-3 font-mono">{row.dte}</td>
               <td className="px-4 py-3 font-mono">
-                {formatCurrency(row.netCredit)}
+                {contractValue(row.netCredit)}
               </td>
               <td className="px-4 py-3 font-mono">
                 {formatCurrency(row.maxLoss)}
