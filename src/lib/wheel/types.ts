@@ -209,6 +209,7 @@ export interface WheelCompanyCandidateSummary {
   dte: number;
   shortStrike: number;
   longStrike?: number;
+  premiumReceived?: number;
   premiumYield?: number;
   annualizedYield?: number;
   returnOnRisk?: number;

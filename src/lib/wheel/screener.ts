@@ -23,7 +23,7 @@ import type {
   VerticalSpreadCandidate,
 } from "./types";
 
-const SCREENER_CACHE_VERSION = "v3";
+const SCREENER_CACHE_VERSION = "v4";
 const SCREENER_CACHE_FRESH_TTL_MS = 5 * 60 * 1000;
 const SCREENER_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 const SCREENER_UNIVERSE_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -323,6 +323,10 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function premiumReceivedFromCredit(credit: number | null | undefined) {
+  return credit == null ? undefined : Math.round(credit * 10000) / 100;
+}
+
 function liveBatchSize() {
   return Math.min(getEnv().WHEEL_SCREENER_LIVE_BATCH_SIZE, 50);
 }
@@ -372,6 +376,7 @@ function summarizeContractCandidate(
     expirationDate: candidate.expirationDate,
     dte: candidate.dte,
     shortStrike: candidate.strike,
+    premiumReceived: premiumReceivedFromCredit(candidate.midpoint),
     premiumYield: candidate.premiumYield,
     annualizedYield: candidate.annualizedYield,
     delta: candidate.delta,
@@ -392,6 +397,7 @@ function summarizeSpreadCandidate(
     dte: candidate.dte,
     shortStrike: candidate.shortLeg.strike,
     longStrike: candidate.longLeg.strike,
+    premiumReceived: premiumReceivedFromCredit(candidate.netCredit),
     returnOnRisk: candidate.returnOnRisk,
     annualizedReturnOnRisk: candidate.annualizedReturnOnRisk,
     delta: candidate.shortDelta,

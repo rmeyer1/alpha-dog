@@ -16,6 +16,14 @@ import type {
 
 export const MATERIALIZED_FRESH_TTL_MS = 15 * 60 * 1000;
 export const MATERIALIZED_STALE_TTL_MS = 2 * 60 * 60 * 1000;
+const CANDIDATE_SELECT =
+  "snapshot_id,persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_received,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
+const LEGACY_CANDIDATE_SELECT =
+  "snapshot_id,persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
+const DEEP_SCAN_CANDIDATE_SELECT =
+  "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_received,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
+const LEGACY_DEEP_SCAN_CANDIDATE_SELECT =
+  "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
 
 export interface WheelScreenerSnapshotRow {
   id: string;
@@ -47,6 +55,7 @@ interface WheelOptionCandidateRow {
   dte: number;
   short_strike: number | string;
   long_strike: number | string | null;
+  premium_received?: number | string | null;
   premium_yield: number | string | null;
   annualized_yield: number | string | null;
   return_on_risk: number | string | null;
@@ -112,6 +121,87 @@ function parseNumber(value: number | string | null | undefined) {
 
 function displayLiquidityQuality(quality: QualityLabel): QualityLabel {
   return quality === "unknown" ? "weak" : quality;
+}
+
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function premiumReceivedForRow(row: WheelOptionCandidateRow) {
+  const premiumReceived = parseNumber(row.premium_received);
+
+  if (premiumReceived != null) {
+    return premiumReceived;
+  }
+
+  const shortStrike = parseNumber(row.short_strike);
+  const longStrike = parseNumber(row.long_strike);
+  const premiumYield = parseNumber(row.premium_yield);
+  const returnOnRisk = parseNumber(row.return_on_risk);
+  const underlyingPrice = parseNumber(row.underlying_price);
+
+  if (
+    premiumYield != null &&
+    row.strategy === "short_put" &&
+    shortStrike != null
+  ) {
+    return roundCurrency(premiumYield * shortStrike * 100);
+  }
+
+  if (
+    premiumYield != null &&
+    row.strategy === "covered_call" &&
+    underlyingPrice != null
+  ) {
+    return roundCurrency(premiumYield * underlyingPrice * 100);
+  }
+
+  if (
+    returnOnRisk != null &&
+    returnOnRisk > 0 &&
+    shortStrike != null &&
+    longStrike != null
+  ) {
+    const width = Math.abs(shortStrike - longStrike);
+    const netCredit = (returnOnRisk * width) / (1 + returnOnRisk);
+
+    return roundCurrency(netCredit * 100);
+  }
+
+  return undefined;
+}
+
+function isMissingPremiumReceivedColumn(error: unknown) {
+  return error instanceof Error &&
+    error.message.includes("premium_received") &&
+    error.message.includes("code=42703");
+}
+
+async function requestCandidateRows(
+  table: "wheel_option_candidates" | "wheel_deep_scan_candidates",
+  query: Record<string, string | number>,
+  select: string,
+  legacySelect: string,
+) {
+  try {
+    return await requestSupabaseRest<WheelOptionCandidateRow[]>(table, {
+      query: {
+        select,
+        ...query,
+      },
+    });
+  } catch (error) {
+    if (!isMissingPremiumReceivedColumn(error)) {
+      throw error;
+    }
+
+    return await requestSupabaseRest<WheelOptionCandidateRow[]>(table, {
+      query: {
+        select: legacySelect,
+        ...query,
+      },
+    });
+  }
 }
 
 function rankCompanyScores(
@@ -202,6 +292,7 @@ function rowToCompanyScore(
     dte: row.dte,
     shortStrike: parseNumber(row.short_strike) ?? 0,
     longStrike: parseNumber(row.long_strike) ?? undefined,
+    premiumReceived: premiumReceivedForRow(row),
     premiumYield: parseNumber(row.premium_yield) ?? undefined,
     annualizedYield: parseNumber(row.annualized_yield) ?? undefined,
     returnOnRisk: parseNumber(row.return_on_risk) ?? undefined,
@@ -255,6 +346,7 @@ function companyScoreToCandidateRow(
     dte: company.bestCandidate.dte,
     short_strike: company.bestCandidate.shortStrike,
     long_strike: company.bestCandidate.longStrike ?? null,
+    premium_received: company.bestCandidate.premiumReceived ?? null,
     premium_yield: company.bestCandidate.premiumYield ?? null,
     annualized_yield: company.bestCandidate.annualizedYield ?? null,
     return_on_risk: company.bestCandidate.returnOnRisk ?? null,
@@ -311,19 +403,17 @@ export async function getMaterializedWheelScreenerResponse(
 
   const limit = request.limit ?? 50;
   const candidateReadLimit = offset === 0 ? Math.max(limit * 4, 200) : limit;
-  const rows = await requestSupabaseRest<WheelOptionCandidateRow[]>(
+  const rows = await requestCandidateRows(
     "wheel_option_candidates",
     {
-      query: {
-        select:
-          "snapshot_id,persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of",
-        snapshot_id: `eq.${snapshot.id}`,
-        strategy: `eq.${strategy}`,
-        order: "score.desc,symbol.asc",
-        limit: candidateReadLimit,
-        offset: offset === 0 ? 0 : offset,
-      },
+      snapshot_id: `eq.${snapshot.id}`,
+      strategy: `eq.${strategy}`,
+      order: "score.desc,symbol.asc",
+      limit: candidateReadLimit,
+      offset: offset === 0 ? 0 : offset,
     },
+    CANDIDATE_SELECT,
+    LEGACY_CANDIDATE_SELECT,
   );
   const recentDeepRows = offset === 0
     ? await getRecentDeepScanCandidateRows({
@@ -398,20 +488,18 @@ async function getRecentDeepScanCandidateRows({
     Date.now() - maxAgeHours * 60 * 60 * 1000,
   ).toISOString();
 
-  return await requestSupabaseRest<WheelOptionCandidateRow[]>(
+  return await requestCandidateRows(
     "wheel_deep_scan_candidates",
     {
-      query: {
-        select:
-          "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of",
-        persona: `eq.${persona}`,
-        strategy: `eq.${strategy}`,
-        filter_key: `eq.${filterKey}`,
-        as_of: `gte.${minAsOf}`,
-        order: "score.desc,symbol.asc",
-        limit,
-      },
+      persona: `eq.${persona}`,
+      strategy: `eq.${strategy}`,
+      filter_key: `eq.${filterKey}`,
+      as_of: `gte.${minAsOf}`,
+      order: "score.desc,symbol.asc",
+      limit,
     },
+    DEEP_SCAN_CANDIDATE_SELECT,
+    LEGACY_DEEP_SCAN_CANDIDATE_SELECT,
   ) ?? [];
 }
 

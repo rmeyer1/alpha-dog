@@ -545,6 +545,10 @@ function optionTypeForStrategy(strategy: WheelCompanyStrategy): OptionType {
     : "call";
 }
 
+function premiumReceivedFromCredit(credit: number | null | undefined) {
+  return credit == null ? undefined : Math.round(credit * 10000) / 100;
+}
+
 function summarizeContractCandidate(
   strategy: WheelCompanyStrategy,
   candidate: WheelCandidate,
@@ -555,6 +559,7 @@ function summarizeContractCandidate(
     expirationDate: candidate.expirationDate,
     dte: candidate.dte,
     shortStrike: candidate.strike,
+    premiumReceived: premiumReceivedFromCredit(candidate.midpoint),
     premiumYield: candidate.premiumYield,
     annualizedYield: candidate.annualizedYield,
     delta: candidate.delta,
@@ -612,6 +617,7 @@ function selectBestCandidate(
             dte: spread.dte,
             shortStrike: spread.shortLeg.strike,
             longStrike: spread.longLeg.strike,
+            premiumReceived: premiumReceivedFromCredit(spread.netCredit),
             returnOnRisk: spread.returnOnRisk,
             annualizedReturnOnRisk: spread.annualizedReturnOnRisk,
             delta: spread.shortDelta,
@@ -745,6 +751,7 @@ async function persistRankedCandidates(
       dte: company.bestCandidate.dte,
       short_strike: company.bestCandidate.shortStrike,
       long_strike: company.bestCandidate.longStrike ?? null,
+      premium_received: company.bestCandidate.premiumReceived ?? null,
       premium_yield: company.bestCandidate.premiumYield ?? null,
       annualized_yield: company.bestCandidate.annualizedYield ?? null,
       return_on_risk: company.bestCandidate.returnOnRisk ?? null,
@@ -939,6 +946,7 @@ function deepScanCandidateRow(
     dte: company.bestCandidate.dte,
     short_strike: company.bestCandidate.shortStrike,
     long_strike: company.bestCandidate.longStrike ?? null,
+    premium_received: company.bestCandidate.premiumReceived ?? null,
     premium_yield: company.bestCandidate.premiumYield ?? null,
     annualized_yield: company.bestCandidate.annualizedYield ?? null,
     return_on_risk: company.bestCandidate.returnOnRisk ?? null,
