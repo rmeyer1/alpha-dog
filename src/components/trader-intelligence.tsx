@@ -234,8 +234,8 @@ function Header({
   requestState: RequestState;
 }) {
   const tabs: { icon: typeof BarChart3; id: DashboardTab; label: string }[] = [
-    { icon: BarChart3, id: "smart", label: "Smart Traders" },
-    { icon: Waves, id: "whales", label: "Whale Edge" },
+    { icon: BarChart3, id: "smart", label: "Top Traders" },
+    { icon: Waves, id: "whales", label: "Whales" },
     { icon: Crosshair, id: "sharp", label: "Sharp Plays" },
     { icon: Wallet, id: "lookup", label: "Wallet Lookup" },
   ];
