@@ -1,25 +1,31 @@
+import { Brain } from "lucide-react";
 import type { WheelCandidate } from "@/lib/wheel/types";
 import {
   formatCurrency,
   formatPercent,
 } from "./formatters";
 import { qualityClass } from "./styles";
+import type { CandidateAnalysisState } from "./types";
 import { CompactWarnings } from "./warnings";
 
 export function CandidateTable({
+  analysisByKey,
   expandedWarnings,
+  onAnalyzeCandidate,
   onSelectCandidate,
   onToggleWarnings,
   rows,
 }: {
+  analysisByKey: Record<string, CandidateAnalysisState>;
   expandedWarnings: Set<string>;
+  onAnalyzeCandidate: (candidate: WheelCandidate) => void;
   onSelectCandidate: (candidate: WheelCandidate) => void;
   onToggleWarnings: (contractSymbol: string) => void;
   rows: WheelCandidate[];
 }) {
   return (
     <div className="hidden overflow-x-auto lg:block">
-      <table className="w-full min-w-[1310px] border-collapse text-left text-sm whitespace-nowrap">
+      <table className="w-full min-w-[1420px] border-collapse text-left text-sm whitespace-nowrap">
         <thead className="bg-white/[0.03] text-xs uppercase text-zinc-400">
           <tr>
             {[
@@ -38,6 +44,7 @@ export function CandidateTable({
               "Vol/OI",
               "Quality",
               "Warnings",
+              "Analysis",
             ].map((heading) => (
               <th className="px-4 py-3 font-medium" key={heading}>
                 {heading}
@@ -105,6 +112,21 @@ export function CandidateTable({
                   onToggle={() => onToggleWarnings(row.contractSymbol)}
                   warnings={row.warnings}
                 />
+              </td>
+              <td className="px-4 py-3">
+                <button
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-2.5 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={analysisByKey[row.contractSymbol]?.status === "loading"}
+                  onClick={() => onAnalyzeCandidate(row)}
+                  type="button"
+                >
+                  <Brain className="size-3.5" />
+                  {analysisByKey[row.contractSymbol]?.status === "loading"
+                    ? "Analyzing"
+                    : analysisByKey[row.contractSymbol]?.response
+                      ? "Review"
+                      : "Analyze"}
+                </button>
               </td>
             </tr>
           ))}

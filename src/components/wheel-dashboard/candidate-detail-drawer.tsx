@@ -9,6 +9,8 @@ import {
   formatScoreLabel,
 } from "./formatters";
 import { qualityClass } from "./styles";
+import { TradeAnalysisPanel } from "./trade-analysis-panel";
+import type { CandidateAnalysisState } from "./types";
 import { WarningBadges } from "./warnings";
 
 function scoreBreakdownRows(candidate: WheelCandidate) {
@@ -137,12 +139,16 @@ function CashMetrics({
 }
 
 export function CandidateDetailDrawer({
+  analysis,
   candidate,
   underlyingPrice,
+  onAnalyze,
   onClose,
 }: {
+  analysis: CandidateAnalysisState;
   candidate: WheelCandidate | null;
   underlyingPrice: number | null | undefined;
+  onAnalyze: () => void;
   onClose: () => void;
 }) {
   if (!candidate) {
@@ -223,6 +229,10 @@ export function CandidateDetailDrawer({
         </div>
 
         <div className="mt-5">
+          <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />
+        </div>
+
+        <div className="mt-5">
           <CashMetrics
             assignmentOrCalledAway={assignmentOrCalledAway}
             candidate={candidate}
@@ -235,6 +245,9 @@ export function CandidateDetailDrawer({
         <CandidateHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5">
           <ScoreBreakdownPanel breakdownRows={breakdownRows} />
+        </div>
+        <div className="mt-5">
+          <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />
         </div>
         <div className="mt-5">
           <CashMetrics

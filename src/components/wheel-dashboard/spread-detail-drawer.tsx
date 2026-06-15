@@ -8,6 +8,8 @@ import {
   formatScoreLabel,
 } from "./formatters";
 import { qualityClass } from "./styles";
+import { TradeAnalysisPanel } from "./trade-analysis-panel";
+import type { CandidateAnalysisState } from "./types";
 import { WarningBadges } from "./warnings";
 
 function spreadTitle(candidate: VerticalSpreadCandidate) {
@@ -152,10 +154,14 @@ function LegDetails({ candidate }: { candidate: VerticalSpreadCandidate }) {
 }
 
 export function SpreadDetailDrawer({
+  analysis,
   candidate,
+  onAnalyze,
   onClose,
 }: {
+  analysis: CandidateAnalysisState;
   candidate: VerticalSpreadCandidate | null;
+  onAnalyze: () => void;
   onClose: () => void;
 }) {
   if (!candidate) {
@@ -179,6 +185,9 @@ export function SpreadDetailDrawer({
         <SpreadHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5">
           <SpreadScorePanel candidate={candidate} />
+        </div>
+        <div className="mt-5">
+          <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />
         </div>
         <div className="mt-5">
           <SpreadMetrics candidate={candidate} />

@@ -45,6 +45,14 @@ const envSchema = z.object({
     .url()
     .default("https://gamma-api.polymarket.com"),
   POLYMARKET_REFRESH_TTL_MINUTES: optionalPositiveInteger("15"),
+  TRADE_ANALYSIS_PROVIDER: z.enum(["openai"]).default("openai"),
+  OPENAI_API_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
+  OPENAI_TRADE_ANALYSIS_MODEL: z
+    .preprocess(emptyStringToUndefined, z.string().optional())
+    .default("gpt-5.4-mini"),
   WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),
