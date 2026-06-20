@@ -38,7 +38,7 @@ function globalWarnings(feed: DataFeed, earningsEnabled: boolean): Warning[] {
       type: "data_quality",
       severity: "info",
       message:
-        "Demo data is active. Add Alpaca keys to .env.local before validating live market behavior.",
+        "Demo data is active. Confirm live market-data access before validating market behavior.",
     });
   }
 

@@ -416,6 +416,47 @@ function Filters({
   );
 }
 
+function SignalBriefing({ activeTab }: { activeTab: DashboardTab }) {
+  const copy = activeTab === "whales"
+    ? {
+        title: "Whale signal",
+        body: "Prioritize capital size only when concentration, open PnL, and repeat activity support the exposure.",
+        metrics: ["Value", "Open PnL", "Concentration"],
+      }
+    : activeTab === "sharp"
+      ? {
+          title: "Shared conviction",
+          body: "Look for overlapping positions across proven traders, then check price, expiry, and participant quality.",
+          metrics: ["Trader count", "Shared value", "Conviction"],
+        }
+      : {
+          title: "Trader quality",
+          body: "Score is a starting point. Durable PnL, volume context, and signal labels should explain why the trader matters.",
+          metrics: ["PnL", "Volume", "PnL / Vol"],
+        };
+
+  return (
+    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#151718] p-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+      <div>
+        <div className="text-sm font-semibold text-white">{copy.title}</div>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+          {copy.body}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {copy.metrics.map((metric) => (
+          <span
+            className="rounded-md border border-cyan-300/25 bg-cyan-400/10 px-2 py-1 text-xs font-medium text-cyan-100"
+            key={metric}
+          >
+            {metric}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function TraderRows({
   onSelectWallet,
   requestState,
@@ -1190,19 +1231,22 @@ export function TraderIntelligence() {
 
       <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-5 md:px-6 xl:px-8">
         {activeTab !== "lookup" ? (
-          <Filters
-            category={category}
-            limit={limit}
-            minValue={minValue}
-            onCategoryChange={setCategory}
-            onLimitChange={setLimit}
-            onMinValueChange={setMinValue}
-            onOrderByChange={setOrderBy}
-            onTimePeriodChange={setTimePeriod}
-            orderBy={orderBy}
-            showMinValue={activeTab === "whales"}
-            timePeriod={timePeriod}
-          />
+          <>
+            <Filters
+              category={category}
+              limit={limit}
+              minValue={minValue}
+              onCategoryChange={setCategory}
+              onLimitChange={setLimit}
+              onMinValueChange={setMinValue}
+              onOrderByChange={setOrderBy}
+              onTimePeriodChange={setTimePeriod}
+              orderBy={orderBy}
+              showMinValue={activeTab === "whales"}
+              timePeriod={timePeriod}
+            />
+            <SignalBriefing activeTab={activeTab} />
+          </>
         ) : (
           <form
             className="grid gap-3 rounded-lg border border-white/10 bg-[#151718] p-4 md:grid-cols-[minmax(260px,1fr)_auto]"

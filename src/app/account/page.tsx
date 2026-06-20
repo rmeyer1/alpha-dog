@@ -15,8 +15,8 @@ const accountSections = [
     icon: UserCircle,
     rows: [
       ["Workspace", "Alpha Dog"],
-      ["Role", "Owner"],
-      ["Plan", "Local preview"],
+      ["Role", "Decision desk"],
+      ["Default view", "Wheel Screener"],
     ],
   },
   {
@@ -24,8 +24,8 @@ const accountSections = [
     icon: Database,
     rows: [
       ["Market feed", "Alpaca"],
-      ["Options data", "Configured by environment"],
-      ["Demo mode", "Available"],
+      ["Options data", "OPRA / cache aware"],
+      ["Fallback mode", "Demo data available"],
     ],
   },
   {
@@ -33,8 +33,8 @@ const accountSections = [
     icon: ShieldCheck,
     rows: [
       ["Credentials", "Server-side only"],
-      ["Saved presets", "Local project store"],
-      ["Decision support", "Enabled"],
+      ["Saved presets", "Project store"],
+      ["Trade execution", "Disabled"],
     ],
   },
 ];
@@ -68,6 +68,12 @@ export default function AccountPage() {
                 Screeners
               </Link>
               <Link
+                className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
+                href="/traders"
+              >
+                Traders
+              </Link>
+              <Link
                 className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
                 href="/account"
               >
@@ -84,15 +90,15 @@ export default function AccountPage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <p className="text-sm font-medium uppercase text-emerald-200">
-                  Workspace status
+                  Workspace controls
                 </p>
                 <h2 className="mt-2 text-2xl font-semibold tracking-normal text-white">
-                  Ready for logo and account integrations.
+                  Data access, presets, and alerts belong here.
                 </h2>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-                  The account surface is in place for profile, data access,
-                  security, and notification controls as authentication and
-                  billing become part of the product.
+                  Keep credential state, saved strategy presets, and stale-data
+                  alert preferences out of the analysis workflow so the desk
+                  stays focused on decisions.
                 </p>
               </div>
               <div className="flex size-12 items-center justify-center rounded-lg border border-emerald-300/25 bg-emerald-300/10 text-emerald-100">
@@ -133,9 +139,9 @@ export default function AccountPage() {
               Credentials
             </h2>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Alpaca keys remain environment-based and server-side. The
-              account page is ready for a provider-backed credential status
-              check when auth is added.
+              Market-data keys should remain server-side, with the UI showing
+              provider status, feed level, and the most recent successful
+              health check.
             </p>
           </section>
 
@@ -145,8 +151,9 @@ export default function AccountPage() {
               Notifications
             </h2>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Future alerts can land here for screener refreshes, stale data,
-              watchlist matches, and preset changes.
+              Alerts should focus on stale data, watchlist matches, preset
+              drift, and risk events that change whether a candidate is still
+              worth reviewing.
             </p>
           </section>
         </aside>

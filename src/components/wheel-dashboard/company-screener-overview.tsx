@@ -29,12 +29,12 @@ export function CompanyScreenerOverview({
     ? Math.round((progress.processedCount / progress.totalCount) * 100)
     : null;
   const title = strategy === "short_put"
-    ? "Top 50 Cash-Secured Puts"
+    ? "Cash-Secured Put Board"
     : strategy === "put_credit_spread"
-      ? "Top 50 Put Credit Spreads"
+      ? "Put Credit Spread Board"
       : strategy === "covered_call"
-        ? "Top 50 Covered Calls"
-        : "Top 50 Call Credit Spreads";
+        ? "Covered Call Board"
+        : "Call Credit Spread Board";
 
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -55,6 +55,10 @@ export function CompanyScreenerOverview({
                 NYSE + NASDAQ
               </span>
             </div>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+              Ranked by fit, liquidity, yield, and risk controls. Use warning
+              badges to challenge the score before opening a structure.
+            </p>
             <div className="mt-4 flex flex-wrap gap-3 text-sm text-zinc-300">
               <span>
                 {progress
@@ -97,6 +101,10 @@ export function CompanyScreenerOverview({
         <div className="mt-3">
           <WarningBadges warnings={response?.warnings ?? []} />
         </div>
+        <p className="mt-3 text-xs leading-5 text-zinc-500">
+          Risk flags should stay visible before yield becomes the deciding
+          factor.
+        </p>
         {error ? (
           <div className="mt-3 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
             {error}
