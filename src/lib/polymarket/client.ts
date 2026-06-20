@@ -40,6 +40,8 @@ const whalesTtlMs = 12 * 60 * 1000;
 const sharpPlaysTtlMs = 10 * 60 * 1000;
 const momentumTtlMs = 15 * 60 * 1000;
 const leaderboardPageSize = 50;
+const polymarketRetryCount = 2;
+const polymarketRetryBaseDelayMs = 350;
 
 function normalizeBaseUrl(url: string) {
   return url.endsWith("/") ? url.slice(0, -1) : url;
@@ -95,22 +97,46 @@ async function parsePolymarketError(response: Response) {
     `Polymarket returned HTTP ${response.status}.`;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(response: Response, attempt: number) {
+  const retryAfter = response.headers.get("retry-after");
+  const retryAfterSeconds = retryAfter ? Number(retryAfter) : NaN;
+
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(retryAfterSeconds * 1000, 3_000);
+  }
+
+  return polymarketRetryBaseDelayMs * 2 ** attempt;
+}
+
 async function requestPolymarket<T>(
   path: string,
   query?: Record<string, string | number | boolean | null | undefined>,
 ): Promise<T> {
-  const response = await fetch(buildDataApiUrl(path, query), {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  for (let attempt = 0; attempt <= polymarketRetryCount; attempt += 1) {
+    const response = await fetch(buildDataApiUrl(path, query), {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
 
-  if (!response.ok) {
+    if (response.ok) {
+      return await response.json() as T;
+    }
+
+    if (response.status === 429 && attempt < polymarketRetryCount) {
+      await sleep(retryDelayMs(response, attempt));
+      continue;
+    }
+
     throw new Error(await parsePolymarketError(response));
   }
 
-  return await response.json() as T;
+  throw new Error("Polymarket request failed.");
 }
 
 function normalizePosition(row: unknown): PolymarketPosition {
@@ -369,7 +395,7 @@ async function fetchMomentumLeaderboardRows(request: PolymarketMomentumRequest) 
   const pages = Math.ceil(request.scanDepth / leaderboardPageSize);
   const rows = await mapConcurrent(
     Array.from({ length: pages }, (_, page) => page),
-    4,
+    2,
     async (page) => {
       const limit = Math.min(
         leaderboardPageSize,
@@ -472,12 +498,17 @@ export async function fetchPolymarketMomentum(
 ): Promise<PolymarketMomentumResponse> {
   const env = getEnv();
   const rows = await fetchMomentumLeaderboardRows(request);
-  const candidates = await mapConcurrent(rows, 8, async (row) => {
+  const candidates = await mapConcurrent(rows, 2, async (row) => {
     const closedPositions = await fetchPolymarketClosedPositions(row.proxyWallet, {
       limit: request.sampleSize,
       sortBy: "TIMESTAMP",
       sortDirection: "DESC",
-    });
+    }).catch(() => null);
+
+    if (!closedPositions) {
+      return null;
+    }
+
     const scored = scoreMomentum({
       closedPositions,
       minSampleSize: request.minSampleSize,
