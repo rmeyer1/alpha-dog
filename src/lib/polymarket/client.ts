@@ -20,6 +20,8 @@ import type {
   PolymarketLeaderboardRequest,
   PolymarketLeaderboardResponse,
   PolymarketLeaderboardRow,
+  PolymarketMomentumRequest,
+  PolymarketMomentumResponse,
   PolymarketPosition,
   PolymarketSharpPlaysRequest,
   PolymarketSharpPlaysResponse,
@@ -36,6 +38,8 @@ const leaderboardTtlMs = 3 * 60 * 1000;
 const walletTtlMs = 10 * 60 * 1000;
 const whalesTtlMs = 12 * 60 * 1000;
 const sharpPlaysTtlMs = 10 * 60 * 1000;
+const momentumTtlMs = 15 * 60 * 1000;
+const leaderboardPageSize = 50;
 
 function normalizeBaseUrl(url: string) {
   return url.endsWith("/") ? url.slice(0, -1) : url;
@@ -214,25 +218,62 @@ function sortDemoLeaderboard(request: PolymarketLeaderboardRequest) {
     }));
 }
 
+async function fetchLeaderboardRows(
+  request: PolymarketLeaderboardRequest,
+): Promise<PolymarketLeaderboardRow[]> {
+  const env = getEnv();
+
+  if (env.USE_DEMO_DATA) {
+    return sortDemoLeaderboard(request);
+  }
+
+  return await requestPolymarket<unknown[]>("/v1/leaderboard", {
+    category: request.category,
+    limit: request.limit,
+    offset: request.offset,
+    orderBy: request.orderBy,
+    timePeriod: request.timePeriod,
+  }).then((rows) => rows.map(normalizeLeaderboardRow));
+}
+
 export async function fetchPolymarketLeaderboard(
   request: PolymarketLeaderboardRequest,
   cachedUntil: string | null = null,
 ): Promise<PolymarketLeaderboardResponse> {
   const env = getEnv();
-  const rows = env.USE_DEMO_DATA
-    ? sortDemoLeaderboard(request)
-    : (await requestPolymarket<unknown[]>("/v1/leaderboard", {
-        category: request.category,
-        limit: request.limit,
-        offset: request.offset,
-        orderBy: request.orderBy,
-        timePeriod: request.timePeriod,
-      })).map(normalizeLeaderboardRow);
+  const rows = await fetchLeaderboardRows(request);
 
   return {
     dataFreshness: dataFreshness(env.USE_DEMO_DATA ? "demo" : "polymarket", cachedUntil),
     traders: rows.map(leaderboardRowToTrader),
   };
+}
+
+async function fetchPolymarketClosedPositions(
+  wallet: string,
+  {
+    limit,
+    sortBy,
+    sortDirection,
+  }: {
+    limit: number;
+    sortBy: "REALIZEDPNL" | "TIMESTAMP";
+    sortDirection: "ASC" | "DESC";
+  },
+) {
+  const env = getEnv();
+  const normalizedWallet = wallet.toLowerCase();
+
+  if (env.USE_DEMO_DATA) {
+    return demoClosedPositionsByWallet[normalizedWallet] ?? [];
+  }
+
+  return await requestPolymarket<unknown[]>("/closed-positions", {
+    limit,
+    sortBy,
+    sortDirection,
+    user: normalizedWallet,
+  }).then((rows) => rows.map(normalizeClosedPosition));
 }
 
 export async function fetchPolymarketWalletProfile(
@@ -272,12 +313,11 @@ export async function fetchPolymarketWalletProfile(
       limit: 50,
       user: wallet,
     }).then((rows) => rows.map(normalizePosition)),
-    requestPolymarket<unknown[]>("/closed-positions", {
+    fetchPolymarketClosedPositions(wallet, {
       limit: 50,
       sortBy: "REALIZEDPNL",
       sortDirection: "DESC",
-      user: wallet,
-    }).then((rows) => rows.map(normalizeClosedPosition)),
+    }),
     requestPolymarket<unknown[]>("/activity", {
       limit: 100,
       sortBy: "TIMESTAMP",
@@ -305,6 +345,176 @@ export async function fetchPolymarketWalletProfile(
     summary: scored.summary,
     totalValue,
     wallet,
+  };
+}
+
+function dedupeLeaderboardRows(rows: PolymarketLeaderboardRow[]) {
+  const byWallet = new Map<string, PolymarketLeaderboardRow>();
+
+  for (const row of rows) {
+    if (!row.proxyWallet) {
+      continue;
+    }
+
+    const current = byWallet.get(row.proxyWallet);
+    if (!current || row.pnl > current.pnl) {
+      byWallet.set(row.proxyWallet, row);
+    }
+  }
+
+  return Array.from(byWallet.values());
+}
+
+async function fetchMomentumLeaderboardRows(request: PolymarketMomentumRequest) {
+  const pages = Math.ceil(request.scanDepth / leaderboardPageSize);
+  const rows = await mapConcurrent(
+    Array.from({ length: pages }, (_, page) => page),
+    4,
+    async (page) => {
+      const limit = Math.min(
+        leaderboardPageSize,
+        request.scanDepth - page * leaderboardPageSize,
+      );
+
+      return await fetchLeaderboardRows({
+        category: request.category,
+        forceRefresh: request.forceRefresh,
+        limit,
+        offset: page * leaderboardPageSize,
+        orderBy: request.orderBy,
+        timePeriod: request.timePeriod,
+      });
+    },
+  );
+
+  return dedupeLeaderboardRows(rows.flat());
+}
+
+function scoreMomentum({
+  closedPositions,
+  minSampleSize,
+  minWinRate,
+  row,
+}: {
+  closedPositions: PolymarketClosedPosition[];
+  minSampleSize: number;
+  minWinRate: number;
+  row: PolymarketLeaderboardRow;
+}) {
+  const sample = closedPositions.slice(0, minSampleSize);
+  const sampleSize = sample.length;
+
+  if (sampleSize < minSampleSize) {
+    return null;
+  }
+
+  const winCount = sample.filter((position) => position.realizedPnl > 0).length;
+  const lossCount = sample.filter((position) => position.realizedPnl < 0).length;
+  const breakEvenCount = sampleSize - winCount - lossCount;
+  const winRate = winCount / sampleSize;
+  const samplePnl = sample.reduce(
+    (total, position) => total + position.realizedPnl,
+    0,
+  );
+  const noLossSample = lossCount === 0;
+
+  if (samplePnl <= 0 || (!noLossSample && winRate < minWinRate)) {
+    return null;
+  }
+
+  const labels = new Set(leaderboardRowToTrader(row).labels);
+  if (noLossSample) {
+    labels.add("No-loss sample");
+  }
+  if (winRate >= minWinRate) {
+    labels.add("High win rate");
+  }
+  if (samplePnl > 10_000 || winRate >= 0.9) {
+    labels.add("Hot streak");
+  }
+  labels.add("Recent momentum");
+
+  const rankScore = Math.max(0, 100 - Math.min(row.rank, 500) / 5);
+  const pnlScore = Math.min(100, Math.log10(Math.max(samplePnl, 1)) * 18);
+  const momentumScore = Math.round(
+    Math.min(
+      100,
+      winRate * 45 + (noLossSample ? 22 : 0) + pnlScore * 0.22 +
+        rankScore * 0.12,
+    ),
+  );
+  const lastTimestamp = sample.reduce(
+    (latest, position) => Math.max(latest, position.timestamp ?? 0),
+    0,
+  );
+  const trader = leaderboardRowToTrader(row);
+
+  return {
+    ...trader,
+    breakEvenCount,
+    labels: Array.from(labels),
+    lastClosedAt: lastTimestamp > 0
+      ? new Date(lastTimestamp * 1000).toISOString()
+      : null,
+    lossCount,
+    momentumScore,
+    samplePnl,
+    sampleSize,
+    scanRank: row.rank,
+    winCount,
+    winRate,
+  };
+}
+
+export async function fetchPolymarketMomentum(
+  request: PolymarketMomentumRequest,
+  cachedUntil: string | null = null,
+): Promise<PolymarketMomentumResponse> {
+  const env = getEnv();
+  const rows = await fetchMomentumLeaderboardRows(request);
+  const candidates = await mapConcurrent(rows, 8, async (row) => {
+    const closedPositions = await fetchPolymarketClosedPositions(row.proxyWallet, {
+      limit: request.sampleSize,
+      sortBy: "TIMESTAMP",
+      sortDirection: "DESC",
+    });
+    const scored = scoreMomentum({
+      closedPositions,
+      minSampleSize: request.minSampleSize,
+      minWinRate: request.minWinRate,
+      row,
+    });
+
+    return scored
+      ? {
+          ...scored,
+          category: request.category,
+        }
+      : null;
+  });
+
+  return {
+    criteria: {
+      category: request.category,
+      limit: request.limit,
+      minSampleSize: request.minSampleSize,
+      minWinRate: request.minWinRate,
+      orderBy: request.orderBy,
+      sampleSize: request.sampleSize,
+      scanDepth: request.scanDepth,
+      timePeriod: request.timePeriod,
+    },
+    dataFreshness: dataFreshness(env.USE_DEMO_DATA ? "demo" : "polymarket", cachedUntil),
+    traders: candidates
+      .filter((candidate): candidate is NonNullable<typeof candidate> =>
+        candidate != null
+      )
+      .sort((left, right) =>
+        right.momentumScore - left.momentumScore ||
+        right.samplePnl - left.samplePnl ||
+        right.winRate - left.winRate
+      )
+      .slice(0, request.limit),
   };
 }
 
@@ -554,6 +764,7 @@ export async function fetchPolymarketSharpPlays(
 
 export const polymarketTtlMs = {
   leaderboard: leaderboardTtlMs,
+  momentum: momentumTtlMs,
   sharpPlays: sharpPlaysTtlMs,
   wallet: walletTtlMs,
   whales: whalesTtlMs,

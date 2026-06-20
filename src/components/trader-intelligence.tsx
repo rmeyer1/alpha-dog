@@ -20,10 +20,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   PolymarketCategory,
   PolymarketLeaderboardResponse,
+  PolymarketMomentumResponse,
   PolymarketOrderBy,
   PolymarketSharpPlaysResponse,
   PolymarketTimePeriod,
   PolymarketWhalesResponse,
+  MomentumTrader,
   SharpPlay,
   TraderSummary,
   TraderWalletProfile,
@@ -35,7 +37,7 @@ import {
   polymarketTimePeriods,
 } from "@/lib/polymarket/types";
 
-type DashboardTab = "smart" | "whales" | "sharp" | "lookup";
+type DashboardTab = "smart" | "momentum" | "whales" | "sharp" | "lookup";
 type RequestState = "idle" | "loading" | "refreshing" | "success" | "error";
 
 interface ApiErrorPayload {
@@ -235,6 +237,7 @@ function Header({
 }) {
   const tabs: { icon: typeof BarChart3; id: DashboardTab; label: string }[] = [
     { icon: BarChart3, id: "smart", label: "Top Traders" },
+    { icon: TrendingUp, id: "momentum", label: "Momentum" },
     { icon: Waves, id: "whales", label: "Whales" },
     { icon: Crosshair, id: "sharp", label: "Sharp Plays" },
     { icon: Wallet, id: "lookup", label: "Wallet Lookup" },
@@ -299,7 +302,7 @@ function Header({
         </div>
 
         <div className="max-w-full">
-          <div className="grid min-w-0 grid-cols-2 gap-1 rounded-lg border border-white/10 bg-black/25 p-1 sm:grid-cols-4">
+          <div className="grid min-w-0 grid-cols-2 gap-1 rounded-lg border border-white/10 bg-black/25 p-1 sm:grid-cols-5">
             {tabs.map((tab) => (
               <button
                 className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 py-2 text-center text-sm font-medium leading-snug sm:gap-2 sm:px-4 ${
@@ -423,6 +426,12 @@ function SignalBriefing({ activeTab }: { activeTab: DashboardTab }) {
         body: "Prioritize capital size only when concentration, open PnL, and repeat activity support the exposure.",
         metrics: ["Value", "Open PnL", "Concentration"],
       }
+    : activeTab === "momentum"
+      ? {
+          title: "Hot trader scan",
+          body: "Scan deeper all-market leaderboards, sample recent resolved predictions, and surface no-loss or high-win-rate traders.",
+          metrics: ["Win rate", "Sample PnL", "No losses"],
+        }
     : activeTab === "sharp"
       ? {
           title: "Shared conviction",
@@ -553,6 +562,126 @@ function TraderRows({
             <div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
               <Metric label="PnL" value={formatMoney(trader.pnl)} valueClassName="text-emerald-200" />
               <Metric label="Volume" value={formatMoney(trader.volume)} />
+            </div>
+            <div className="mt-3 min-w-0">
+              <EvidenceBadges labels={trader.labels} />
+            </div>
+            <button
+              className="mt-4 flex min-h-10 w-full min-w-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-sm font-semibold leading-snug text-white transition hover:bg-white/[0.08]"
+              onClick={() => onSelectWallet(trader.proxyWallet)}
+              type="button"
+            >
+              View Profile
+            </button>
+          </article>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function MomentumRows({
+  onSelectWallet,
+  requestState,
+  traders,
+}: {
+  onSelectWallet: (wallet: string) => void;
+  requestState: RequestState;
+  traders: MomentumTrader[];
+}) {
+  if (
+    (requestState === "loading" || requestState === "refreshing") &&
+    traders.length === 0
+  ) {
+    return (
+      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+        Scanning recent trader samples...
+      </div>
+    );
+  }
+
+  if (traders.length === 0) {
+    return (
+      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+        No hot traders matched the current sample criteria.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="hidden overflow-x-auto md:block">
+        <table className="min-w-full divide-y divide-white/10 text-sm">
+          <thead className="bg-black/20 text-xs uppercase text-zinc-500">
+            <tr>
+              <th className="px-4 py-3 text-left">Trader</th>
+              <th className="px-4 py-3 text-right">Momentum</th>
+              <th className="px-4 py-3 text-right">Win Rate</th>
+              <th className="px-4 py-3 text-right">Sample PnL</th>
+              <th className="px-4 py-3 text-right">Losses</th>
+              <th className="px-4 py-3 text-right">Scan Rank</th>
+              <th className="px-4 py-3 text-left">Signals</th>
+              <th className="px-4 py-3 text-right">Profile</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/10">
+            {traders.map((trader) => (
+              <tr className="hover:bg-white/[0.03]" key={trader.proxyWallet}>
+                <td className="px-4 py-3">
+                  <TraderIdentity trader={trader} />
+                </td>
+                <td className={`px-4 py-3 text-right font-mono font-semibold ${scoreClass(trader.momentumScore)}`}>
+                  {trader.momentumScore}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-emerald-200">
+                  {formatPercent(trader.winRate)}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-emerald-200">
+                  {formatMoney(trader.samplePnl)}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-zinc-200">
+                  {trader.lossCount}/{trader.sampleSize}
+                </td>
+                <td className="px-4 py-3 text-right font-mono text-zinc-300">
+                  #{trader.scanRank}
+                </td>
+                <td className="max-w-sm px-4 py-3">
+                  <EvidenceBadges labels={trader.labels} />
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <button
+                    className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/[0.08]"
+                    onClick={() => onSelectWallet(trader.proxyWallet)}
+                    type="button"
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid min-w-0 gap-3 p-3 md:hidden">
+        {traders.map((trader) => (
+          <article
+            className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-black/20 p-4"
+            key={trader.proxyWallet}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <TraderIdentity trader={trader} />
+              </div>
+              <div className={`shrink-0 font-mono text-lg font-semibold ${scoreClass(trader.momentumScore)}`}>
+                {trader.momentumScore}
+              </div>
+            </div>
+            <div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+              <Metric label="Win Rate" value={formatPercent(trader.winRate)} valueClassName="text-emerald-200" />
+              <Metric label="Sample PnL" value={formatMoney(trader.samplePnl)} valueClassName="text-emerald-200" />
+              <Metric label="Losses" value={`${trader.lossCount}/${trader.sampleSize}`} />
+              <Metric label="Scan Rank" value={`#${trader.scanRank}`} />
             </div>
             <div className="mt-3 min-w-0">
               <EvidenceBadges labels={trader.labels} />
@@ -980,6 +1109,8 @@ export function TraderIntelligence() {
   const [minValue, setMinValue] = useState(10000);
   const [leaderboard, setLeaderboard] =
     useState<PolymarketLeaderboardResponse | null>(null);
+  const [momentum, setMomentum] =
+    useState<PolymarketMomentumResponse | null>(null);
   const [whales, setWhales] = useState<PolymarketWhalesResponse | null>(null);
   const [sharpPlays, setSharpPlays] =
     useState<PolymarketSharpPlaysResponse | null>(null);
@@ -1077,6 +1208,45 @@ export function TraderIntelligence() {
     }
   }, [minValue, params]);
 
+  const loadMomentum = useCallback(async (forceRefresh = false) => {
+    setRequestState((current) => current === "success" ? "refreshing" : "loading");
+    setError(null);
+
+    try {
+      const nextParams = new URLSearchParams(params);
+      nextParams.set("minSampleSize", "8");
+      nextParams.set("minWinRate", "0.75");
+      nextParams.set("sampleSize", "20");
+      nextParams.set("scanDepth", "300");
+      if (forceRefresh) {
+        nextParams.set("forceRefresh", "true");
+      }
+
+      const response = await fetch(`/api/polymarket/momentum?${nextParams}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json() as
+        | PolymarketMomentumResponse
+        | ApiErrorPayload;
+
+      if (!response.ok || isApiErrorPayload(payload)) {
+        throw new Error(
+          isApiErrorPayload(payload)
+            ? payload.error.message
+            : "Unable to load hot traders.",
+        );
+      }
+
+      setMomentum(payload);
+      setRequestState("success");
+    } catch (caught) {
+      setRequestState("error");
+      setError(
+        caught instanceof Error ? caught.message : "Unable to load hot traders.",
+      );
+    }
+  }, [params]);
+
   const loadSharpPlays = useCallback(async (forceRefresh = false) => {
     setRequestState((current) => current === "success" ? "refreshing" : "loading");
     setError(null);
@@ -1165,6 +1335,12 @@ export function TraderIntelligence() {
       }, 0);
     }
 
+    if (activeTab === "momentum") {
+      loadTimer = window.setTimeout(() => {
+        void loadMomentum();
+      }, 0);
+    }
+
     if (activeTab === "sharp") {
       loadTimer = window.setTimeout(() => {
         void loadSharpPlays();
@@ -1176,11 +1352,16 @@ export function TraderIntelligence() {
         window.clearTimeout(loadTimer);
       }
     };
-  }, [activeTab, loadLeaderboard, loadSharpPlays, loadWhales]);
+  }, [activeTab, loadLeaderboard, loadMomentum, loadSharpPlays, loadWhales]);
 
   function handleRefresh() {
     if (activeTab === "whales") {
       void loadWhales(true);
+      return;
+    }
+
+    if (activeTab === "momentum") {
+      void loadMomentum(true);
       return;
     }
 
@@ -1218,6 +1399,17 @@ export function TraderIntelligence() {
     (max, trader) => Math.max(max, trader.scores.alphaDogScore),
     0,
   ) ?? 0;
+  const momentumTopScore = momentum?.traders.reduce(
+    (max, trader) => Math.max(max, trader.momentumScore),
+    0,
+  ) ?? 0;
+  const momentumSamplePnl = momentum?.traders.reduce(
+    (total, trader) => total + trader.samplePnl,
+    0,
+  ) ?? 0;
+  const noLossMomentumCount = momentum?.traders.filter((trader) =>
+    trader.lossCount === 0
+  ).length ?? 0;
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#0b0c0d] text-zinc-100">
@@ -1324,6 +1516,32 @@ export function TraderIntelligence() {
               whales={whales?.whales ?? []}
             />
           </section>
+        ) : null}
+
+        {activeTab === "momentum" ? (
+          <>
+            <section className="grid gap-3 md:grid-cols-3">
+              <Metric label="Hot Traders" value={formatNumber(momentum?.traders.length ?? 0)} />
+              <Metric label="Sample PnL" value={formatMoney(momentumSamplePnl)} valueClassName="text-emerald-200" />
+              <Metric label="No-Loss Samples" value={formatNumber(noLossMomentumCount)} valueClassName={scoreClass(momentumTopScore)} />
+            </section>
+            <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
+              <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <TrendingUp className="size-4 text-emerald-200" />
+                  Momentum Traders
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {freshnessLabel(momentum)}
+                </div>
+              </div>
+              <MomentumRows
+                onSelectWallet={(wallet) => void loadWalletProfile(wallet)}
+                requestState={requestState}
+                traders={momentum?.traders ?? []}
+              />
+            </section>
+          </>
         ) : null}
 
         {activeTab === "sharp" ? (
