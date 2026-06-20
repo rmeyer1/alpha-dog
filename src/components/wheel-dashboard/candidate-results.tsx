@@ -343,52 +343,52 @@ export function CandidateResults({
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
       <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="max-w-full overflow-x-auto">
+        <div className="w-full min-w-0 overflow-x-auto">
           <div className="inline-flex w-max rounded-lg border border-white/10 bg-black/20 p-1">
-          <button
-            className={`rounded-md px-4 py-2 text-sm font-medium ${
-              activeTab === "puts"
-                ? "bg-emerald-300 text-black"
-                : "text-zinc-300 hover:bg-white/[0.06]"
-            }`}
-            onClick={() => onTabChange("puts")}
-            type="button"
-          >
-            Cash-Secured Puts
-          </button>
-          <button
-            className={`rounded-md px-4 py-2 text-sm font-medium ${
-              activeTab === "calls"
-                ? "bg-emerald-300 text-black"
-                : "text-zinc-300 hover:bg-white/[0.06]"
-            }`}
-            onClick={() => onTabChange("calls")}
-            type="button"
-          >
-            Covered Calls
-          </button>
-          <button
-            className={`rounded-md px-4 py-2 text-sm font-medium ${
-              activeTab === "putSpreads"
-                ? "bg-emerald-300 text-black"
-                : "text-zinc-300 hover:bg-white/[0.06]"
-            }`}
-            onClick={() => onTabChange("putSpreads")}
-            type="button"
-          >
-            Put Credit Spreads
-          </button>
-          <button
-            className={`rounded-md px-4 py-2 text-sm font-medium ${
-              activeTab === "callSpreads"
-                ? "bg-emerald-300 text-black"
-                : "text-zinc-300 hover:bg-white/[0.06]"
-            }`}
-            onClick={() => onTabChange("callSpreads")}
-            type="button"
-          >
-            Call Credit Spreads
-          </button>
+            <button
+              className={`rounded-md px-4 py-2 text-sm font-medium ${
+                activeTab === "puts"
+                  ? "bg-emerald-300 text-black"
+                  : "text-zinc-300 hover:bg-white/[0.06]"
+              }`}
+              onClick={() => onTabChange("puts")}
+              type="button"
+            >
+              Cash-Secured Puts
+            </button>
+            <button
+              className={`rounded-md px-4 py-2 text-sm font-medium ${
+                activeTab === "calls"
+                  ? "bg-emerald-300 text-black"
+                  : "text-zinc-300 hover:bg-white/[0.06]"
+              }`}
+              onClick={() => onTabChange("calls")}
+              type="button"
+            >
+              Covered Calls
+            </button>
+            <button
+              className={`rounded-md px-4 py-2 text-sm font-medium ${
+                activeTab === "putSpreads"
+                  ? "bg-emerald-300 text-black"
+                  : "text-zinc-300 hover:bg-white/[0.06]"
+              }`}
+              onClick={() => onTabChange("putSpreads")}
+              type="button"
+            >
+              Put Credit Spreads
+            </button>
+            <button
+              className={`rounded-md px-4 py-2 text-sm font-medium ${
+                activeTab === "callSpreads"
+                  ? "bg-emerald-300 text-black"
+                  : "text-zinc-300 hover:bg-white/[0.06]"
+              }`}
+              onClick={() => onTabChange("callSpreads")}
+              type="button"
+            >
+              Call Credit Spreads
+            </button>
           </div>
         </div>
         <div className="shrink-0 text-sm text-zinc-400">

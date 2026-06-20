@@ -1,3 +1,7 @@
+"use client";
+
+import { SlidersHorizontal } from "lucide-react";
+import { useState } from "react";
 import type { WheelFilters } from "@/lib/wheel/types";
 
 function NumericFilter({
@@ -87,6 +91,8 @@ export function FilterPanel({
   onChange: (filters: WheelFilters) => void;
   onReset: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   function update<K extends keyof WheelFilters>(
     key: K,
     value: WheelFilters[K],
@@ -97,16 +103,34 @@ export function FilterPanel({
   return (
     <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-white">Filters</h2>
-        <button
-          className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-white/[0.06] hover:text-white"
-          onClick={onReset}
-          type="button"
-        >
-          Reset
-        </button>
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <SlidersHorizontal className="size-4 text-emerald-200" />
+            Strategy Filters
+          </h2>
+          <p className="mt-1 text-xs text-zinc-500 xl:hidden">
+            Tune only when the ranked list needs a narrower mandate.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            aria-expanded={expanded}
+            className="rounded-md border border-white/10 px-2 py-1 text-xs text-zinc-300 hover:bg-white/[0.06] hover:text-white xl:hidden"
+            onClick={() => setExpanded((current) => !current)}
+            type="button"
+          >
+            {expanded ? "Hide" : "Show"}
+          </button>
+          <button
+            className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+            onClick={onReset}
+            type="button"
+          >
+            Reset
+          </button>
+        </div>
       </div>
-      <div className="mt-4 grid gap-4">
+      <div className={`mt-4 gap-4 ${expanded ? "grid" : "hidden"} xl:grid`}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumericFilter
             label="DTE min"

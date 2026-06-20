@@ -1,5 +1,12 @@
 "use client";
 
+import {
+  AlertTriangle,
+  Clock3,
+  Database,
+  ListChecks,
+  ShieldAlert,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
@@ -65,6 +72,101 @@ function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
     case "short_put":
       return "puts";
   }
+}
+
+function ScreenerStatusStrip({
+  activePersona,
+  error,
+  response,
+  screenerResponse,
+  requestState,
+}: {
+  activePersona: PersonaConfig;
+  error: string | null;
+  response: WheelAnalysisResponse | null;
+  screenerResponse: WheelScreenerResponse | null;
+  requestState: RequestState;
+}) {
+  const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
+  const warningCount = response
+    ? response.warnings.length
+    : screenerResponse?.warnings.length ?? 0;
+  const rankedCount = response
+    ? response.shortPuts.length +
+      response.coveredCalls.length +
+      response.putCreditSpreads.length +
+      response.callCreditSpreads.length
+    : screenerResponse?.companies.length ?? 0;
+  const cacheStatus = freshness?.cacheStatus ?? requestState;
+  const feed = freshness?.feed.toUpperCase() ?? "Pending";
+  const asOf = freshness?.asOf
+    ? new Date(freshness.asOf).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "No timestamp";
+
+  const tiles = [
+    {
+      label: "Feed",
+      value: feed,
+      icon: Database,
+      tone: "text-cyan-200",
+    },
+    {
+      label: "Freshness",
+      value: `${cacheStatus} · ${asOf}`,
+      icon: Clock3,
+      tone: "text-emerald-200",
+    },
+    {
+      label: "Ranked",
+      value: `${rankedCount} candidates`,
+      icon: ListChecks,
+      tone: "text-zinc-200",
+    },
+    {
+      label: "Risk flags",
+      value: error ? "Action needed" : warningCount ? `${warningCount} warning${warningCount === 1 ? "" : "s"}` : "None",
+      icon: warningCount || error ? AlertTriangle : ShieldAlert,
+      tone: error
+        ? "text-red-200"
+        : warningCount
+          ? "text-amber-200"
+          : "text-emerald-200",
+    },
+  ];
+
+  return (
+    <section className="border-b border-white/10 bg-[#0f1112]">
+      <div className="mx-auto grid max-w-[1600px] gap-2 px-4 py-3 md:grid-cols-4 md:px-6 xl:px-8">
+        {tiles.map((tile) => (
+          <div
+            className="flex min-h-12 items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-3"
+            key={tile.label}
+          >
+            <tile.icon className={`size-4 shrink-0 ${tile.tone}`} />
+            <div className="min-w-0">
+              <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+                {tile.label}
+              </div>
+              <div className="truncate text-sm font-medium text-zinc-100">
+                {tile.value}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 md:col-span-4">
+          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+            Active mandate
+          </div>
+          <div className="mt-1 text-sm text-zinc-300">
+            {activePersona.name}: {activePersona.motto}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
@@ -469,6 +571,13 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         requestState={requestState}
         ticker={ticker}
       />
+      <ScreenerStatusStrip
+        activePersona={activePersona}
+        error={error}
+        requestState={requestState}
+        response={response}
+        screenerResponse={screenerResponse}
+      />
 
       <div className="mx-auto grid max-w-[1600px] items-start gap-4 px-4 py-5 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:px-8">
         <section className="grid min-w-0 content-start gap-4">
@@ -523,7 +632,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           )}
         </section>
 
-        <aside className="grid content-start gap-4">
+        <aside className="order-first grid content-start gap-4 xl:order-none">
           <FilterPanel
             filters={filters}
             onChange={handleFiltersChange}
@@ -542,11 +651,11 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           />
 
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <h2 className="text-sm font-semibold text-white">Alpaca Setup</h2>
+            <h2 className="text-sm font-semibold text-white">Data Health</h2>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Add keys to `.env.local`, set `USE_DEMO_DATA=false`, and keep
-              `ALPACA_OPTIONS_FEED=opra` for live OPRA quotes. Use
-              `/api/alpaca/feed-test?ticker=AAPL` to verify feed access.
+              Use refresh when the market context changes. Cached or stale
+              results stay visible, but risk and feed status should be checked
+              before acting on a structure.
             </p>
           </section>
         </aside>

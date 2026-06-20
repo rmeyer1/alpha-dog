@@ -89,12 +89,12 @@ export function CompanyResults({
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
       <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex w-full min-w-0 flex-col gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Building2 className="size-4 text-emerald-200" />
             Top Companies
           </div>
-          <div className="max-w-full overflow-x-auto">
+          <div className="w-full min-w-0 overflow-x-auto">
             <div className="inline-flex w-max rounded-lg border border-white/10 bg-black/20 p-1">
               {screenerTabs.map((tab) => (
                 <button
@@ -250,7 +250,7 @@ export function CompanyResults({
           <div className="grid gap-3 p-3 lg:hidden">
             {companies.map((row) => (
               <article
-                className="cursor-pointer rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                className="min-w-0 max-w-full cursor-pointer overflow-hidden rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                 key={row.ticker}
                 onClick={() =>
                   onSelectTicker(row.ticker, row.bestCandidate.strategy)
@@ -266,7 +266,7 @@ export function CompanyResults({
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="text-xs uppercase text-zinc-500">
+                    <div className="break-words text-xs uppercase text-zinc-500">
                       #{row.rank} · {row.exchange} ·{" "}
                       {strategyLabel(row.bestCandidate.strategy)}
                     </div>
@@ -281,7 +281,7 @@ export function CompanyResults({
                     {row.score}
                   </span>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                <div className="mt-4 grid min-w-0 grid-cols-2 gap-3 text-sm">
                   <div>
                     <div className="text-xs text-zinc-500">Price / Trend</div>
                     <div className="font-mono">
@@ -293,7 +293,9 @@ export function CompanyResults({
                     <div className="text-xs text-zinc-500">
                       {structureHeading(activeStrategy)}
                     </div>
-                    <div className="font-mono">{candidateStructure(row)}</div>
+                    <div className="break-words font-mono">
+                      {candidateStructure(row)}
+                    </div>
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500">Premium</div>
@@ -301,7 +303,7 @@ export function CompanyResults({
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500">Expiration</div>
-                    <div className="font-mono">
+                    <div className="break-words font-mono">
                       {row.bestCandidate.expirationDate}
                     </div>
                   </div>
