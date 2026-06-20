@@ -1,4 +1,4 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Brain } from "lucide-react";
 import type { WheelCandidate } from "@/lib/wheel/types";
 import {
   contractValue,
@@ -6,11 +6,16 @@ import {
   formatPercent,
 } from "./formatters";
 import { qualityClass, warningTone } from "./styles";
+import type { CandidateAnalysisState } from "./types";
 
 export function CandidateMobileCards({
+  analysisByKey,
+  onAnalyzeCandidate,
   onSelectCandidate,
   rows,
 }: {
+  analysisByKey: Record<string, CandidateAnalysisState>;
+  onAnalyzeCandidate: (candidate: WheelCandidate) => void;
   onSelectCandidate: (candidate: WheelCandidate) => void;
   rows: WheelCandidate[];
 }) {
@@ -77,6 +82,22 @@ export function CandidateMobileCards({
               <span className="text-xs text-zinc-500">No warnings</span>
             )}
           </div>
+          <button
+            className="mt-4 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={analysisByKey[row.contractSymbol]?.status === "loading"}
+            onClick={(event) => {
+              event.stopPropagation();
+              onAnalyzeCandidate(row);
+            }}
+            type="button"
+          >
+            <Brain className="size-4" />
+            {analysisByKey[row.contractSymbol]?.status === "loading"
+              ? "Analyzing"
+              : analysisByKey[row.contractSymbol]?.response
+                ? "Review analysis"
+                : "Analyze trade"}
+          </button>
         </article>
       ))}
     </div>

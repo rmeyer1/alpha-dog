@@ -12,6 +12,7 @@ import type {
   WheelScreenerResponse,
   WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
+import type { JsonValue } from "@/lib/trade-analysis/types";
 import { CandidateResults } from "./wheel-dashboard/candidate-results";
 import { CompanyResults } from "./wheel-dashboard/company-results";
 import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
@@ -485,6 +486,14 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
               {response ? (
                 <CandidateResults
                   activeTab={activeTab}
+                  analysisContext={{
+                    dataFreshness: response.dataFreshness,
+                    filters: filters as unknown as JsonValue,
+                    persona: response.persona,
+                    source: "wheel_dashboard",
+                    ticker: response.ticker,
+                    underlying: response.underlying,
+                  }}
                   onTabChange={setActiveTab}
                   requestState={requestState}
                   rows={rows}
