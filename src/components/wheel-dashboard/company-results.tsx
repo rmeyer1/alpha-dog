@@ -10,6 +10,7 @@ import {
   formatPercent,
 } from "./formatters";
 import { qualityClass } from "./styles";
+import { TableScrollFrame } from "./table-scroll-frame";
 import type { RequestState } from "./types";
 
 function strategyLabel(strategy: WheelCompanyStrategy) {
@@ -87,7 +88,7 @@ export function CompanyResults({
   const isRanking = requestState === "loading" || requestState === "refreshing";
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
+    <section className="min-w-0 rounded-lg border border-white/10 bg-[#151718]">
       <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex w-full min-w-0 flex-col gap-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -128,14 +129,20 @@ export function CompanyResults({
         </div>
       ) : (
         <>
-          <div className="hidden overflow-x-auto lg:block">
+          <TableScrollFrame label="Top companies" minWidth={1180}>
             <table className="w-full min-w-[1180px] border-collapse text-left text-sm whitespace-nowrap">
-              <thead className="bg-white/[0.03] text-xs uppercase text-zinc-400">
+              <thead className="bg-[#1b1d1e] text-xs uppercase text-zinc-400">
                 <tr>
+                  <th className="sticky left-0 z-20 w-[72px] min-w-[72px] bg-[#1b1d1e] px-4 py-3 font-medium">
+                    Rank
+                  </th>
+                  <th className="sticky left-[72px] z-20 w-[84px] min-w-[84px] bg-[#1b1d1e] px-4 py-3 font-medium">
+                    Score
+                  </th>
+                  <th className="sticky left-[156px] z-20 w-[240px] min-w-[240px] border-r border-white/10 bg-[#1b1d1e] px-4 py-3 font-medium">
+                    Company
+                  </th>
                   {[
-                    "Rank",
-                    "Score",
-                    "Company",
                     "Exchange",
                     "Price",
                     "Trend",
@@ -158,18 +165,18 @@ export function CompanyResults({
               <tbody>
                 {companies.map((row) => (
                   <tr
-                    className="border-t border-white/10 text-zinc-100 hover:bg-white/[0.035]"
+                    className="group border-t border-white/10 text-zinc-100 hover:bg-white/[0.035]"
                     key={row.ticker}
                   >
-                    <td className="px-4 py-3 font-mono text-zinc-300">
+                    <td className="sticky left-0 z-10 w-[72px] min-w-[72px] bg-[#151718] px-4 py-3 font-mono text-zinc-300 group-hover:bg-[#1b1d1e]">
                       #{row.rank}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="sticky left-[72px] z-10 w-[84px] min-w-[84px] bg-[#151718] px-4 py-3 group-hover:bg-[#1b1d1e]">
                       <span className="rounded-md bg-emerald-400/10 px-2 py-1 font-mono text-emerald-100">
                         {row.score}
                       </span>
                     </td>
-                    <td className="max-w-[260px] px-4 py-3">
+                    <td className="sticky left-[156px] z-10 w-[240px] min-w-[240px] max-w-[240px] border-r border-white/10 bg-[#151718] px-4 py-3 group-hover:bg-[#1b1d1e]">
                       <button
                         className="grid max-w-full rounded-md text-left underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                         onClick={() =>
@@ -245,7 +252,7 @@ export function CompanyResults({
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScrollFrame>
 
           <div className="grid gap-3 p-3 lg:hidden">
             {companies.map((row) => (

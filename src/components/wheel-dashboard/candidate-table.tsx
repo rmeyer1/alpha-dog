@@ -6,6 +6,7 @@ import {
   formatPercent,
 } from "./formatters";
 import { qualityClass } from "./styles";
+import { TableScrollFrame } from "./table-scroll-frame";
 import type { CandidateAnalysisState } from "./types";
 import { CompactWarnings } from "./warnings";
 
@@ -25,14 +26,20 @@ export function CandidateTable({
   rows: WheelCandidate[];
 }) {
   return (
-    <div className="hidden overflow-x-auto lg:block">
+    <TableScrollFrame label="Contract candidates" minWidth={1420}>
       <table className="w-full min-w-[1420px] border-collapse text-left text-sm whitespace-nowrap">
-        <thead className="bg-white/[0.03] text-xs uppercase text-zinc-400">
+        <thead className="bg-[#1b1d1e] text-xs uppercase text-zinc-400">
           <tr>
+            <th className="sticky left-0 z-20 w-[72px] min-w-[72px] bg-[#1b1d1e] px-4 py-3 font-medium">
+              Rank
+            </th>
+            <th className="sticky left-[72px] z-20 w-[84px] min-w-[84px] bg-[#1b1d1e] px-4 py-3 font-medium">
+              Score
+            </th>
+            <th className="sticky left-[156px] z-20 w-[120px] min-w-[120px] border-r border-white/10 bg-[#1b1d1e] px-4 py-3 font-medium">
+              Strike
+            </th>
             {[
-              "Rank",
-              "Score",
-              "Strike",
               "Exp",
               "DTE",
               "Bid/Ask",
@@ -56,16 +63,18 @@ export function CandidateTable({
         <tbody>
           {rows.map((row) => (
             <tr
-              className="border-t border-white/10 text-zinc-100 hover:bg-white/[0.035]"
+              className="group border-t border-white/10 text-zinc-100 hover:bg-white/[0.035]"
               key={row.contractSymbol}
             >
-              <td className="px-4 py-3 font-mono text-zinc-300">#{row.rank}</td>
-              <td className="px-4 py-3">
+              <td className="sticky left-0 z-10 w-[72px] min-w-[72px] bg-[#151718] px-4 py-3 font-mono text-zinc-300 group-hover:bg-[#1b1d1e]">
+                #{row.rank}
+              </td>
+              <td className="sticky left-[72px] z-10 w-[84px] min-w-[84px] bg-[#151718] px-4 py-3 group-hover:bg-[#1b1d1e]">
                 <span className="rounded-md bg-emerald-400/10 px-2 py-1 font-mono text-emerald-100">
                   {row.score}
                 </span>
               </td>
-              <td className="px-4 py-3 font-mono">
+              <td className="sticky left-[156px] z-10 w-[120px] min-w-[120px] border-r border-white/10 bg-[#151718] px-4 py-3 font-mono group-hover:bg-[#1b1d1e]">
                 <button
                   className="rounded-md text-left text-zinc-50 underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                   onClick={() => onSelectCandidate(row)}
@@ -133,6 +142,6 @@ export function CandidateTable({
           ))}
         </tbody>
       </table>
-    </div>
+    </TableScrollFrame>
   );
 }
