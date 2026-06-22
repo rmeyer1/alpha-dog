@@ -341,7 +341,7 @@ export function CandidateResults({
   const activeStrategy = strategyForTab(activeTab);
 
   return (
-    <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
+    <section className="min-w-0 rounded-lg border border-white/10 bg-[#151718]">
       <div className="flex min-w-0 flex-col items-start gap-3 border-b border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="w-full min-w-0 overflow-x-auto">
           <div className="inline-flex w-max rounded-lg border border-white/10 bg-black/20 p-1">
