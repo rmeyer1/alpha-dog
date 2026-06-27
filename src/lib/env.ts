@@ -26,6 +26,7 @@ const envSchema = z.object({
   APCA_API_KEY_ID: z.string().optional(),
   APCA_API_SECRET_KEY: z.string().optional(),
   ALPACA_OPTIONS_FEED: z.enum(["opra", "indicative"]).default("opra"),
+  ALPACA_STOCK_FEED: z.enum(["sip", "iex", "delayed_sip"]).default("sip"),
   ALPACA_MARKET_DATA_BASE_URL: z
     .string()
     .url()

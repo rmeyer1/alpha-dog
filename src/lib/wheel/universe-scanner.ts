@@ -1,8 +1,10 @@
 import {
+  getLiveOptionSnapshotContractsBySymbols,
   getHistoricalDailyBarsBySymbols,
   getLiveOptionSnapshotContracts,
   getStockSnapshotsBySymbols,
   getWheelAssetUniverse,
+  type AlpacaExplicitOptionSnapshotMetadata,
   type AlpacaBar,
   type AlpacaStockSnapshot,
 } from "@/lib/alpaca/client";
@@ -75,6 +77,15 @@ interface OptionMarketSnapshotRow {
   theta: number | null;
   underlying_symbol: string;
   volume: number | null;
+}
+
+interface KnownCandidateContractRow {
+  as_of: string;
+  expiration: string;
+  long_strike: number | string | null;
+  option_type: OptionType;
+  short_strike: number | string;
+  symbol: string;
 }
 
 interface DeepScanCoverageRow {
@@ -545,8 +556,62 @@ function optionTypeForStrategy(strategy: WheelCompanyStrategy): OptionType {
     : "call";
 }
 
+function optionContractSymbol(
+  underlyingSymbol: string,
+  expiration: string,
+  optionType: OptionType,
+  strike: number,
+) {
+  if (!/^[A-Z0-9]+$/.test(underlyingSymbol)) {
+    return null;
+  }
+
+  const compactDate = expiration.replaceAll("-", "").slice(2);
+  const typeCode = optionType === "put" ? "P" : "C";
+  const strikeCode = Math.round(strike * 1000).toString().padStart(8, "0");
+
+  return `${underlyingSymbol}${compactDate}${typeCode}${strikeCode}`;
+}
+
+function knownCandidateMetadata(
+  row: KnownCandidateContractRow,
+): AlpacaExplicitOptionSnapshotMetadata[] {
+  const strikes = [
+    parseNumber(row.short_strike),
+    parseNumber(row.long_strike),
+  ].filter((strike) => strike != null);
+
+  return strikes
+    .map((strike) => {
+      const contractSymbol = optionContractSymbol(
+        row.symbol,
+        row.expiration,
+        row.option_type,
+        strike,
+      );
+
+      return contractSymbol
+        ? {
+            contractSymbol,
+            expirationDate: row.expiration,
+            openInterest: null,
+            optionType: row.option_type,
+            strike,
+          }
+        : null;
+    })
+    .filter((metadata) => metadata != null);
+}
+
 function premiumReceivedFromCredit(credit: number | null | undefined) {
   return credit == null ? undefined : Math.round(credit * 10000) / 100;
+}
+
+function uniqueContracts(contracts: RawOptionContract[]) {
+  return Array.from(
+    new Map(contracts.map((contract) => [contract.contractSymbol, contract]))
+      .values(),
+  );
 }
 
 function summarizeContractCandidate(
@@ -786,6 +851,61 @@ function deepScanContext(
     persona: request.persona,
     strategy,
   };
+}
+
+function supabaseInList(values: string[]) {
+  return `in.(${values.map((value) => `"${value}"`).join(",")})`;
+}
+
+async function getRecentKnownCandidateContracts(
+  context: DeepScanContext,
+  symbols: string[],
+) {
+  if (symbols.length === 0) {
+    return new Map<string, AlpacaExplicitOptionSnapshotMetadata[]>();
+  }
+
+  const maxAgeHours = getEnv().WHEEL_UNIVERSE_BACKGROUND_CANDIDATE_MAX_AGE_HOURS;
+  const minAsOf = new Date(
+    Date.now() - maxAgeHours * 60 * 60 * 1000,
+  ).toISOString();
+  const rows = await requestSupabaseRest<KnownCandidateContractRow[]>(
+    "wheel_deep_scan_candidates",
+    {
+      query: {
+        select: "symbol,option_type,expiration,short_strike,long_strike,as_of",
+        persona: `eq.${context.persona}`,
+        strategy: `eq.${context.strategy}`,
+        filter_key: `eq.${context.filterKey}`,
+        symbol: supabaseInList(symbols),
+        as_of: `gte.${minAsOf}`,
+        order: "as_of.desc",
+        limit: Math.max(symbols.length * 2, 100),
+      },
+    },
+  );
+  const bySymbol = new Map<string, AlpacaExplicitOptionSnapshotMetadata[]>();
+
+  for (const row of rows ?? []) {
+    const metadata = knownCandidateMetadata(row);
+
+    if (metadata.length > 0 && !bySymbol.has(row.symbol)) {
+      bySymbol.set(row.symbol, metadata);
+    }
+  }
+
+  return bySymbol;
+}
+
+async function getFastRefreshedKnownContracts(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[] | undefined,
+  feed: DataFeed,
+) {
+  if (!metadata || metadata.length === 0 || feed === "demo") {
+    return [];
+  }
+
+  return await getLiveOptionSnapshotContractsBySymbols(metadata, feed);
 }
 
 async function createDeepScanRun(
@@ -1061,6 +1181,12 @@ export async function analyzeStagedUniverseWheelCompanies(
   const limit = request.limit ?? 50;
   const deepScanSize = env.WHEEL_UNIVERSE_DEEP_SCAN_SIZE;
   const feed = env.ALPACA_OPTIONS_FEED;
+  const context = {
+    filterKey: stableStringify(filters),
+    filters,
+    persona: request.persona,
+    strategy,
+  };
   const persona = getPersona(request.persona);
   const runId = await createUniverseScanRun({ ...request, strategy });
 
@@ -1072,7 +1198,7 @@ export async function analyzeStagedUniverseWheelCompanies(
         chunkSize:
           env.WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE ??
           DEFAULT_STOCK_SNAPSHOT_CHUNK_SIZE,
-        feed: "sip",
+        feed: env.ALPACA_STOCK_FEED,
       },
     );
     const ranked = rankUnderlyingUniverse(assets, snapshots);
@@ -1082,6 +1208,10 @@ export async function analyzeStagedUniverseWheelCompanies(
     await persistStockSnapshots(runId, ranked);
 
     const technicals = await ensureTechnicals(deepScan);
+    const knownCandidateContracts = await getRecentKnownCandidateContracts(
+      context,
+      deepScan.map((item) => item.asset.symbol),
+    );
     const errors: string[] = [];
     const optionSnapshotRows: OptionMarketSnapshotRow[] = [];
     let skippedCount = ranked.length - deepScan.length;
@@ -1095,13 +1225,19 @@ export async function analyzeStagedUniverseWheelCompanies(
             item,
             technicals.get(item.asset.symbol),
           );
-          const contracts = await getLiveOptionSnapshotContracts(
-            item.asset.symbol,
-            filters,
-            strategy,
-            item.price,
+          const fastContracts = await getFastRefreshedKnownContracts(
+            knownCandidateContracts.get(item.asset.symbol),
             feed,
           );
+          const contracts = fastContracts.length > 0
+            ? uniqueContracts(fastContracts)
+            : await getLiveOptionSnapshotContracts(
+                item.asset.symbol,
+                filters,
+                strategy,
+                item.price,
+                feed,
+              );
 
           optionSnapshotRows.push(
             ...optionMarketSnapshotRows(runId, item.asset.symbol, contracts),
@@ -1228,7 +1364,7 @@ export async function runUniverseDeepScanCoverage(
         chunkSize:
           env.WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE ??
           DEFAULT_STOCK_SNAPSHOT_CHUNK_SIZE,
-        feed: "sip",
+        feed: env.ALPACA_STOCK_FEED,
       },
     );
     const ranked = rankUnderlyingUniverse(assets, snapshots);
@@ -1270,6 +1406,10 @@ export async function runUniverseDeepScanCoverage(
     }
 
     const technicals = await ensureTechnicals(selected);
+    const knownCandidateContracts = await getRecentKnownCandidateContracts(
+      context,
+      selected.map((item) => item.asset.symbol),
+    );
     const optionSnapshotRows: OptionMarketSnapshotRow[] = [];
     const companies: WheelCompanyScore[] = [];
     const coverageRows: Parameters<typeof upsertDeepScanCoverageRows>[1] = [];
@@ -1286,13 +1426,31 @@ export async function runUniverseDeepScanCoverage(
             item,
             technicals.get(item.asset.symbol),
           );
-          const contracts = await getLiveOptionSnapshotContracts(
-            item.asset.symbol,
-            context.filters,
-            context.strategy,
-            item.price,
+          const fastContracts = await getFastRefreshedKnownContracts(
+            knownCandidateContracts.get(item.asset.symbol),
             env.ALPACA_OPTIONS_FEED,
           );
+          const coverageRow = coverage.get(item.asset.symbol);
+          const updatedSince = coverageRow?.last_scanned_at ?? undefined;
+          const discoveryContracts = fastContracts.length > 0 && updatedSince
+            ? await getLiveOptionSnapshotContracts(
+                item.asset.symbol,
+                context.filters,
+                context.strategy,
+                item.price,
+                env.ALPACA_OPTIONS_FEED,
+                { updatedSince },
+              )
+            : [];
+          const contracts = fastContracts.length > 0
+            ? uniqueContracts([...fastContracts, ...discoveryContracts])
+            : await getLiveOptionSnapshotContracts(
+                item.asset.symbol,
+                context.filters,
+                context.strategy,
+                item.price,
+                env.ALPACA_OPTIONS_FEED,
+              );
 
           contractCount = contracts.length;
           optionSnapshotRows.push(

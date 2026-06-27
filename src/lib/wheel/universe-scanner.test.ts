@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getHistoricalDailyBarsBySymbolsMock = vi.hoisted(() => vi.fn());
+const getLiveOptionSnapshotContractsBySymbolsMock = vi.hoisted(() => vi.fn());
 const getLiveOptionSnapshotContractsMock = vi.hoisted(() => vi.fn());
 const getStockSnapshotsBySymbolsMock = vi.hoisted(() => vi.fn());
 const getWheelAssetUniverseMock = vi.hoisted(() => vi.fn());
@@ -9,6 +10,8 @@ const getSupabaseServiceConfigMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/alpaca/client", () => ({
   getHistoricalDailyBarsBySymbols: getHistoricalDailyBarsBySymbolsMock,
+  getLiveOptionSnapshotContractsBySymbols:
+    getLiveOptionSnapshotContractsBySymbolsMock,
   getLiveOptionSnapshotContracts: getLiveOptionSnapshotContractsMock,
   getStockSnapshotsBySymbols: getStockSnapshotsBySymbolsMock,
   getWheelAssetUniverse: getWheelAssetUniverseMock,
@@ -32,6 +35,7 @@ beforeEach(() => {
   vi.stubEnv("WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE", "1000");
 
   getHistoricalDailyBarsBySymbolsMock.mockReset();
+  getLiveOptionSnapshotContractsBySymbolsMock.mockReset();
   getLiveOptionSnapshotContractsMock.mockReset();
   getStockSnapshotsBySymbolsMock.mockReset();
   getWheelAssetUniverseMock.mockReset();
@@ -151,6 +155,93 @@ describe("staged universe scanner", () => {
         totalCount: 2,
       },
     });
+  });
+
+  it("refreshes known candidate contracts before falling back to full chains", async () => {
+    getWheelAssetUniverseMock.mockResolvedValue([
+      { symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ" },
+    ]);
+    getStockSnapshotsBySymbolsMock.mockResolvedValue({
+      AAPL: {
+        latestTrade: { p: 100, t: "2026-06-08T15:59:00.000Z" },
+        dailyBar: { c: 100, h: 101, l: 99, o: 99, t: "2026-06-08T13:30:00.000Z", v: 2_000_000 },
+        prevDailyBar: { c: 98, h: 99, l: 97, o: 97, t: "2026-06-07T13:30:00.000Z", v: 1_000_000 },
+      },
+    });
+    getHistoricalDailyBarsBySymbolsMock.mockResolvedValue({
+      AAPL: Array.from({ length: 220 }, (_, index) => ({
+        c: 90 + index * 0.05,
+        h: 0,
+        l: 0,
+        o: 0,
+        t: "2026-06-05T20:00:00Z",
+        v: 1,
+      })),
+    });
+    getLiveOptionSnapshotContractsBySymbolsMock.mockResolvedValue([
+      {
+        contractSymbol: "AAPL260629P00095000",
+        optionType: "put",
+        strike: 95,
+        expirationDate: "2026-06-29",
+        bid: 1,
+        ask: 1.1,
+        delta: -0.24,
+        theta: -0.04,
+        impliedVolatility: 0.35,
+        volume: 500,
+        openInterest: null,
+      },
+    ]);
+    requestSupabaseRestMock.mockImplementation((table, options) => {
+      if (table === "wheel_universe_scan_runs" && options?.method === "POST") {
+        return Promise.resolve([{ id: "scan-run-id" }]);
+      }
+
+      if (table === "wheel_deep_scan_candidates" && !options?.method) {
+        return Promise.resolve([
+          {
+            symbol: "AAPL",
+            option_type: "put",
+            expiration: "2026-06-29",
+            short_strike: "95",
+            long_strike: null,
+            as_of: "2026-06-08T15:45:00.000Z",
+          },
+        ]);
+      }
+
+      if (table === "wheel_underlying_technicals" && !options?.method) {
+        return Promise.resolve([]);
+      }
+
+      return Promise.resolve(null);
+    });
+
+    const { analyzeStagedUniverseWheelCompanies } = await import(
+      "./universe-scanner"
+    );
+    const response = await analyzeStagedUniverseWheelCompanies({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+      forceRefresh: true,
+    });
+
+    expect(getLiveOptionSnapshotContractsBySymbolsMock).toHaveBeenCalledWith(
+      [
+        {
+          contractSymbol: "AAPL260629P00095000",
+          expirationDate: "2026-06-29",
+          openInterest: null,
+          optionType: "put",
+          strike: 95,
+        },
+      ],
+      "opra",
+    );
+    expect(getLiveOptionSnapshotContractsMock).not.toHaveBeenCalled();
+    expect(response.companies[0].ticker).toBe("AAPL");
   });
 
   it("deep scans a due background coverage batch", async () => {

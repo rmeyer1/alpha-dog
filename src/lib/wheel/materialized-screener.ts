@@ -252,7 +252,7 @@ function cacheStatusForSnapshot(
     return "stale";
   }
 
-  return null;
+  return "stale";
 }
 
 export function materializedSnapshotAgeMs(
