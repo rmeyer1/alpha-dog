@@ -4,6 +4,7 @@ import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import { analyzeTopWheelCompanies } from "@/lib/wheel/screener";
+import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
@@ -51,6 +52,14 @@ export async function POST(request: Request) {
           },
           { status: 503 },
         );
+      }
+
+      const runningFallback = await getRunningScreenerRefreshFallback(
+        parsed.data,
+      );
+
+      if (runningFallback) {
+        return NextResponse.json(runningFallback);
       }
 
       const run = await start(wheelScreenerWorkflow, [parsed.data]);
