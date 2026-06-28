@@ -115,6 +115,70 @@ interface CandidateContractRefreshRequest {
   updatedSince?: string;
 }
 
+interface TechnicalRefreshSummary {
+  cachedFreshCount: number;
+  refreshedCount: number;
+  requestedCount: number;
+}
+
+interface ContractRefreshSummary {
+  contractsMissingOpenInterest: number;
+  contractsReturned: number;
+  discoveryContractsReturned: number;
+  fullDiscoveryRan: boolean;
+  incrementalDiscoveryRan: boolean;
+  knownContractsRequested: number;
+  knownContractsReturned: number;
+  symbol: string;
+}
+
+interface UniverseScanRunSummary {
+  contracts: {
+    contractsMissingOpenInterest: number;
+    contractsReturned: number;
+    discoveryContractsReturned: number;
+    fullDiscoverySymbols: number;
+    incrementalDiscoverySymbols: number;
+    knownContractsRequested: number;
+    knownContractsReturned: number;
+    optionSnapshotRows: number;
+    symbolsWithKnownContracts: number;
+  };
+  errors: {
+    count: number;
+    sample: string[];
+  };
+  scoring: {
+    noCandidateCount: number;
+    scoredCount: number;
+    skippedCount: number;
+  };
+  technicals: TechnicalRefreshSummary;
+  universe: {
+    assetCount: number;
+    deepScanSize: number;
+    rankedCount: number;
+    selectedDeepScanCount: number;
+  };
+}
+
+interface DeepScanRunSummary {
+  contracts: UniverseScanRunSummary["contracts"];
+  coverage: {
+    failedCount: number;
+    noCandidateCount: number;
+    updatedCount: number;
+  };
+  errors: UniverseScanRunSummary["errors"];
+  selection: {
+    batchSize: number;
+    selectedCount: number;
+    staleBefore: string;
+    totalEligibleCount: number;
+  };
+  technicals: TechnicalRefreshSummary;
+}
+
 export interface UniverseDeepScanCoverageRequest {
   batchSize?: number;
   filters?: Partial<WheelFilters>;
@@ -142,6 +206,18 @@ export interface UniverseDeepScanCoverageResult {
 
 const TECHNICAL_REFRESH_TTL_MS = 20 * 60 * 60 * 1000;
 const DEFAULT_STOCK_SNAPSHOT_CHUNK_SIZE = 1000;
+
+const emptyContractSummary = (): UniverseScanRunSummary["contracts"] => ({
+  contractsMissingOpenInterest: 0,
+  contractsReturned: 0,
+  discoveryContractsReturned: 0,
+  fullDiscoverySymbols: 0,
+  incrementalDiscoverySymbols: 0,
+  knownContractsRequested: 0,
+  knownContractsReturned: 0,
+  optionSnapshotRows: 0,
+  symbolsWithKnownContracts: 0,
+});
 
 function stableStringify(value: unknown): string {
   if (value == null || typeof value !== "object") {
@@ -510,6 +586,11 @@ async function ensureTechnicals(deepScan: RankedUnderlying[]) {
   const stale = deepScan.filter(
     (item) => !technicalIsFresh(cached.get(item.asset.symbol)),
   );
+  const summary: TechnicalRefreshSummary = {
+    cachedFreshCount: deepScan.length - stale.length,
+    refreshedCount: 0,
+    requestedCount: deepScan.length,
+  };
 
   if (stale.length > 0) {
     const barsBySymbol = await getHistoricalDailyBarsBySymbols(
@@ -538,9 +619,11 @@ async function ensureTechnicals(deepScan: RankedUnderlying[]) {
     for (const row of computed) {
       cached.set(row.symbol, row);
     }
+
+    summary.refreshedCount = computed.length;
   }
 
-  return cached;
+  return { cached, summary };
 }
 
 function rowToUnderlyingContext(
@@ -731,6 +814,7 @@ async function createUniverseScanRun(request: WheelScreenerRequest) {
 async function completeUniverseScanRun(
   runId: string | null,
   response: WheelScreenerResponse,
+  summary: UniverseScanRunSummary,
 ) {
   if (!runId) {
     return;
@@ -745,6 +829,7 @@ async function completeUniverseScanRun(
       deep_scanned_count: response.progress.batchScreenedCount,
       scored_count: response.companies.length,
       error: response.errors[0] ?? null,
+      summary,
     },
     prefer: "return=minimal",
     query: {
@@ -753,18 +838,28 @@ async function completeUniverseScanRun(
   });
 }
 
-async function failUniverseScanRun(runId: string | null, error: unknown) {
+async function failUniverseScanRun(
+  runId: string | null,
+  error: unknown,
+  summary: UniverseScanRunSummary | null = null,
+) {
   if (!runId) {
     return;
   }
 
+  const body: Record<string, unknown> = {
+    status: "failed",
+    completed_at: new Date().toISOString(),
+    error: error instanceof Error ? error.message : "Universe scan failed.",
+  };
+
+  if (summary) {
+    body.summary = summary;
+  }
+
   await requestSupabaseRest<null>("wheel_universe_scan_runs", {
     method: "PATCH",
-    body: {
-      status: "failed",
-      completed_at: new Date().toISOString(),
-      error: error instanceof Error ? error.message : "Universe scan failed.",
-    },
+    body,
     prefer: "return=minimal",
     query: {
       id: `eq.${runId}`,
@@ -954,21 +1049,63 @@ async function refreshKnownCandidateContracts(
 
 async function refreshCandidateContracts(
   request: CandidateContractRefreshRequest,
-): Promise<RawOptionContract[]> {
+): Promise<{ contracts: RawOptionContract[]; summary: ContractRefreshSummary }> {
   const knownContracts = await refreshKnownCandidateContracts(request);
+  const knownContractsRequested = request.knownMetadata?.length ?? 0;
+  let discoveryContracts: RawOptionContract[] = [];
+  let fullDiscoveryRan = false;
+  let incrementalDiscoveryRan = false;
 
   if (knownContracts.length === 0) {
-    return await discoverCandidateContracts(request);
+    fullDiscoveryRan = true;
+    discoveryContracts = await discoverCandidateContracts(request);
+  } else if (request.incrementalDiscovery && request.updatedSince) {
+    incrementalDiscoveryRan = true;
+    discoveryContracts = await discoverCandidateContracts(request, {
+      updatedSince: request.updatedSince,
+    });
   }
 
-  const discoveryContracts =
-    request.incrementalDiscovery && request.updatedSince
-      ? await discoverCandidateContracts(request, {
-          updatedSince: request.updatedSince,
-        })
-      : [];
+  const contracts = uniqueContracts([...knownContracts, ...discoveryContracts]);
 
-  return uniqueContracts([...knownContracts, ...discoveryContracts]);
+  return {
+    contracts,
+    summary: {
+      contractsMissingOpenInterest: contracts.filter((contract) =>
+        contract.openInterest == null
+      ).length,
+      contractsReturned: contracts.length,
+      discoveryContractsReturned: discoveryContracts.length,
+      fullDiscoveryRan,
+      incrementalDiscoveryRan,
+      knownContractsRequested,
+      knownContractsReturned: knownContracts.length,
+      symbol: request.symbol,
+    },
+  };
+}
+
+function addContractRefreshSummary(
+  target: UniverseScanRunSummary["contracts"],
+  summary: ContractRefreshSummary,
+) {
+  target.contractsMissingOpenInterest += summary.contractsMissingOpenInterest;
+  target.contractsReturned += summary.contractsReturned;
+  target.discoveryContractsReturned += summary.discoveryContractsReturned;
+  target.knownContractsRequested += summary.knownContractsRequested;
+  target.knownContractsReturned += summary.knownContractsReturned;
+
+  if (summary.fullDiscoveryRan) {
+    target.fullDiscoverySymbols += 1;
+  }
+
+  if (summary.incrementalDiscoveryRan) {
+    target.incrementalDiscoverySymbols += 1;
+  }
+
+  if (summary.knownContractsRequested > 0) {
+    target.symbolsWithKnownContracts += 1;
+  }
 }
 
 async function createDeepScanRun(
@@ -1003,6 +1140,7 @@ async function completeDeepScanRun(
     UniverseDeepScanCoverageResult,
     "candidateCount" | "errorCount" | "scannedCount" | "selectedCount"
   >,
+  summary: DeepScanRunSummary,
 ) {
   if (!runId) {
     return;
@@ -1017,6 +1155,7 @@ async function completeDeepScanRun(
       scanned_count: result.scannedCount,
       candidate_count: result.candidateCount,
       error_count: result.errorCount,
+      summary,
     },
     prefer: "return=minimal",
     query: {
@@ -1025,18 +1164,28 @@ async function completeDeepScanRun(
   });
 }
 
-async function failDeepScanRun(runId: string | null, error: unknown) {
+async function failDeepScanRun(
+  runId: string | null,
+  error: unknown,
+  summary: DeepScanRunSummary | null = null,
+) {
   if (!runId) {
     return;
   }
 
+  const body: Record<string, unknown> = {
+    status: "failed",
+    completed_at: new Date().toISOString(),
+    error: error instanceof Error ? error.message : "Deep scan failed.",
+  };
+
+  if (summary) {
+    body.summary = summary;
+  }
+
   await requestSupabaseRest<null>("wheel_deep_scan_runs", {
     method: "PATCH",
-    body: {
-      status: "failed",
-      completed_at: new Date().toISOString(),
-      error: error instanceof Error ? error.message : "Deep scan failed.",
-    },
+    body,
     prefer: "return=minimal",
     query: {
       id: `eq.${runId}`,
@@ -1252,6 +1401,7 @@ export async function analyzeStagedUniverseWheelCompanies(
   };
   const persona = getPersona(request.persona);
   const runId = await createUniverseScanRun({ ...request, strategy });
+  let summary: UniverseScanRunSummary | null = null;
 
   try {
     const assets = await getWheelAssetUniverse();
@@ -1270,7 +1420,8 @@ export async function analyzeStagedUniverseWheelCompanies(
     await persistUniverseAssets(assets);
     await persistStockSnapshots(runId, ranked);
 
-    const technicals = await ensureTechnicals(deepScan);
+    const { cached: technicals, summary: technicalSummary } =
+      await ensureTechnicals(deepScan);
     const knownCandidateContracts = await getRecentKnownCandidateContracts(
       context,
       deepScan.map((item) => item.asset.symbol),
@@ -1278,6 +1429,27 @@ export async function analyzeStagedUniverseWheelCompanies(
     const errors: string[] = [];
     const optionSnapshotRows: OptionMarketSnapshotRow[] = [];
     let skippedCount = ranked.length - deepScan.length;
+    let noCandidateCount = 0;
+    summary = {
+      contracts: emptyContractSummary(),
+      errors: {
+        count: 0,
+        sample: [],
+      },
+      scoring: {
+        noCandidateCount: 0,
+        scoredCount: 0,
+        skippedCount,
+      },
+      technicals: technicalSummary,
+      universe: {
+        assetCount: assets.length,
+        deepScanSize,
+        rankedCount: ranked.length,
+        selectedDeepScanCount: deepScan.length,
+      },
+    };
+    const runSummary = summary;
 
     const scored = await mapWithConcurrency(
       deepScan,
@@ -1288,17 +1460,19 @@ export async function analyzeStagedUniverseWheelCompanies(
             item,
             technicals.get(item.asset.symbol),
           );
-          const contracts = await refreshCandidateContracts(
-            {
-              feed,
-              filters,
-              incrementalDiscovery: false,
-              knownMetadata: knownCandidateContracts.get(item.asset.symbol),
-              price: item.price,
-              strategy,
-              symbol: item.asset.symbol,
-            },
-          );
+          const { contracts, summary: contractSummary } =
+            await refreshCandidateContracts(
+              {
+                feed,
+                filters,
+                incrementalDiscovery: false,
+                knownMetadata: knownCandidateContracts.get(item.asset.symbol),
+                price: item.price,
+                strategy,
+                symbol: item.asset.symbol,
+              },
+            );
+          addContractRefreshSummary(runSummary.contracts, contractSummary);
 
           optionSnapshotRows.push(
             ...optionMarketSnapshotRows(runId, item.asset.symbol, contracts),
@@ -1314,6 +1488,7 @@ export async function analyzeStagedUniverseWheelCompanies(
 
           if (!bestCandidate) {
             skippedCount += 1;
+            noCandidateCount += 1;
 
             return null;
           }
@@ -1358,6 +1533,16 @@ export async function analyzeStagedUniverseWheelCompanies(
         ...company,
         rank: index + 1,
       }));
+    runSummary.contracts.optionSnapshotRows = optionSnapshotRows.length;
+    runSummary.errors = {
+      count: errors.length,
+      sample: errors.slice(0, 5),
+    };
+    runSummary.scoring = {
+      noCandidateCount,
+      scoredCount: companies.length,
+      skippedCount,
+    };
     const response: WheelScreenerResponse = {
       persona: {
         id: persona.id,
@@ -1389,11 +1574,11 @@ export async function analyzeStagedUniverseWheelCompanies(
 
     await persistOptionMarketSnapshots(optionSnapshotRows);
     await persistRankedCandidates(runId, companies);
-    await completeUniverseScanRun(runId, response);
+    await completeUniverseScanRun(runId, response, runSummary);
 
     return response;
   } catch (error) {
-    await failUniverseScanRun(runId, error);
+    await failUniverseScanRun(runId, error, summary);
     throw error;
   }
 }
@@ -1416,6 +1601,7 @@ export async function runUniverseDeepScanCoverage(
     env.WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS * 60 * 60 * 1000;
   const staleBefore = new Date(staleBeforeMs).toISOString();
   const runId = await createDeepScanRun(context, batchSize);
+  let summary: DeepScanRunSummary | null = null;
 
   try {
     const assets = await getWheelAssetUniverse();
@@ -1441,6 +1627,30 @@ export async function runUniverseDeepScanCoverage(
       staleBeforeMs,
       request.forceRefresh === true,
     );
+    summary = {
+      contracts: emptyContractSummary(),
+      coverage: {
+        failedCount: 0,
+        noCandidateCount: 0,
+        updatedCount: 0,
+      },
+      errors: {
+        count: 0,
+        sample: [],
+      },
+      selection: {
+        batchSize,
+        selectedCount: selected.length,
+        staleBefore,
+        totalEligibleCount: ranked.length,
+      },
+      technicals: {
+        cachedFreshCount: 0,
+        refreshedCount: 0,
+        requestedCount: 0,
+      },
+    };
+    const runSummary = summary;
 
     if (selected.length === 0) {
       const result: UniverseDeepScanCoverageResult = {
@@ -1461,12 +1671,14 @@ export async function runUniverseDeepScanCoverage(
         totalEligibleCount: ranked.length,
       };
 
-      await completeDeepScanRun(runId, result);
+      await completeDeepScanRun(runId, result, runSummary);
 
       return result;
     }
 
-    const technicals = await ensureTechnicals(selected);
+    const { cached: technicals, summary: technicalSummary } =
+      await ensureTechnicals(selected);
+    runSummary.technicals = technicalSummary;
     const knownCandidateContracts = await getRecentKnownCandidateContracts(
       context,
       selected.map((item) => item.asset.symbol),
@@ -1489,16 +1701,18 @@ export async function runUniverseDeepScanCoverage(
           );
           const coverageRow = coverage.get(item.asset.symbol);
           const updatedSince = coverageRow?.last_scanned_at ?? undefined;
-          const contracts = await refreshCandidateContracts({
-            feed: env.ALPACA_OPTIONS_FEED,
-            filters: context.filters,
-            incrementalDiscovery: true,
-            knownMetadata: knownCandidateContracts.get(item.asset.symbol),
-            price: item.price,
-            strategy: context.strategy,
-            symbol: item.asset.symbol,
-            updatedSince,
-          });
+          const { contracts, summary: contractSummary } =
+            await refreshCandidateContracts({
+              feed: env.ALPACA_OPTIONS_FEED,
+              filters: context.filters,
+              incrementalDiscovery: true,
+              knownMetadata: knownCandidateContracts.get(item.asset.symbol),
+              price: item.price,
+              strategy: context.strategy,
+              symbol: item.asset.symbol,
+              updatedSince,
+            });
+          addContractRefreshSummary(runSummary.contracts, contractSummary);
 
           contractCount = contracts.length;
           optionSnapshotRows.push(
@@ -1515,6 +1729,7 @@ export async function runUniverseDeepScanCoverage(
 
           if (!bestCandidate) {
             await deleteDeepScanCandidate(context, item.asset.symbol);
+            runSummary.coverage.noCandidateCount += 1;
             coverageRows.push({
               bestScore: null,
               error: null,
@@ -1544,6 +1759,7 @@ export async function runUniverseDeepScanCoverage(
           };
 
           companies.push(company);
+          runSummary.coverage.updatedCount += 1;
           coverageRows.push({
             bestScore: company.score,
             error: null,
@@ -1557,6 +1773,7 @@ export async function runUniverseDeepScanCoverage(
             error instanceof Error ? error.message : "Deep scan failed.";
 
           await deleteDeepScanCandidate(context, item.asset.symbol);
+          runSummary.coverage.failedCount += 1;
           coverageRows.push({
             bestScore: null,
             error: message,
@@ -1585,6 +1802,11 @@ export async function runUniverseDeepScanCoverage(
     await persistOptionMarketSnapshots(optionSnapshotRows);
     await upsertDeepScanCandidates(context, runId, rankedCompanies);
     await upsertDeepScanCoverageRows(context, coverageRows);
+    runSummary.contracts.optionSnapshotRows = optionSnapshotRows.length;
+    runSummary.errors = {
+      count: errors.length,
+      sample: errors.slice(0, 5),
+    };
 
     const result: UniverseDeepScanCoverageResult = {
       batchSize,
@@ -1603,11 +1825,11 @@ export async function runUniverseDeepScanCoverage(
       totalEligibleCount: ranked.length,
     };
 
-    await completeDeepScanRun(runId, result);
+    await completeDeepScanRun(runId, result, runSummary);
 
     return result;
   } catch (error) {
-    await failDeepScanRun(runId, error);
+    await failDeepScanRun(runId, error, summary);
     throw error;
   }
 }
