@@ -36,20 +36,14 @@ function logoUnavailableResponse({
   });
 }
 
-function alpacaLogoHeaders() {
+function getLogoDevToken() {
   const env = getEnv();
-  const key = env.APCA_API_KEY_ID;
-  const secret = env.APCA_API_SECRET_KEY;
 
-  if (!key || !secret) {
+  if (!env.LOGO_DEV_PUBLISHABLE_KEY) {
     return null;
   }
 
-  return {
-    "APCA-API-KEY-ID": key,
-    "APCA-API-SECRET-KEY": secret,
-    Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`,
-  };
+  return env.LOGO_DEV_PUBLISHABLE_KEY;
 }
 
 export async function GET(
@@ -58,27 +52,27 @@ export async function GET(
 ) {
   const { symbol: symbolParam } = await params;
   const symbol = normalizeSymbol(symbolParam);
-  const headers = alpacaLogoHeaders();
+  const token = getLogoDevToken();
 
   if (!symbol) {
     return logoUnavailableResponse({ reason: "invalid-symbol", status: 400 });
   }
 
-  if (!headers) {
+  if (!token) {
     return logoUnavailableResponse({ reason: "missing-credentials", status: 401 });
   }
 
   const env = getEnv();
-  const logoUrl = new URL(
-    `/v1beta1/logos/${encodeURIComponent(symbol)}`,
-    env.ALPACA_LOGO_BASE_URL,
-  );
+  const logoUrl = new URL(`/ticker/${encodeURIComponent(symbol)}`, env.LOGO_DEV_BASE_URL);
 
-  logoUrl.searchParams.set("placeholder", "false");
+  logoUrl.searchParams.set("token", token);
+  logoUrl.searchParams.set("format", "png");
+  logoUrl.searchParams.set("theme", "dark");
+  logoUrl.searchParams.set("retina", "true");
+  logoUrl.searchParams.set("fallback", "404");
 
   const response = await fetch(logoUrl, {
     cache: "no-store",
-    headers,
   });
 
   if (!response.ok || !response.body) {
@@ -93,7 +87,7 @@ export async function GET(
     headers: {
       "Cache-Control": logoCacheControl,
       "Content-Type": response.headers.get("content-type") ?? "image/png",
-      "X-Alpha-Dog-Logo-Result": "alpaca",
+      "X-Alpha-Dog-Logo-Result": "logo-dev",
     },
   });
 }

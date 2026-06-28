@@ -18,14 +18,13 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   getEnvMock.mockReturnValue({
-    ALPACA_LOGO_BASE_URL: "https://broker-api.sandbox.alpaca.markets",
-    APCA_API_KEY_ID: "key",
-    APCA_API_SECRET_KEY: "secret",
+    LOGO_DEV_BASE_URL: "https://img.logo.dev",
+    LOGO_DEV_PUBLISHABLE_KEY: "pk_test",
   });
 });
 
 describe("GET /api/logos/[symbol]", () => {
-  it("proxies the Alpaca image with both supported auth header styles", async () => {
+  it("proxies the logo.dev ticker image with the configured token", async () => {
     fetchMock.mockResolvedValue(
       new Response("image-bytes", {
         headers: { "content-type": "image/png" },
@@ -37,25 +36,19 @@ describe("GET /api/logos/[symbol]", () => {
     const response = await GET(new Request("https://alpha-dog.test"), logoRequest());
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("X-Alpha-Dog-Logo-Result")).toBe("alpaca");
+    expect(response.headers.get("X-Alpha-Dog-Logo-Result")).toBe("logo-dev");
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(fetchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        href: "https://broker-api.sandbox.alpaca.markets/v1beta1/logos/AAPL?placeholder=false",
+        href: "https://img.logo.dev/ticker/AAPL?token=pk_test&format=png&theme=dark&retina=true&fallback=404",
       }),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          "APCA-API-KEY-ID": "key",
-          "APCA-API-SECRET-KEY": "secret",
-          Authorization: "Basic a2V5OnNlY3JldA==",
-        }),
-      }),
+      expect.objectContaining({ cache: "no-store" }),
     );
   });
 
   it("returns a non-200 diagnostic response when credentials are missing", async () => {
     getEnvMock.mockReturnValue({
-      ALPACA_LOGO_BASE_URL: "https://broker-api.sandbox.alpaca.markets",
+      LOGO_DEV_BASE_URL: "https://img.logo.dev",
     });
 
     const { GET } = await import("./route");
@@ -69,7 +62,7 @@ describe("GET /api/logos/[symbol]", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("preserves Alpaca failure status so server logs expose fallback causes", async () => {
+  it("preserves logo.dev failure status so server logs expose fallback causes", async () => {
     fetchMock.mockResolvedValue(
       new Response(null, {
         status: 404,
