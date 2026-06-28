@@ -22,6 +22,7 @@ export function DashboardHeader({
   onPersonaChange,
   onTickerChange,
   personaId,
+  refreshInProgress,
   requestState,
   ticker,
 }: {
@@ -33,9 +34,12 @@ export function DashboardHeader({
   onPersonaChange: (personaId: PersonaId) => void;
   onTickerChange: (ticker: string) => void;
   personaId: PersonaId;
+  refreshInProgress: boolean;
   requestState: RequestState;
   ticker: string;
 }) {
+  const isBusy = requestState === "loading" || requestState === "refreshing";
+
   return (
     <div className="border-b border-white/10 bg-[#111314]">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-4 px-4 py-4 md:px-6 xl:px-8">
@@ -123,8 +127,7 @@ export function DashboardHeader({
             className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
             disabled={
               !canAnalyze ||
-              requestState === "loading" ||
-              requestState === "refreshing"
+              isBusy
             }
             type="submit"
           >
@@ -136,14 +139,16 @@ export function DashboardHeader({
             className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
             disabled={
               !canRefresh ||
-              requestState === "loading" ||
-              requestState === "refreshing"
+              isBusy ||
+              refreshInProgress
             }
             onClick={onForceRefresh}
             type="button"
           >
-            <RefreshCw className="size-4" />
-            Refresh
+            <RefreshCw
+              className={`size-4 ${refreshInProgress ? "animate-spin" : ""}`}
+            />
+            {refreshInProgress ? "Refreshing" : "Refresh"}
           </button>
         </form>
       </div>
