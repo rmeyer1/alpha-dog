@@ -120,6 +120,10 @@ describe("staged universe scanner", () => {
       limit: 50,
       forceRefresh: true,
     });
+    const runPatch = requestSupabaseRestMock.mock.calls.find(
+      ([table, options]) =>
+        table === "wheel_universe_scan_runs" && options?.method === "PATCH",
+    );
 
     expect(getStockSnapshotsBySymbolsMock).toHaveBeenCalledWith(
       ["AAPL", "MSFT"],
@@ -153,6 +157,28 @@ describe("staged universe scanner", () => {
         resultScope: "complete",
         batchScreenedCount: 1,
         totalCount: 2,
+      },
+    });
+    expect(runPatch?.[1].body.summary).toMatchObject({
+      contracts: {
+        contractsMissingOpenInterest: 1,
+        contractsReturned: 1,
+        fullDiscoverySymbols: 1,
+        optionSnapshotRows: 1,
+      },
+      scoring: {
+        noCandidateCount: 0,
+        scoredCount: 1,
+        skippedCount: 1,
+      },
+      technicals: {
+        refreshedCount: 1,
+        requestedCount: 1,
+      },
+      universe: {
+        assetCount: 2,
+        rankedCount: 2,
+        selectedDeepScanCount: 1,
       },
     });
   });
@@ -447,6 +473,10 @@ describe("staged universe scanner", () => {
       ([table, options]) =>
         table === "wheel_deep_scan_coverage" && options?.method === "POST",
     );
+    const runPatch = requestSupabaseRestMock.mock.calls.find(
+      ([table, options]) =>
+        table === "wheel_deep_scan_runs" && options?.method === "PATCH",
+    );
 
     expect(getLiveOptionSnapshotContractsBySymbolsMock).toHaveBeenCalledWith(
       [
@@ -476,6 +506,27 @@ describe("staged universe scanner", () => {
     expect(response).toMatchObject({
       candidateCount: 1,
       scannedSymbols: ["AAPL"],
+    });
+    expect(runPatch?.[1].body.summary).toMatchObject({
+      contracts: {
+        contractsMissingOpenInterest: 0,
+        contractsReturned: 2,
+        discoveryContractsReturned: 1,
+        incrementalDiscoverySymbols: 1,
+        knownContractsRequested: 1,
+        knownContractsReturned: 1,
+        optionSnapshotRows: 2,
+      },
+      coverage: {
+        failedCount: 0,
+        noCandidateCount: 0,
+        updatedCount: 1,
+      },
+      selection: {
+        batchSize: 1,
+        selectedCount: 1,
+        totalEligibleCount: 1,
+      },
     });
   });
 });
