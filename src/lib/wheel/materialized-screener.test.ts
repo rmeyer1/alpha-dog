@@ -121,9 +121,14 @@ describe("materialized wheel screener", () => {
         id: "balanced_wheel",
       },
       dataFreshness: {
+        ageMinutes: 1,
         feed: "indicative",
         cacheStatus: "fresh",
         asOf: "2026-06-07T13:03:00.000Z",
+        lastCompletedAt: "2026-06-07T13:03:00.000Z",
+        lastStartedAt: "2026-06-07T13:00:00.000Z",
+        refreshStatus: "fresh",
+        source: "materialized",
       },
       screenedCount: 4376,
       skippedCount: 4000,
@@ -188,7 +193,86 @@ describe("materialized wheel screener", () => {
     });
 
     expect(response?.dataFreshness.cacheStatus).toBe("stale");
+    expect(response?.dataFreshness.ageMinutes).toBe(1624);
+    expect(response?.dataFreshness.refreshStatus).toBe("stale");
+    expect(response?.dataFreshness.source).toBe("materialized");
     expect(response?.companies[0].ticker).toBe("AAPL");
+  });
+
+  it("reports materialized refresh status for running snapshots", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            ...snapshotRow,
+            id: "22222222-2222-2222-2222-222222222222",
+            status: "running",
+            started_at: "2026-06-07T13:04:00.000Z",
+            completed_at: null,
+            created_at: "2026-06-07T13:04:00.000Z",
+          },
+          snapshotRow,
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const { getMaterializedWheelScreenerRefreshStatus } =
+      await importMaterializedScreener();
+    const status = await getMaterializedWheelScreenerRefreshStatus({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+    });
+    const statusUrl = new URL(String(vi.mocked(fetch).mock.calls[0][0]));
+
+    expect(statusUrl.searchParams.get("status")).toBe(
+      "in.(running,complete,failed)",
+    );
+    expect(status).toMatchObject({
+      ageMinutes: 1,
+      cacheStatus: "fresh",
+      lastCompletedAt: "2026-06-07T13:03:00.000Z",
+      lastStartedAt: "2026-06-07T13:04:00.000Z",
+      refreshStatus: "refreshing",
+      source: "materialized",
+    });
+  });
+
+  it("reports failed materialized refresh status without a completed snapshot", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          {
+            ...snapshotRow,
+            status: "failed",
+            completed_at: "2026-06-07T13:02:00.000Z",
+            created_at: "2026-06-07T13:00:00.000Z",
+            error: "Alpaca rate limit",
+          },
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const { getMaterializedWheelScreenerRefreshStatus } =
+      await importMaterializedScreener();
+    const status = await getMaterializedWheelScreenerRefreshStatus({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+    });
+
+    expect(status).toMatchObject({
+      ageMinutes: 2,
+      cacheStatus: null,
+      error: "Alpaca rate limit",
+      lastCompletedAt: null,
+      lastFailedAt: "2026-06-07T13:02:00.000Z",
+      refreshStatus: "failed",
+    });
   });
 
   it("supports offset reads from materialized candidate rows", async () => {

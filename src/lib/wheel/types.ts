@@ -9,6 +9,18 @@ export type OptionType = "put" | "call";
 export type Trend = "bullish" | "neutral" | "bearish";
 export type CacheStatus = "fresh" | "stale" | "demo";
 export type DataFeed = "opra" | "indicative" | "demo";
+export type WheelDataFreshnessSource =
+  | "demo"
+  | "live"
+  | "materialized"
+  | "memory_cache"
+  | "runtime_cache";
+export type WheelRefreshStatus =
+  | "demo"
+  | "failed"
+  | "fresh"
+  | "refreshing"
+  | "stale";
 export type QualityLabel =
   | "excellent"
   | "good"
@@ -269,10 +281,15 @@ export interface WheelScreenerProgress {
 export interface WheelScreenerResponse {
   persona: Pick<PersonaConfig, "id" | "name" | "motto">;
   dataFreshness: {
+    ageMinutes?: number;
     feed: DataFeed;
     cacheStatus: CacheStatus;
     asOf: string;
+    lastCompletedAt?: string | null;
+    lastStartedAt?: string | null;
     nextSuggestedRefreshAt: string | null;
+    refreshStatus?: WheelRefreshStatus;
+    source?: WheelDataFreshnessSource;
   };
   companies: WheelCompanyScore[];
   screenedCount: number;
@@ -287,10 +304,15 @@ export interface WheelAnalysisResponse {
   underlying: UnderlyingContext;
   persona: Pick<PersonaConfig, "id" | "name" | "motto">;
   dataFreshness: {
+    ageMinutes?: number;
     feed: DataFeed;
     cacheStatus: CacheStatus;
     asOf: string;
+    lastCompletedAt?: string | null;
+    lastStartedAt?: string | null;
     nextSuggestedRefreshAt: string | null;
+    refreshStatus?: WheelRefreshStatus;
+    source?: WheelDataFreshnessSource;
   };
   shortPuts: WheelCandidate[];
   coveredCalls: WheelCandidate[];

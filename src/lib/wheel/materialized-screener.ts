@@ -5,6 +5,7 @@ import type {
   CacheStatus,
   DataFeed,
   QualityLabel,
+  WheelRefreshStatus,
   Trend,
   Warning,
   WheelCompanyCandidateSummary,
@@ -40,6 +41,22 @@ export interface WheelScreenerSnapshotRow {
   skipped_count: number;
   error: string | null;
   created_at: string;
+}
+
+export interface MaterializedWheelScreenerRefreshStatus {
+  ageMinutes: number | null;
+  asOf: string | null;
+  cacheStatus: CacheStatus | null;
+  error: string | null;
+  feed: DataFeed;
+  filterKey: string;
+  lastCompletedAt: string | null;
+  lastFailedAt: string | null;
+  lastStartedAt: string | null;
+  persona: WheelScreenerRequest["persona"];
+  refreshStatus: WheelRefreshStatus;
+  source: "materialized";
+  strategy: WheelCompanyStrategy;
 }
 
 interface WheelOptionCandidateRow {
@@ -255,6 +272,14 @@ function cacheStatusForSnapshot(
   return "stale";
 }
 
+function materializedRefreshStatus(cacheStatus: CacheStatus) {
+  return cacheStatus === "demo" ? "demo" : cacheStatus;
+}
+
+function ageMinutesFromMs(ageMs: number) {
+  return Math.max(0, Math.round(ageMs / 60_000));
+}
+
 export function materializedSnapshotAgeMs(
   snapshot: Pick<WheelScreenerSnapshotRow, "completed_at" | "created_at">,
   nowMs = Date.now(),
@@ -449,10 +474,15 @@ export async function getMaterializedWheelScreenerResponse(
       motto: persona.motto,
     },
     dataFreshness: {
+      ageMinutes: ageMinutesFromMs(materializedSnapshotAgeMs(snapshot)),
       feed: snapshot.feed,
       cacheStatus,
       asOf,
+      lastCompletedAt: snapshot.completed_at,
+      lastStartedAt: snapshot.started_at,
       nextSuggestedRefreshAt: nextSuggestedRefreshAt(snapshot),
+      refreshStatus: materializedRefreshStatus(cacheStatus),
+      source: "materialized",
     },
     companies,
     screenedCount: snapshot.total_count,
@@ -525,6 +555,65 @@ export async function getLatestMaterializedWheelScreenerSnapshot(
   );
 
   return rows?.[0] ?? null;
+}
+
+export async function getMaterializedWheelScreenerRefreshStatus(
+  request: WheelScreenerRequest,
+): Promise<MaterializedWheelScreenerRefreshStatus> {
+  const { feed, filterKey, strategy } = getRequestContext(request);
+  const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
+    "wheel_screener_snapshots",
+    {
+      query: {
+        select:
+          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        persona: `eq.${request.persona}`,
+        strategy: `eq.${strategy}`,
+        filter_key: `eq.${filterKey}`,
+        feed: `eq.${feed}`,
+        status: "in.(running,complete,failed)",
+        order: "created_at.desc",
+        limit: 20,
+      },
+    },
+  );
+  const snapshots = rows ?? [];
+  const running = snapshots.find((snapshot) => snapshot.status === "running");
+  const completed = snapshots.find((snapshot) => snapshot.status === "complete");
+  const failed = snapshots.find((snapshot) => snapshot.status === "failed");
+  const cacheStatus = completed ? cacheStatusForSnapshot(completed) : null;
+  const asOf =
+    completed?.completed_at ??
+    running?.started_at ??
+    failed?.completed_at ??
+    failed?.created_at ??
+    null;
+  const ageMinutes = asOf
+    ? ageMinutesFromMs(Date.now() - new Date(asOf).getTime())
+    : null;
+  const refreshStatus: WheelRefreshStatus = running
+    ? "refreshing"
+    : cacheStatus
+      ? materializedRefreshStatus(cacheStatus)
+      : failed
+        ? "failed"
+        : "stale";
+
+  return {
+    ageMinutes,
+    asOf,
+    cacheStatus,
+    error: failed?.error ?? null,
+    feed,
+    filterKey,
+    lastCompletedAt: completed?.completed_at ?? null,
+    lastFailedAt: failed?.completed_at ?? failed?.created_at ?? null,
+    lastStartedAt: running?.started_at ?? completed?.started_at ?? null,
+    persona: request.persona,
+    refreshStatus,
+    source: "materialized",
+    strategy,
+  };
 }
 
 export async function createMaterializedWheelScreenerSnapshot(
