@@ -156,6 +156,41 @@ describe("materialized wheel screener", () => {
     expect(candidateUrl.searchParams.get("offset")).toBe("0");
   });
 
+  it("returns older completed snapshots as stale instead of missing cache", async () => {
+    stubSupabaseEnv();
+
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              ...snapshotRow,
+              completed_at: "2026-06-06T10:00:00.000Z",
+              created_at: "2026-06-06T09:57:00.000Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([candidateRow]), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([]), { status: 200 }),
+      );
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+    const response = await getMaterializedWheelScreenerResponse({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      limit: 50,
+    });
+
+    expect(response?.dataFreshness.cacheStatus).toBe("stale");
+    expect(response?.companies[0].ticker).toBe("AAPL");
+  });
+
   it("supports offset reads from materialized candidate rows", async () => {
     stubSupabaseEnv();
 

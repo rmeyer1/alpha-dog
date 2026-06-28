@@ -24,6 +24,8 @@ export interface AlpacaWheelAsset {
   exchange: "NYSE" | "NASDAQ";
 }
 
+export type AlpacaStockFeed = "sip" | "iex" | "delayed_sip";
+
 function alpacaHeaders() {
   const env = getEnv();
 
@@ -44,6 +46,14 @@ interface AlpacaOptionContract {
   strike_price: string;
   open_interest?: string | null;
   tradable?: boolean;
+}
+
+export interface AlpacaExplicitOptionSnapshotMetadata {
+  contractSymbol: string;
+  expirationDate: string;
+  openInterest?: number | null;
+  optionType: OptionType;
+  strike: number;
 }
 
 export interface AlpacaBar {
@@ -128,13 +138,19 @@ interface AlpacaHttpErrorOptions {
   status: number;
 }
 
-interface AlpacaAsset {
+export interface AlpacaAsset {
+  id?: string;
   symbol: string;
   name?: string | null;
   exchange: string;
   asset_class: string;
   status: string;
   tradable: boolean;
+  easy_to_borrow?: boolean;
+  fractionable?: boolean;
+  maintenance_margin_requirement?: number | string | null;
+  marginable?: boolean;
+  shortable?: boolean;
   attributes?: string[];
 }
 
@@ -474,8 +490,16 @@ async function getAssetsByExchange(exchange: "NYSE" | "NASDAQ") {
   url.searchParams.set("status", "active");
   url.searchParams.set("asset_class", "us_equity");
   url.searchParams.set("exchange", exchange);
+  url.searchParams.set("attributes", "has_options");
 
   return fetchAlpacaJson<AlpacaAsset[]>(url);
+}
+
+export async function getAlpacaAsset(ticker: string) {
+  const env = getEnv();
+  const url = new URL(`/v2/assets/${ticker}`, env.ALPACA_TRADING_BASE_URL);
+
+  return fetchAlpacaJson<AlpacaAsset>(url);
 }
 
 export async function getWheelAssetUniverse(): Promise<AlpacaWheelAsset[]> {
@@ -578,6 +602,7 @@ async function getOptionChainSnapshotsPage(
   filters: WheelFilters,
   underlyingPrice: number,
   feed: "opra" | "indicative",
+  updatedSince?: string,
   pageToken?: string,
 ) {
   const env = getEnv();
@@ -602,6 +627,10 @@ async function getOptionChainSnapshotsPage(
   url.searchParams.set("strike_price_gte", String(round(strikeBounds.min, 2)));
   url.searchParams.set("strike_price_lte", String(round(strikeBounds.max, 2)));
 
+  if (updatedSince) {
+    url.searchParams.set("updated_since", updatedSince);
+  }
+
   if (pageToken) {
     url.searchParams.set("page_token", pageToken);
   }
@@ -615,6 +644,7 @@ async function getOptionChainSnapshots(
   filters: WheelFilters,
   underlyingPrice: number,
   feed: "opra" | "indicative",
+  options: { updatedSince?: string } = {},
 ) {
   const snapshots: Record<string, AlpacaOptionSnapshot> = {};
   let pageToken: string | undefined;
@@ -626,6 +656,7 @@ async function getOptionChainSnapshots(
       filters,
       underlyingPrice,
       feed,
+      options.updatedSince,
       pageToken,
     );
     Object.assign(snapshots, page.snapshots ?? {});
@@ -654,11 +685,28 @@ async function getSnapshotsBySymbols(symbols: string[], feed: "opra" | "indicati
   return snapshots;
 }
 
+export async function getLiveOptionSnapshotContractsBySymbols(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[],
+  feed: "opra" | "indicative",
+) {
+  const metadataBySymbol = explicitMetadataBySymbol(metadata);
+  const snapshots = await getSnapshotsBySymbols(
+    Array.from(metadataBySymbol.keys()),
+    feed,
+  );
+
+  return Object.entries(snapshots)
+    .map(([symbol, snapshot]) =>
+      normalizeSnapshotContract(symbol, snapshot, metadataBySymbol.get(symbol))
+    )
+    .filter((contract) => contract != null);
+}
+
 export async function getStockSnapshotsBySymbols(
   symbols: string[],
   options: {
     chunkSize?: number;
-    feed?: "sip" | "iex" | "delayed_sip";
+    feed?: AlpacaStockFeed;
   } = {},
 ) {
   const env = getEnv();
@@ -688,7 +736,26 @@ export async function getStockSnapshotsBySymbols(
   return snapshots;
 }
 
-async function getHistoricalDailyBars(ticker: string) {
+export async function getStockSnapshotBySymbol(
+  symbol: string,
+  options: { feed?: AlpacaStockFeed } = {},
+) {
+  const snapshots = await getStockSnapshotsBySymbols([symbol], {
+    chunkSize: 1,
+    feed: options.feed,
+  });
+
+  return snapshots[symbol] ?? null;
+}
+
+export async function getHistoricalDailyBars(
+  ticker: string,
+  options: {
+    adjustment?: "raw" | "split" | "dividend" | "all";
+    daysBack?: number;
+    feed?: AlpacaStockFeed;
+  } = {},
+) {
   const env = getEnv();
   const url = new URL(
     `/v2/stocks/${ticker}/bars`,
@@ -696,10 +763,10 @@ async function getHistoricalDailyBars(ticker: string) {
   );
 
   url.searchParams.set("timeframe", "1Day");
-  url.searchParams.set("start", formatDate(addDays(new Date(), -520)));
+  url.searchParams.set("start", formatDate(addDays(new Date(), -(options.daysBack ?? 520))));
   url.searchParams.set("limit", "10000");
-  url.searchParams.set("adjustment", "raw");
-  url.searchParams.set("feed", "iex");
+  url.searchParams.set("adjustment", options.adjustment ?? "raw");
+  url.searchParams.set("feed", options.feed ?? getEnv().ALPACA_STOCK_FEED);
 
   const body = await fetchAlpacaJson<AlpacaBarsResponse>(url);
 
@@ -727,7 +794,7 @@ export async function getHistoricalDailyBarsBySymbols(
   symbols: string[],
   options: {
     daysBack?: number;
-    feed?: "sip" | "iex";
+    feed?: AlpacaStockFeed;
     symbolChunkSize?: number;
   } = {},
 ) {
@@ -773,14 +840,17 @@ export async function getHistoricalDailyBarsBySymbols(
   return barsBySymbol;
 }
 
-async function getLatestStockBar(ticker: string) {
+export async function getLatestStockBar(
+  ticker: string,
+  options: { feed?: AlpacaStockFeed } = {},
+) {
   const env = getEnv();
   const url = new URL(
     `/v2/stocks/${ticker}/bars/latest`,
     env.ALPACA_MARKET_DATA_BASE_URL,
   );
 
-  url.searchParams.set("feed", "iex");
+  url.searchParams.set("feed", options.feed ?? getEnv().ALPACA_STOCK_FEED);
 
   const body = await fetchAlpacaJson<AlpacaLatestBarResponse>(url);
 
@@ -922,6 +992,26 @@ function contractMetadataBySymbol(contracts: AlpacaOptionContract[]) {
   return new Map(contracts.map((contract) => [contract.symbol, contract]));
 }
 
+function explicitMetadataBySymbol(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[],
+) {
+  return new Map(
+    metadata.map((contract) => [
+      contract.contractSymbol,
+      {
+        symbol: contract.contractSymbol,
+        expiration_date: contract.expirationDate,
+        type: contract.optionType,
+        strike_price: String(contract.strike),
+        open_interest: contract.openInterest == null
+          ? null
+          : String(contract.openInterest),
+        tradable: true,
+      } satisfies AlpacaOptionContract,
+    ]),
+  );
+}
+
 async function getContractsForOptionTypes(
   ticker: string,
   optionTypes: readonly OptionType[],
@@ -943,6 +1033,7 @@ async function getChainSnapshotsForOptionTypes(
   filters: WheelFilters,
   underlyingPrice: number,
   feed: "opra" | "indicative",
+  options: { updatedSince?: string } = {},
 ) {
   const snapshots: Record<string, AlpacaOptionSnapshot> = {};
 
@@ -956,6 +1047,7 @@ async function getChainSnapshotsForOptionTypes(
           filters,
           underlyingPrice,
           feed,
+          options,
         ),
       );
     }),
@@ -1019,6 +1111,7 @@ export async function getLiveOptionSnapshotContracts(
   strategy: WheelCompanyStrategy | undefined,
   underlyingPrice: number,
   feed: "opra" | "indicative",
+  options: { updatedSince?: string } = {},
 ) {
   const snapshots = await getChainSnapshotsForOptionTypes(
     ticker,
@@ -1026,6 +1119,7 @@ export async function getLiveOptionSnapshotContracts(
     filters,
     underlyingPrice,
     feed,
+    options,
   );
 
   return Object.entries(snapshots)

@@ -222,6 +222,71 @@ describe("Alpaca client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("trims stock feed env values before building Alpaca requests", async () => {
+    stubLiveEnv();
+    vi.stubEnv("ALPACA_STOCK_FEED", "sip\n");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        AAPL: {
+          latestTrade: { p: 100, t: "2026-06-05T20:00:00Z" },
+        },
+      }),
+    );
+
+    const { getStockSnapshotBySymbol } = await import("./client");
+    await getStockSnapshotBySymbol("AAPL");
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+
+    expect(url.searchParams.get("feed")).toBe("sip");
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("pushes optionable asset filtering into Alpaca asset requests", async () => {
+    stubLiveEnv();
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            symbol: "AAPL",
+            name: "Apple Inc.",
+            exchange: "NASDAQ",
+            asset_class: "us_equity",
+            status: "active",
+            tradable: true,
+            attributes: ["has_options"],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            symbol: "IBM",
+            name: "International Business Machines Corporation",
+            exchange: "NYSE",
+            asset_class: "us_equity",
+            status: "active",
+            tradable: true,
+            attributes: ["has_options"],
+          },
+        ]),
+      );
+
+    const { getWheelAssetUniverse } = await import("./client");
+    const universe = await getWheelAssetUniverse();
+    const urls = fetchMock.mock.calls.map(([url]) => new URL(String(url)));
+
+    expect(urls).toHaveLength(2);
+    expect(urls.every((url) => url.pathname === "/v2/assets")).toBe(true);
+    expect(urls.every((url) => url.searchParams.get("attributes") === "has_options"))
+      .toBe(true);
+    expect(universe.map((asset) => asset.symbol)).toEqual(["AAPL", "IBM"]);
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("fetches staged option snapshots without option contract metadata calls", async () => {
     stubLiveEnv();
     fetchMock.mockResolvedValueOnce(
@@ -254,6 +319,40 @@ describe("Alpaca client", () => {
       contractSymbol: "AAPL260619P00095000",
       openInterest: null,
     });
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("passes updated_since when incrementally refreshing option chains", async () => {
+    stubLiveEnv();
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        snapshots: {
+          AAPL260619P00095000: {
+            latestQuote: { bp: 1, ap: 1.1 },
+            greeks: { delta: -0.24, theta: -0.04 },
+            impliedVolatility: 0.35,
+            dailyBar: { v: 100 },
+          },
+        },
+      }),
+    );
+
+    const { getLiveOptionSnapshotContracts } = await import("./client");
+    await getLiveOptionSnapshotContracts(
+      "AAPL",
+      wheelFilters,
+      "short_put",
+      100,
+      "opra",
+      { updatedSince: "2026-06-08T15:45:00.000Z" },
+    );
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+
+    expect(url.searchParams.get("updated_since")).toBe(
+      "2026-06-08T15:45:00.000Z",
+    );
 
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();

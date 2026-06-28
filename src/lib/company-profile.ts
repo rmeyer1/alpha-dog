@@ -1,5 +1,15 @@
+import {
+  getAlpacaAsset,
+  getHistoricalDailyBars,
+  getStockSnapshotBySymbol,
+  type AlpacaAsset,
+  type AlpacaBar,
+  type AlpacaStockSnapshot,
+} from "@/lib/alpaca/client";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { round } from "@/lib/wheel/calculations";
+
+export type { AlpacaAsset, AlpacaBar, AlpacaStockSnapshot } from "@/lib/alpaca/client";
 
 export interface CompanyProfile {
   ticker: string;
@@ -15,49 +25,6 @@ export interface EquityMarketProfile {
   bars: AlpacaBar[];
   stats: EquityStats | null;
   asOf: string | null;
-}
-
-export interface AlpacaAsset {
-  id?: string;
-  symbol: string;
-  name?: string;
-  exchange?: string;
-  status?: string;
-  tradable?: boolean;
-  marginable?: boolean;
-  shortable?: boolean;
-  easy_to_borrow?: boolean;
-  fractionable?: boolean;
-  maintenance_margin_requirement?: number | string | null;
-}
-
-export interface AlpacaBar {
-  c: number;
-  h: number;
-  l: number;
-  o: number;
-  t: string;
-  v: number;
-  vw?: number;
-}
-
-export interface AlpacaStockSnapshot {
-  latestTrade?: {
-    p?: number;
-    s?: number;
-    t?: string;
-    x?: string;
-  };
-  latestQuote?: {
-    ap?: number;
-    as?: number;
-    bp?: number;
-    bs?: number;
-    t?: string;
-  };
-  minuteBar?: AlpacaBar;
-  dailyBar?: AlpacaBar;
-  prevDailyBar?: AlpacaBar;
 }
 
 export interface EquityStats {
@@ -143,101 +110,8 @@ export interface SignalScribeSection {
   section_text: string;
 }
 
-interface AlpacaSnapshotsResponse {
-  snapshots?: Record<string, AlpacaStockSnapshot>;
-  message?: string;
-}
-
-interface AlpacaBarsResponse {
-  bars?: AlpacaBar[];
-  message?: string;
-}
-
 function normalizeTicker(ticker: string) {
   return ticker.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-
-  return next;
-}
-
-function formatDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function alpacaHeaders() {
-  const env = getEnv();
-
-  if (!env.APCA_API_KEY_ID || !env.APCA_API_SECRET_KEY) {
-    throw new Error("Alpaca credentials are not configured.");
-  }
-
-  return {
-    "APCA-API-KEY-ID": env.APCA_API_KEY_ID,
-    "APCA-API-SECRET-KEY": env.APCA_API_SECRET_KEY,
-  };
-}
-
-async function fetchAlpacaJson<T>(url: URL): Promise<T> {
-  const response = await fetch(url, {
-    headers: alpacaHeaders(),
-    cache: "no-store",
-  });
-  const body = (await response.json().catch(() => null)) as
-    | (T & { message?: string })
-    | null;
-
-  if (!response.ok) {
-    throw new Error(
-      body?.message ?? `Alpaca returned HTTP ${response.status}.`,
-    );
-  }
-
-  if (!body) {
-    throw new Error("Alpaca returned an empty response.");
-  }
-
-  return body;
-}
-
-async function getAlpacaAsset(ticker: string) {
-  const env = getEnv();
-  const url = new URL(`/v2/assets/${ticker}`, env.ALPACA_TRADING_BASE_URL);
-
-  return fetchAlpacaJson<AlpacaAsset>(url);
-}
-
-async function getAlpacaStockSnapshot(ticker: string) {
-  const env = getEnv();
-  const url = new URL("/v2/stocks/snapshots", env.ALPACA_MARKET_DATA_BASE_URL);
-
-  url.searchParams.set("symbols", ticker);
-  url.searchParams.set("feed", "iex");
-
-  const body = await fetchAlpacaJson<AlpacaSnapshotsResponse>(url);
-
-  return body.snapshots?.[ticker] ?? null;
-}
-
-async function getAlpacaDailyBars(ticker: string) {
-  const env = getEnv();
-  const url = new URL(
-    `/v2/stocks/${ticker}/bars`,
-    env.ALPACA_MARKET_DATA_BASE_URL,
-  );
-
-  url.searchParams.set("timeframe", "1Day");
-  url.searchParams.set("start", formatDate(addDays(new Date(), -540)));
-  url.searchParams.set("limit", "10000");
-  url.searchParams.set("adjustment", "all");
-  url.searchParams.set("feed", "iex");
-
-  const body = await fetchAlpacaJson<AlpacaBarsResponse>(url);
-
-  return body.bars ?? [];
 }
 
 function returnFromBars(bars: AlpacaBar[], sessionsAgo: number) {
@@ -318,8 +192,11 @@ async function getEquityMarketProfile(ticker: string): Promise<EquityMarketProfi
   try {
     const [assetResult, snapshotResult, barsResult] = await Promise.allSettled([
       getAlpacaAsset(ticker),
-      getAlpacaStockSnapshot(ticker),
-      getAlpacaDailyBars(ticker),
+      getStockSnapshotBySymbol(ticker),
+      getHistoricalDailyBars(ticker, {
+        adjustment: "all",
+        daysBack: 540,
+      }),
     ]);
     const asset = assetResult.status === "fulfilled" ? assetResult.value : null;
     const snapshot =
