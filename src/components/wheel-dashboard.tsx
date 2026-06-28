@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  Clock3,
   Database,
   ListChecks,
   ShieldAlert,
@@ -25,6 +24,10 @@ import { CompanyResults } from "./wheel-dashboard/company-results";
 import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
+import {
+  FreshnessStatusPill,
+  getFreshnessView,
+} from "./wheel-dashboard/freshness-status";
 import { MarketOverview } from "./wheel-dashboard/market-overview";
 import {
   mergePresetFilters,
@@ -97,14 +100,8 @@ function ScreenerStatusStrip({
       response.putCreditSpreads.length +
       response.callCreditSpreads.length
     : screenerResponse?.companies.length ?? 0;
-  const cacheStatus = freshness?.cacheStatus ?? requestState;
   const feed = freshness?.feed.toUpperCase() ?? "Pending";
-  const asOf = freshness?.asOf
-    ? new Date(freshness.asOf).toLocaleTimeString([], {
-        hour: "numeric",
-        minute: "2-digit",
-      })
-    : "No timestamp";
+  const freshnessView = getFreshnessView(freshness, requestState);
 
   const tiles = [
     {
@@ -115,9 +112,9 @@ function ScreenerStatusStrip({
     },
     {
       label: "Freshness",
-      value: `${cacheStatus} · ${asOf}`,
-      icon: Clock3,
-      tone: "text-emerald-200",
+      value: <FreshnessStatusPill className="w-full" view={freshnessView} />,
+      icon: freshnessView.icon,
+      tone: freshnessView.tone.icon,
     },
     {
       label: "Ranked",
@@ -556,12 +553,19 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       ? response?.callCreditSpreads ?? []
       : [];
   const hasTicker = ticker.trim().length > 0;
+  const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
+  const isServerRefreshRunning =
+    freshness?.refreshStatus === "refreshing" || requestState === "refreshing";
 
   return (
     <main className="min-h-screen bg-[#0b0c0d] text-zinc-100">
       <DashboardHeader
         canAnalyze={hasTicker}
-        canRefresh={hasTicker ? Boolean(response) : true}
+        canRefresh={
+          hasTicker
+            ? Boolean(response) && !isServerRefreshRunning
+            : !isServerRefreshRunning
+        }
         initialPersonas={initialPersonas}
         onAnalyze={handleSubmit}
         onForceRefresh={handleForceRefresh}
@@ -569,6 +573,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         onTickerChange={handleTickerChange}
         personaId={personaId}
         requestState={requestState}
+        refreshInProgress={isServerRefreshRunning}
         ticker={ticker}
       />
       <ScreenerStatusStrip

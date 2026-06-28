@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock3 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type {
   PersonaConfig,
   WheelCompanyStrategy,
@@ -6,6 +6,10 @@ import type {
   WheelScreenerResponse,
 } from "@/lib/wheel/types";
 import { formatPercent } from "./formatters";
+import {
+  FreshnessStatusPill,
+  getFreshnessView,
+} from "./freshness-status";
 import type { RequestState } from "./types";
 import { WarningBadges } from "./warnings";
 
@@ -24,6 +28,7 @@ export function CompanyScreenerOverview({
   response: WheelScreenerResponse | null;
   strategy: WheelCompanyStrategy;
 }) {
+  const freshnessView = getFreshnessView(response?.dataFreshness, requestState);
   const progress = response?.progress;
   const progressPercent = progress && progress.totalCount > 0
     ? Math.round((progress.processedCount / progress.totalCount) * 100)
@@ -41,12 +46,7 @@ export function CompanyScreenerOverview({
       <div className="rounded-lg border border-white/10 bg-[#151718] p-5">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
           <div>
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <Clock3 className="size-4" />
-              {response
-                ? `${response.dataFreshness.feed.toUpperCase()} · ${response.dataFreshness.cacheStatus}`
-                : requestState}
-            </div>
+            <FreshnessStatusPill view={freshnessView} />
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <h2 className="text-3xl font-semibold tracking-normal text-white">
                 {title}

@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock3 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import type {
   PersonaConfig,
@@ -6,6 +6,10 @@ import type {
   WheelFilters,
 } from "@/lib/wheel/types";
 import { formatCurrency, formatPercent } from "./formatters";
+import {
+  FreshnessStatusPill,
+  getFreshnessView,
+} from "./freshness-status";
 import type { RequestState } from "./types";
 import { WarningBadges } from "./warnings";
 
@@ -24,17 +28,14 @@ export function MarketOverview({
   response: WheelAnalysisResponse | null;
   ticker: string;
 }) {
+  const freshnessView = getFreshnessView(response?.dataFreshness, requestState);
+
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div className="rounded-lg border border-white/10 bg-[#151718] p-5">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
           <div>
-            <div className="flex items-center gap-2 text-sm text-zinc-400">
-              <Clock3 className="size-4" />
-              {response
-                ? `${response.dataFreshness.feed.toUpperCase()} · ${response.dataFreshness.cacheStatus}`
-                : requestState}
-            </div>
+            <FreshnessStatusPill view={freshnessView} />
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
               <Link
                 className="font-mono text-4xl font-semibold text-white underline decoration-cyan-300/40 underline-offset-4 transition hover:text-cyan-100"
