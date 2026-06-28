@@ -222,6 +222,27 @@ describe("Alpaca client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("trims stock feed env values before building Alpaca requests", async () => {
+    stubLiveEnv();
+    vi.stubEnv("ALPACA_STOCK_FEED", "sip\n");
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        AAPL: {
+          latestTrade: { p: 100, t: "2026-06-05T20:00:00Z" },
+        },
+      }),
+    );
+
+    const { getStockSnapshotBySymbol } = await import("./client");
+    await getStockSnapshotBySymbol("AAPL");
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+
+    expect(url.searchParams.get("feed")).toBe("sip");
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("pushes optionable asset filtering into Alpaca asset requests", async () => {
     stubLiveEnv();
     fetchMock
