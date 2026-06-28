@@ -104,6 +104,17 @@ interface DeepScanContext {
   strategy: WheelCompanyStrategy;
 }
 
+interface CandidateContractRefreshRequest {
+  feed: Exclude<DataFeed, "demo">;
+  filters: WheelFilters;
+  incrementalDiscovery: boolean;
+  knownMetadata: AlpacaExplicitOptionSnapshotMetadata[] | undefined;
+  price: number;
+  strategy: WheelCompanyStrategy;
+  symbol: string;
+  updatedSince?: string;
+}
+
 export interface UniverseDeepScanCoverageRequest {
   batchSize?: number;
   filters?: Partial<WheelFilters>;
@@ -908,6 +919,58 @@ async function getFastRefreshedKnownContracts(
   return await getLiveOptionSnapshotContractsBySymbols(metadata, feed);
 }
 
+async function discoverCandidateContracts(
+  request: CandidateContractRefreshRequest,
+  options: { updatedSince?: string } = {},
+) {
+  if (!options.updatedSince) {
+    return await getLiveOptionSnapshotContracts(
+      request.symbol,
+      request.filters,
+      request.strategy,
+      request.price,
+      request.feed,
+    );
+  }
+
+  return await getLiveOptionSnapshotContracts(
+    request.symbol,
+    request.filters,
+    request.strategy,
+    request.price,
+    request.feed,
+    options,
+  );
+}
+
+async function refreshKnownCandidateContracts(
+  request: CandidateContractRefreshRequest,
+) {
+  return await getFastRefreshedKnownContracts(
+    request.knownMetadata,
+    request.feed,
+  );
+}
+
+async function refreshCandidateContracts(
+  request: CandidateContractRefreshRequest,
+): Promise<RawOptionContract[]> {
+  const knownContracts = await refreshKnownCandidateContracts(request);
+
+  if (knownContracts.length === 0) {
+    return await discoverCandidateContracts(request);
+  }
+
+  const discoveryContracts =
+    request.incrementalDiscovery && request.updatedSince
+      ? await discoverCandidateContracts(request, {
+          updatedSince: request.updatedSince,
+        })
+      : [];
+
+  return uniqueContracts([...knownContracts, ...discoveryContracts]);
+}
+
 async function createDeepScanRun(
   context: DeepScanContext,
   batchSize: number,
@@ -1225,19 +1288,17 @@ export async function analyzeStagedUniverseWheelCompanies(
             item,
             technicals.get(item.asset.symbol),
           );
-          const fastContracts = await getFastRefreshedKnownContracts(
-            knownCandidateContracts.get(item.asset.symbol),
-            feed,
+          const contracts = await refreshCandidateContracts(
+            {
+              feed,
+              filters,
+              incrementalDiscovery: false,
+              knownMetadata: knownCandidateContracts.get(item.asset.symbol),
+              price: item.price,
+              strategy,
+              symbol: item.asset.symbol,
+            },
           );
-          const contracts = fastContracts.length > 0
-            ? uniqueContracts(fastContracts)
-            : await getLiveOptionSnapshotContracts(
-                item.asset.symbol,
-                filters,
-                strategy,
-                item.price,
-                feed,
-              );
 
           optionSnapshotRows.push(
             ...optionMarketSnapshotRows(runId, item.asset.symbol, contracts),
@@ -1426,31 +1487,18 @@ export async function runUniverseDeepScanCoverage(
             item,
             technicals.get(item.asset.symbol),
           );
-          const fastContracts = await getFastRefreshedKnownContracts(
-            knownCandidateContracts.get(item.asset.symbol),
-            env.ALPACA_OPTIONS_FEED,
-          );
           const coverageRow = coverage.get(item.asset.symbol);
           const updatedSince = coverageRow?.last_scanned_at ?? undefined;
-          const discoveryContracts = fastContracts.length > 0 && updatedSince
-            ? await getLiveOptionSnapshotContracts(
-                item.asset.symbol,
-                context.filters,
-                context.strategy,
-                item.price,
-                env.ALPACA_OPTIONS_FEED,
-                { updatedSince },
-              )
-            : [];
-          const contracts = fastContracts.length > 0
-            ? uniqueContracts([...fastContracts, ...discoveryContracts])
-            : await getLiveOptionSnapshotContracts(
-                item.asset.symbol,
-                context.filters,
-                context.strategy,
-                item.price,
-                env.ALPACA_OPTIONS_FEED,
-              );
+          const contracts = await refreshCandidateContracts({
+            feed: env.ALPACA_OPTIONS_FEED,
+            filters: context.filters,
+            incrementalDiscovery: true,
+            knownMetadata: knownCandidateContracts.get(item.asset.symbol),
+            price: item.price,
+            strategy: context.strategy,
+            symbol: item.asset.symbol,
+            updatedSince,
+          });
 
           contractCount = contracts.length;
           optionSnapshotRows.push(

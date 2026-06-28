@@ -342,4 +342,140 @@ describe("staged universe scanner", () => {
       ),
     ).toBe(true);
   });
+
+  it("refreshes known background contracts and incrementally discovers updates", async () => {
+    vi.stubEnv("WHEEL_UNIVERSE_BACKGROUND_BATCH_SIZE", "1");
+    vi.stubEnv("WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS", "24");
+    getWheelAssetUniverseMock.mockResolvedValue([
+      { symbol: "AAPL", name: "Apple Inc.", exchange: "NASDAQ" },
+    ]);
+    getStockSnapshotsBySymbolsMock.mockResolvedValue({
+      AAPL: {
+        latestTrade: { p: 100, t: "2026-06-08T15:59:00.000Z" },
+        dailyBar: { c: 100, h: 101, l: 99, o: 99, t: "2026-06-08T13:30:00.000Z", v: 2_000_000 },
+        prevDailyBar: { c: 98, h: 99, l: 97, o: 97, t: "2026-06-07T13:30:00.000Z", v: 1_000_000 },
+      },
+    });
+    getHistoricalDailyBarsBySymbolsMock.mockResolvedValue({
+      AAPL: Array.from({ length: 220 }, (_, index) => ({
+        c: 90 + index * 0.05,
+        h: 0,
+        l: 0,
+        o: 0,
+        t: "2026-06-05T20:00:00Z",
+        v: 1,
+      })),
+    });
+    getLiveOptionSnapshotContractsBySymbolsMock.mockResolvedValue([
+      {
+        contractSymbol: "AAPL260629P00095000",
+        optionType: "put",
+        strike: 95,
+        expirationDate: "2026-06-29",
+        bid: 1,
+        ask: 1.1,
+        delta: -0.24,
+        theta: -0.04,
+        impliedVolatility: 0.35,
+        volume: 500,
+        openInterest: 750,
+      },
+    ]);
+    getLiveOptionSnapshotContractsMock.mockResolvedValue([
+      {
+        contractSymbol: "AAPL260629P00094000",
+        optionType: "put",
+        strike: 94,
+        expirationDate: "2026-06-29",
+        bid: 0.8,
+        ask: 0.9,
+        delta: -0.2,
+        theta: -0.03,
+        impliedVolatility: 0.34,
+        volume: 200,
+        openInterest: 500,
+      },
+    ]);
+    requestSupabaseRestMock.mockImplementation((table, options) => {
+      if (table === "wheel_deep_scan_runs" && options?.method === "POST") {
+        return Promise.resolve([{ id: "deep-run-id" }]);
+      }
+
+      if (table === "wheel_deep_scan_coverage" && !options?.method) {
+        return Promise.resolve([
+          {
+            best_score: 80,
+            error: null,
+            last_scanned_at: "2026-06-08T14:00:00.000Z",
+            option_contract_count: 1,
+            status: "complete",
+            symbol: "AAPL",
+          },
+        ]);
+      }
+
+      if (table === "wheel_deep_scan_candidates" && !options?.method) {
+        return Promise.resolve([
+          {
+            symbol: "AAPL",
+            option_type: "put",
+            expiration: "2026-06-29",
+            short_strike: "95",
+            long_strike: null,
+            as_of: "2026-06-08T15:45:00.000Z",
+          },
+        ]);
+      }
+
+      if (table === "wheel_underlying_technicals" && !options?.method) {
+        return Promise.resolve([]);
+      }
+
+      return Promise.resolve(null);
+    });
+
+    const { runUniverseDeepScanCoverage } = await import(
+      "./universe-scanner"
+    );
+    const response = await runUniverseDeepScanCoverage({
+      persona: "balanced_wheel",
+      strategy: "short_put",
+      batchSize: 1,
+      forceRefresh: true,
+    });
+    const coveragePost = requestSupabaseRestMock.mock.calls.find(
+      ([table, options]) =>
+        table === "wheel_deep_scan_coverage" && options?.method === "POST",
+    );
+
+    expect(getLiveOptionSnapshotContractsBySymbolsMock).toHaveBeenCalledWith(
+      [
+        {
+          contractSymbol: "AAPL260629P00095000",
+          expirationDate: "2026-06-29",
+          openInterest: null,
+          optionType: "put",
+          strike: 95,
+        },
+      ],
+      "opra",
+    );
+    expect(getLiveOptionSnapshotContractsMock).toHaveBeenCalledWith(
+      "AAPL",
+      expect.any(Object),
+      "short_put",
+      100,
+      "opra",
+      { updatedSince: "2026-06-08T14:00:00.000Z" },
+    );
+    expect(coveragePost?.[1].body[0]).toMatchObject({
+      option_contract_count: 2,
+      status: "complete",
+      symbol: "AAPL",
+    });
+    expect(response).toMatchObject({
+      candidateCount: 1,
+      scannedSymbols: ["AAPL"],
+    });
+  });
 });
