@@ -7,6 +7,7 @@ import {
   cacheCompletedWheelScreenerResponse,
   getCachedWheelScreenerResponse,
 } from "@/lib/wheel/screener";
+import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
@@ -65,6 +66,20 @@ export async function POST(request: Request) {
         },
         { status: 503 },
       );
+    }
+
+    const runningFallback = await getRunningScreenerRefreshFallback(
+      parsed.data,
+    );
+
+    if (runningFallback) {
+      await cacheCompletedWheelScreenerResponse(parsed.data, runningFallback);
+
+      return NextResponse.json({
+        runId: "materialized-refreshing",
+        status: "completed",
+        result: runningFallback,
+      });
     }
 
     const run = await start(wheelScreenerWorkflow, [parsed.data]);

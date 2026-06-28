@@ -1,6 +1,7 @@
 import { getEnv } from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
+  getMaterializedWheelScreenerResponse,
   getLatestMaterializedWheelScreenerSnapshot,
   materializedSnapshotAgeMs,
 } from "./materialized-screener";
@@ -8,6 +9,7 @@ import type {
   PersonaId,
   WheelCompanyStrategy,
   WheelScreenerRequest,
+  WheelScreenerResponse,
 } from "./types";
 import { companyStrategySchema, personaIdSchema } from "./validation";
 
@@ -36,6 +38,18 @@ export interface EasternMarketHoursState {
   isOpen: boolean;
   isWeekendPrewarm: boolean;
   weekday: string;
+}
+
+function markRefreshInProgress(
+  response: WheelScreenerResponse,
+): WheelScreenerResponse {
+  return {
+    ...response,
+    dataFreshness: {
+      ...response.dataFreshness,
+      refreshStatus: "refreshing",
+    },
+  };
 }
 
 function parseCsv(value: string) {
@@ -202,4 +216,21 @@ export async function getScreenerRefreshDecision(
     status: "due",
     reason: "Latest materialized snapshot is due for refresh.",
   };
+}
+
+export async function getRunningScreenerRefreshFallback(
+  request: WheelScreenerRequest,
+): Promise<WheelScreenerResponse | null> {
+  const decision = await getScreenerRefreshDecision(request);
+
+  if (decision.status !== "running") {
+    return null;
+  }
+
+  const fallback = await getMaterializedWheelScreenerResponse({
+    ...request,
+    forceRefresh: false,
+  });
+
+  return fallback ? markRefreshInProgress(fallback) : null;
 }
