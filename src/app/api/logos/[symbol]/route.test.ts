@@ -40,7 +40,7 @@ describe("GET /api/logos/[symbol]", () => {
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(fetchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        href: "https://img.logo.dev/ticker/AAPL?token=pk_test&format=png&theme=dark&retina=true&fallback=404",
+        href: "https://img.logo.dev/ticker/AAPL?token=pk_test&size=128&format=png&theme=dark&retina=true&fallback=404",
       }),
       expect.objectContaining({ cache: "no-store" }),
     );

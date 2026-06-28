@@ -66,6 +66,7 @@ export async function GET(
   const logoUrl = new URL(`/ticker/${encodeURIComponent(symbol)}`, env.LOGO_DEV_BASE_URL);
 
   logoUrl.searchParams.set("token", token);
+  logoUrl.searchParams.set("size", "128");
   logoUrl.searchParams.set("format", "png");
   logoUrl.searchParams.set("theme", "dark");
   logoUrl.searchParams.set("retina", "true");
