@@ -48,6 +48,10 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://paper-api.alpaca.markets"),
+  ALPACA_LOGO_BASE_URL: z
+    .string()
+    .url()
+    .default("https://broker-api.sandbox.alpaca.markets"),
   ALPACA_MARKET_DATA_RATE_LIMIT_PER_MINUTE: optionalPositiveInteger("9500"),
   ALPACA_MARKET_DATA_MAX_CONCURRENCY: optionalPositiveInteger("24"),
   POLYMARKET_DATA_API_BASE_URL: z
