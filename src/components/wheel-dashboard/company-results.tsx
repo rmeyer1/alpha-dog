@@ -5,6 +5,7 @@ import type {
   WheelCompanyScore,
   WheelCompanyStrategy,
 } from "@/lib/wheel/types";
+import { CompanyLogo } from "@/components/company-logo";
 import {
   formatCurrency,
   formatPercent,
@@ -178,7 +179,7 @@ export function CompanyResults({
                     </td>
                     <td className="sticky left-[156px] z-10 w-[240px] min-w-[240px] max-w-[240px] border-r border-white/10 bg-[#151718] px-4 py-3 group-hover:bg-[#1b1d1e]">
                       <button
-                        className="grid max-w-full rounded-md text-left underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                        className="flex max-w-full items-center gap-3 rounded-md text-left underline-offset-4 hover:text-emerald-200 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                         onClick={() =>
                           onSelectTicker(
                             row.ticker,
@@ -187,11 +188,18 @@ export function CompanyResults({
                         }
                         type="button"
                       >
-                        <span className="font-mono text-zinc-50">
-                          {row.ticker}
-                        </span>
-                        <span className="truncate text-xs text-zinc-400">
-                          {row.name}
+                        <CompanyLogo
+                          name={row.name}
+                          size="sm"
+                          symbol={row.ticker}
+                        />
+                        <span className="min-w-0">
+                          <span className="block font-mono text-zinc-50">
+                            {row.ticker}
+                          </span>
+                          <span className="block truncate text-xs text-zinc-400">
+                            {row.name}
+                          </span>
                         </span>
                       </button>
                     </td>
@@ -272,16 +280,19 @@ export function CompanyResults({
                 tabIndex={0}
               >
                 <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="break-words text-xs uppercase text-zinc-500">
-                      #{row.rank} · {row.exchange} ·{" "}
-                      {strategyLabel(row.bestCandidate.strategy)}
-                    </div>
-                    <div className="mt-1 font-mono text-lg text-zinc-50">
-                      {row.ticker}
-                    </div>
-                    <div className="truncate text-sm text-zinc-400">
-                      {row.name}
+                  <div className="flex min-w-0 items-start gap-3">
+                    <CompanyLogo
+                      name={row.name}
+                      size="md"
+                      symbol={row.ticker}
+                    />
+                    <div className="min-w-0">
+                      <div className="font-mono text-lg text-zinc-50">
+                        {row.ticker}
+                      </div>
+                      <div className="truncate text-sm text-zinc-400">
+                        {row.name}
+                      </div>
                     </div>
                   </div>
                   <span className="rounded-md bg-emerald-400/10 px-2.5 py-1 font-mono text-emerald-100">

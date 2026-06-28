@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { CompanyLogo } from "@/components/company-logo";
 import {
   getCompanyProfile,
   type AlpacaBar,
@@ -421,11 +422,18 @@ export default async function CompanyProfilePage({
               <ArrowLeft className="size-4" />
               Dashboard
             </Link>
-            <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-              <h1 className="font-mono text-5xl font-semibold text-white">
-                {ticker}
-              </h1>
-              <span className="pb-1 text-2xl text-zinc-300">{companyName}</span>
+            <div className="flex items-center gap-4">
+              <CompanyLogo name={companyName} size="lg" symbol={ticker} />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
+                  <h1 className="font-mono text-5xl font-semibold text-white">
+                    {ticker}
+                  </h1>
+                  <span className="pb-1 text-2xl text-zinc-300">
+                    {companyName}
+                  </span>
+                </div>
+              </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusPill
