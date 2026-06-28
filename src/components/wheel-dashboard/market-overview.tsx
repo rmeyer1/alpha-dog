@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import Link from "next/link";
+import { CompanyLogo } from "@/components/company-logo";
 import type {
   PersonaConfig,
   WheelAnalysisResponse,
@@ -29,6 +30,7 @@ export function MarketOverview({
   ticker: string;
 }) {
   const freshnessView = getFreshnessView(response?.dataFreshness, requestState);
+  const displaySymbol = response?.underlying.symbol ?? ticker.trim().toUpperCase();
 
   return (
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -36,12 +38,17 @@ export function MarketOverview({
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
           <div>
             <FreshnessStatusPill view={freshnessView} />
-            <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <CompanyLogo
+                name={displaySymbol}
+                size="lg"
+                symbol={displaySymbol}
+              />
               <Link
                 className="font-mono text-4xl font-semibold text-white underline decoration-cyan-300/40 underline-offset-4 transition hover:text-cyan-100"
-                href={`/company/${encodeURIComponent(response?.underlying.symbol ?? ticker)}`}
+                href={`/company/${encodeURIComponent(displaySymbol)}`}
               >
-                {response?.underlying.symbol ?? ticker}
+                {displaySymbol}
               </Link>
               <span className="font-mono text-3xl text-zinc-100">
                 {formatCurrency(response?.underlying.price)}
