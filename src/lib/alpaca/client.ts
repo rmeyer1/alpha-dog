@@ -689,7 +689,9 @@ export async function getLiveOptionSnapshotContractsBySymbols(
   metadata: AlpacaExplicitOptionSnapshotMetadata[],
   feed: "opra" | "indicative",
 ) {
-  const metadataBySymbol = explicitMetadataBySymbol(metadata);
+  const metadataBySymbol = await getExplicitOptionContractMetadataBySymbol(
+    metadata,
+  );
   const snapshots = await getSnapshotsBySymbols(
     Array.from(metadataBySymbol.keys()),
     feed,
@@ -938,7 +940,7 @@ function parseOptionSymbol(symbol: string) {
     return null;
   }
 
-  const [, , rawDate, rawOptionType, rawStrike] = parsed;
+  const [, underlyingSymbol, rawDate, rawOptionType, rawStrike] = parsed;
   const year = Number(rawDate.slice(0, 2));
   const month = rawDate.slice(2, 4);
   const day = rawDate.slice(4, 6);
@@ -952,6 +954,7 @@ function parseOptionSymbol(symbol: string) {
     expirationDate: `20${year.toString().padStart(2, "0")}-${month}-${day}`,
     optionType: rawOptionType === "P" ? "put" as const : "call" as const,
     strike,
+    underlyingSymbol,
   };
 }
 
@@ -994,8 +997,8 @@ function contractMetadataBySymbol(contracts: AlpacaOptionContract[]) {
 
 function explicitMetadataBySymbol(
   metadata: AlpacaExplicitOptionSnapshotMetadata[],
-) {
-  return new Map(
+): Map<string, AlpacaOptionContract> {
+  return new Map<string, AlpacaOptionContract>(
     metadata.map((contract) => [
       contract.contractSymbol,
       {
@@ -1010,6 +1013,90 @@ function explicitMetadataBySymbol(
       } satisfies AlpacaOptionContract,
     ]),
   );
+}
+
+function explicitContractMetadataGroups(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[],
+) {
+  const groups = new Map<string, AlpacaExplicitOptionSnapshotMetadata[]>();
+
+  for (const contract of metadata) {
+    const parsed = parseOptionSymbol(contract.contractSymbol);
+
+    if (!parsed) {
+      continue;
+    }
+
+    const key = [
+      parsed.underlyingSymbol,
+      contract.optionType,
+      contract.expirationDate,
+    ].join(":");
+
+    groups.set(key, [...(groups.get(key) ?? []), contract]);
+  }
+
+  return Array.from(groups.values());
+}
+
+async function getExplicitOptionContractsPage(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[],
+) {
+  const parsed = parseOptionSymbol(metadata[0]?.contractSymbol ?? "");
+
+  if (!parsed) {
+    return [];
+  }
+
+  const env = getEnv();
+  const strikes = metadata.map((contract) => contract.strike);
+  const url = new URL("/v2/options/contracts", env.ALPACA_TRADING_BASE_URL);
+
+  url.searchParams.set("underlying_symbols", parsed.underlyingSymbol);
+  url.searchParams.set("status", "active");
+  url.searchParams.set("type", metadata[0].optionType);
+  url.searchParams.set("expiration_date_gte", metadata[0].expirationDate);
+  url.searchParams.set("expiration_date_lte", metadata[0].expirationDate);
+  url.searchParams.set("strike_price_gte", String(Math.min(...strikes)));
+  url.searchParams.set("strike_price_lte", String(Math.max(...strikes)));
+  url.searchParams.set("limit", "10000");
+
+  const page = await fetchAlpacaJson<AlpacaContractsResponse>(url);
+  const requestedSymbols = new Set(
+    metadata.map((contract) => contract.contractSymbol),
+  );
+
+  return (page.option_contracts ?? []).filter((contract) =>
+    requestedSymbols.has(contract.symbol) && contract.tradable !== false
+  );
+}
+
+async function getExplicitOptionContractMetadataBySymbol(
+  metadata: AlpacaExplicitOptionSnapshotMetadata[],
+) {
+  const bySymbol = explicitMetadataBySymbol(metadata);
+
+  if (metadata.length === 0) {
+    return bySymbol;
+  }
+
+  try {
+    const enrichedContracts = (
+      await Promise.all(
+        explicitContractMetadataGroups(metadata).map((group) =>
+          getExplicitOptionContractsPage(group)
+        ),
+      )
+    ).flat();
+
+    for (const contract of enrichedContracts) {
+      bySymbol.set(contract.symbol, contract);
+    }
+  } catch {
+    // Open-interest enrichment is best effort; preserve quote refreshes.
+  }
+
+  return bySymbol;
 }
 
 async function getContractsForOptionTypes(

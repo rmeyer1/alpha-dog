@@ -186,6 +186,114 @@ describe("Alpaca client", () => {
     vi.unstubAllGlobals();
   });
 
+  it("enriches explicit option snapshots with open interest from contract metadata", async () => {
+    stubLiveEnv();
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          option_contracts: [
+            {
+              symbol: "AAPL260619P00095000",
+              expiration_date: "2026-06-19",
+              type: "put",
+              strike_price: "95",
+              open_interest: "750",
+              tradable: true,
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          snapshots: {
+            AAPL260619P00095000: {
+              latestQuote: { bp: 1, ap: 1.1 },
+              greeks: { delta: -0.24, theta: -0.04 },
+              impliedVolatility: 0.35,
+              dailyBar: { v: 100 },
+            },
+          },
+        }),
+      );
+
+    const { getLiveOptionSnapshotContractsBySymbols } = await import(
+      "./client"
+    );
+    const contracts = await getLiveOptionSnapshotContractsBySymbols(
+      [
+        {
+          contractSymbol: "AAPL260619P00095000",
+          expirationDate: "2026-06-19",
+          openInterest: null,
+          optionType: "put",
+          strike: 95,
+        },
+      ],
+      "opra",
+    );
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+
+    expect(urls[0]).toContain("/v2/options/contracts");
+    expect(urls[0]).toContain("underlying_symbols=AAPL");
+    expect(urls[0]).toContain("type=put");
+    expect(urls[0]).toContain("expiration_date_gte=2026-06-19");
+    expect(urls[0]).toContain("expiration_date_lte=2026-06-19");
+    expect(urls[0]).toContain("strike_price_gte=95");
+    expect(urls[0]).toContain("strike_price_lte=95");
+    expect(urls[1]).toContain("/v1beta1/options/snapshots?");
+    expect(contracts[0]).toMatchObject({
+      contractSymbol: "AAPL260619P00095000",
+      openInterest: 750,
+      volume: 100,
+    });
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("still refreshes explicit option snapshots when open interest enrichment fails", async () => {
+    stubLiveEnv();
+    fetchMock
+      .mockResolvedValueOnce(errorResponse(403, { message: "contracts unavailable" }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          snapshots: {
+            AAPL260619P00095000: {
+              latestQuote: { bp: 1, ap: 1.1 },
+              greeks: { delta: -0.24, theta: -0.04 },
+              impliedVolatility: 0.35,
+              dailyBar: { v: 100 },
+            },
+          },
+        }),
+      );
+
+    const { getLiveOptionSnapshotContractsBySymbols } = await import(
+      "./client"
+    );
+    const contracts = await getLiveOptionSnapshotContractsBySymbols(
+      [
+        {
+          contractSymbol: "AAPL260619P00095000",
+          expirationDate: "2026-06-19",
+          openInterest: null,
+          optionType: "put",
+          strike: 95,
+        },
+      ],
+      "opra",
+    );
+
+    expect(contracts[0]).toMatchObject({
+      contractSymbol: "AAPL260619P00095000",
+      openInterest: null,
+      volume: 100,
+    });
+
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
   it("fetches stock snapshots in symbol chunks", async () => {
     stubLiveEnv();
     fetchMock
