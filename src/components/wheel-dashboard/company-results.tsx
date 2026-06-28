@@ -287,11 +287,7 @@ export function CompanyResults({
                       symbol={row.ticker}
                     />
                     <div className="min-w-0">
-                      <div className="break-words text-xs uppercase text-zinc-500">
-                        #{row.rank} · {row.exchange} ·{" "}
-                        {strategyLabel(row.bestCandidate.strategy)}
-                      </div>
-                      <div className="mt-1 font-mono text-lg text-zinc-50">
+                      <div className="font-mono text-lg text-zinc-50">
                         {row.ticker}
                       </div>
                       <div className="truncate text-sm text-zinc-400">
