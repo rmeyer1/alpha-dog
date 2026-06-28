@@ -55,9 +55,6 @@ create index if not exists wheel_underlying_snapshots_volume_idx
 create index if not exists wheel_underlying_snapshots_captured_idx
   on public.wheel_underlying_snapshots (captured_at desc);
 
-create index if not exists wheel_underlying_snapshots_scan_run_idx
-  on public.wheel_underlying_snapshots (scan_run_id);
-
 create table if not exists public.wheel_underlying_technicals (
   symbol text primary key references public.wheel_underlying_universe(symbol) on delete cascade,
   trend text not null default 'neutral' check (trend in ('bullish', 'neutral', 'bearish')),
@@ -98,9 +95,6 @@ create index if not exists wheel_option_market_snapshots_underlying_idx
 
 create index if not exists wheel_option_market_snapshots_captured_idx
   on public.wheel_option_market_snapshots (captured_at desc);
-
-create index if not exists wheel_option_market_snapshots_scan_run_idx
-  on public.wheel_option_market_snapshots (scan_run_id);
 
 create table if not exists public.wheel_universe_ranked_candidates (
   id uuid primary key default gen_random_uuid(),
