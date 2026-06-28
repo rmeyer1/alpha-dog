@@ -9,26 +9,34 @@ function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
 }
 
-function logoInitials(symbol: string) {
-  const compact = symbol.replace(/[^A-Z0-9]/g, "");
+function logoUnavailableResponse({
+  reason,
+  status,
+  upstreamStatus,
+}: {
+  reason: string;
+  status: number;
+  upstreamStatus?: number;
+}) {
+  const headers = new Headers({
+    "Cache-Control": missingLogoCacheControl,
+    "X-Alpha-Dog-Logo-Result": "fallback",
+    "X-Alpha-Dog-Logo-Reason": reason,
+  });
 
-  return compact.slice(0, 2) || "--";
-}
+  if (upstreamStatus) {
+    headers.set("X-Alpha-Dog-Logo-Upstream-Status", String(upstreamStatus));
+  }
 
-function fallbackLogoResponse(symbol: string) {
-  const initials = logoInitials(symbol);
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-label="${initials} logo placeholder"><rect width="96" height="96" rx="20" fill="#181b1f"/><rect x="1" y="1" width="94" height="94" rx="19" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="2"/><text x="48" y="57" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="28" font-weight="700" fill="#d4d4d8">${initials}</text></svg>`;
-
-  return new NextResponse(svg, {
+  return new NextResponse(null, {
     headers: {
-      "Cache-Control": missingLogoCacheControl,
-      "Content-Type": "image/svg+xml",
-      "X-Alpha-Dog-Logo-Fallback": "1",
+      ...Object.fromEntries(headers),
     },
+    status,
   });
 }
 
-function brokerAuthorizationHeader() {
+function alpacaLogoHeaders() {
   const env = getEnv();
   const key = env.APCA_API_KEY_ID;
   const secret = env.APCA_API_SECRET_KEY;
@@ -37,7 +45,11 @@ function brokerAuthorizationHeader() {
     return null;
   }
 
-  return `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`;
+  return {
+    "APCA-API-KEY-ID": key,
+    "APCA-API-SECRET-KEY": secret,
+    Authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`,
+  };
 }
 
 export async function GET(
@@ -46,10 +58,14 @@ export async function GET(
 ) {
   const { symbol: symbolParam } = await params;
   const symbol = normalizeSymbol(symbolParam);
-  const authorization = brokerAuthorizationHeader();
+  const headers = alpacaLogoHeaders();
 
-  if (!symbol || !authorization) {
-    return fallbackLogoResponse(symbol);
+  if (!symbol) {
+    return logoUnavailableResponse({ reason: "invalid-symbol", status: 400 });
+  }
+
+  if (!headers) {
+    return logoUnavailableResponse({ reason: "missing-credentials", status: 401 });
   }
 
   const env = getEnv();
@@ -62,19 +78,22 @@ export async function GET(
 
   const response = await fetch(logoUrl, {
     cache: "no-store",
-    headers: {
-      Authorization: authorization,
-    },
+    headers,
   });
 
   if (!response.ok || !response.body) {
-    return fallbackLogoResponse(symbol);
+    return logoUnavailableResponse({
+      reason: "upstream-unavailable",
+      status: response.status,
+      upstreamStatus: response.status,
+    });
   }
 
   return new NextResponse(response.body, {
     headers: {
       "Cache-Control": logoCacheControl,
       "Content-Type": response.headers.get("content-type") ?? "image/png",
+      "X-Alpha-Dog-Logo-Result": "alpaca",
     },
   });
 }
