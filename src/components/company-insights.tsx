@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import {
   BarChart3,
   Building2,
@@ -18,6 +21,24 @@ import {
 } from "@/components/wheel-dashboard/formatters";
 
 type CompanyInsightStatus = "idle" | "loading" | "success" | "error";
+type RecommendationBucketKey =
+  | "strongBuy"
+  | "buy"
+  | "hold"
+  | "sell"
+  | "strongSell";
+
+const recommendationBuckets: Array<{
+  key: RecommendationBucketKey;
+  label: string;
+  tone: string;
+}> = [
+  { key: "strongBuy", label: "Strong buy", tone: "text-emerald-100" },
+  { key: "buy", label: "Buy", tone: "text-emerald-200" },
+  { key: "hold", label: "Hold", tone: "text-zinc-200" },
+  { key: "sell", label: "Sell", tone: "text-amber-100" },
+  { key: "strongSell", label: "Strong sell", tone: "text-red-100" },
+];
 
 export interface CompanyInsightState {
   data: FinnhubCompanyInsights | null;
@@ -116,22 +137,85 @@ function recommendationTotals(recommendation: FinnhubRecommendationTrend | null)
   };
 }
 
-function recommendationLabel(recommendation: FinnhubRecommendationTrend | null) {
+function recommendationCount(
+  recommendation: FinnhubRecommendationTrend | null,
+  key: RecommendationBucketKey,
+) {
+  return recommendation?.[key] ?? 0;
+}
+
+function recommendationConsensus(
+  recommendation: FinnhubRecommendationTrend | null,
+) {
   const totals = recommendationTotals(recommendation);
 
   if (totals.total === 0) {
-    return "No analyst trend";
+    return {
+      label: "No analyst trend",
+      tone: "text-zinc-400",
+      total: 0,
+    };
   }
 
-  if (totals.bullish > totals.hold && totals.bullish > totals.cautious) {
-    return `${totals.bullish} bullish`;
+  const strongestBucket = recommendationBuckets.reduce((best, bucket) => {
+    const bucketCount = recommendationCount(recommendation, bucket.key);
+    const bestCount = recommendationCount(recommendation, best.key);
+
+    return bucketCount > bestCount ? bucket : best;
+  }, recommendationBuckets[0]);
+
+  return {
+    label: strongestBucket.label,
+    tone: strongestBucket.tone,
+    total: totals.total,
+  };
+}
+
+function RecommendationConsensus({
+  className = "",
+  recommendation,
+}: {
+  className?: string;
+  recommendation: FinnhubRecommendationTrend | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const consensus = recommendationConsensus(recommendation);
+
+  if (consensus.total === 0) {
+    return <span className="text-zinc-400">No analyst trend</span>;
   }
 
-  if (totals.cautious > totals.hold && totals.cautious > totals.bullish) {
-    return `${totals.cautious} cautious`;
-  }
-
-  return `${totals.hold} hold`;
+  return (
+    <div className={`min-w-0 ${className}`}>
+      <button
+        aria-expanded={expanded}
+        className={`rounded-md text-left underline decoration-cyan-300/40 underline-offset-4 transition hover:text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300 ${consensus.tone}`}
+        onClick={() => setExpanded((current) => !current)}
+        type="button"
+      >
+        {consensus.label}
+      </button>
+      {expanded ? (
+        <div className="mt-3 grid gap-1.5 rounded-md border border-white/10 bg-black/20 p-3 text-xs text-zinc-300">
+          {recommendationBuckets.map((bucket) => (
+            <div
+              className="flex items-center justify-between gap-3"
+              key={bucket.key}
+            >
+              <span>{bucket.label}</span>
+              <span className={`font-mono ${bucket.tone}`}>
+                {recommendationCount(recommendation, bucket.key)}
+              </span>
+            </div>
+          ))}
+          <div className="mt-1 flex items-center justify-between gap-3 border-t border-white/10 pt-2 text-zinc-500">
+            <span>Total</span>
+            <span className="font-mono text-zinc-300">{consensus.total}</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function earningsLabel(earnings: FinnhubEarningsSurprise | null) {
@@ -275,7 +359,7 @@ export function CompanyInsightStrip({
           />
           <InsightMetric
             label="Analysts"
-            value={recommendationLabel(recommendation)}
+            value={<RecommendationConsensus recommendation={recommendation} />}
           />
           <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-4 md:col-span-4">
             <div className="text-xs uppercase text-zinc-500">Latest headline</div>
@@ -354,6 +438,12 @@ function RecommendationBar({
 
   return (
     <div>
+      <div className="mb-4">
+        <div className="text-xs uppercase text-zinc-500">Consensus</div>
+        <div className="mt-2 font-mono text-xl font-semibold">
+          <RecommendationConsensus recommendation={recommendation} />
+        </div>
+      </div>
       <div className="flex h-3 overflow-hidden rounded-full bg-white/10">
         <div className="bg-emerald-300" style={{ width: `${bullish}%` }} />
         <div className="bg-zinc-400" style={{ width: `${hold}%` }} />
@@ -531,7 +621,10 @@ export function CompanyContextPanel({
             <div>
               <div className="text-xs text-zinc-500">Analysts</div>
               <div className="font-mono text-zinc-100">
-                {recommendationLabel(recommendation)}
+                <RecommendationConsensus
+                  className="max-w-full"
+                  recommendation={recommendation}
+                />
               </div>
             </div>
             <div>
