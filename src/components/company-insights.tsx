@@ -232,10 +232,6 @@ function earningsLabel(earnings: FinnhubEarningsSurprise | null) {
   )}`;
 }
 
-function latestHeadline(insights: FinnhubCompanyInsights | null) {
-  return insights?.news[0] ?? null;
-}
-
 function InsightShell({
   children,
   icon,
@@ -305,7 +301,6 @@ export function CompanyInsightStrip({
 }) {
   const { data, error, status } = state;
   const earnings = latestEarnings(data);
-  const headline = latestHeadline(data);
   const recommendation = latestRecommendation(data);
   const pe = metricNumber(data, "peNormalizedAnnual");
   const marketCap = data?.profile.marketCapitalization ??
@@ -362,21 +357,7 @@ export function CompanyInsightStrip({
             value={<RecommendationConsensus recommendation={recommendation} />}
           />
           <div className="min-w-0 rounded-lg border border-white/10 bg-black/20 p-4 md:col-span-4">
-            <div className="text-xs uppercase text-zinc-500">Latest headline</div>
-            <div className="mt-2 min-w-0 text-sm text-zinc-200">
-              {headline ? (
-                <a
-                  className="line-clamp-2 hover:text-cyan-100"
-                  href={headline.url}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {headline.headline}
-                </a>
-              ) : (
-                <span className="text-zinc-500">No headlines in the selected window.</span>
-              )}
-            </div>
+            <CompactNewsList news={data.news} />
           </div>
         </div>
       ) : null}
@@ -494,6 +475,57 @@ function NewsList({ news }: { news: FinnhubCompanyNewsItem[] }) {
   );
 }
 
+function CompactNewsList({
+  limit = 3,
+  news,
+}: {
+  limit?: number;
+  news: FinnhubCompanyNewsItem[];
+}) {
+  const articles = news.slice(0, limit);
+
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs uppercase text-zinc-500">Recent headlines</div>
+        {news.length > 0 ? (
+          <div className="text-xs text-zinc-500">
+            Showing {articles.length} of {news.length}
+          </div>
+        ) : null}
+      </div>
+      {articles.length > 0 ? (
+        <div className="mt-3 grid gap-2">
+          {articles.map((item) => (
+            <a
+              className="group flex min-w-0 items-start gap-3 rounded-md border border-white/10 bg-white/[0.035] p-3 text-zinc-200 transition hover:border-cyan-300/30 hover:bg-cyan-400/[0.04] hover:text-cyan-100"
+              href={item.url}
+              key={item.id ?? item.url}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-zinc-500 group-hover:text-cyan-200" />
+              <span className="min-w-0">
+                <span className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-zinc-500">
+                  <span>{item.source ?? "Finnhub"}</span>
+                  <span>{formatNewsDate(item.datetime)}</span>
+                </span>
+                <span className="mt-1 line-clamp-2 text-sm leading-5">
+                  {item.headline}
+                </span>
+              </span>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 text-sm text-zinc-500">
+          No headlines in the selected window.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CompanyInsightSections({
   insights,
 }: {
@@ -593,7 +625,6 @@ export function CompanyContextPanel({
   status?: CompanyInsightStatus;
 }) {
   const earnings = latestEarnings(insights);
-  const headline = latestHeadline(insights);
   const recommendation = latestRecommendation(insights);
   const pe = metricNumber(insights, "peNormalizedAnnual");
   const high = metricNumber(insights, "52WeekHigh");
@@ -640,17 +671,7 @@ export function CompanyContextPanel({
               </div>
             </div>
           </div>
-          {headline ? (
-            <a
-              className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.035] p-3 text-zinc-200 hover:border-cyan-300/30 hover:text-cyan-100"
-              href={headline.url}
-              rel="noreferrer"
-              target="_blank"
-            >
-              <ExternalLink className="mt-0.5 size-3.5 shrink-0" />
-              <span className="line-clamp-2">{headline.headline}</span>
-            </a>
-          ) : null}
+          <CompactNewsList limit={3} news={insights.news} />
         </div>
       ) : null}
     </div>
