@@ -42,12 +42,6 @@ export interface FinnhubEarningsSurprise {
   year: number | null;
 }
 
-export interface FinnhubDividend {
-  amount: number | null;
-  exDate: string;
-  symbol: string;
-}
-
 export interface FinnhubCompanyNewsItem {
   category: string | null;
   datetime: number | null;
@@ -93,7 +87,6 @@ export interface FinnhubRecommendationTrend {
 }
 
 export interface FinnhubCompanyInsights {
-  dividends: FinnhubDividend[];
   earningsSurprises: FinnhubEarningsSurprise[];
   errors: Array<{
     message: string;
@@ -115,14 +108,6 @@ interface FinnhubEarningsSurpriseRow {
   surprisePercent?: number | null;
   symbol?: string;
   year?: number | null;
-}
-
-interface FinnhubDividendsResponse {
-  data?: Array<{
-    amount?: number | null;
-    exDate?: string | null;
-  }>;
-  symbol?: string;
 }
 
 interface FinnhubCompanyNewsRow {
@@ -339,32 +324,6 @@ export async function getFinnhubEarningsSurprises(options: {
     .filter((event): event is FinnhubEarningsSurprise => event != null);
 }
 
-export async function getFinnhubDividends(options: {
-  signal?: AbortSignal;
-  symbol: string;
-}) {
-  const symbol = normalizeSymbol(options.symbol);
-  const body = await requestFinnhubJson<FinnhubDividendsResponse>(
-    "stock/dividend2",
-    { symbol },
-    options.signal,
-  );
-
-  return (body?.data ?? [])
-    .map((row): FinnhubDividend | null => {
-      const exDate = asStringOrNull(row.exDate);
-
-      return exDate
-        ? {
-            amount: asNumberOrNull(row.amount),
-            exDate,
-            symbol,
-          }
-        : null;
-    })
-    .filter((row): row is FinnhubDividend => row != null);
-}
-
 export async function getFinnhubCompanyNews(options: {
   from?: string;
   signal?: AbortSignal;
@@ -484,14 +443,12 @@ export async function getFinnhubCompanyInsights(options: {
 }) {
   const symbol = normalizeSymbol(options.symbol);
   const [
-    dividendsResult,
     earningsSurprisesResult,
     metricsResult,
     newsResult,
     profileResult,
     recommendationsResult,
   ] = await Promise.allSettled([
-    getFinnhubDividends({ signal: options.signal, symbol }),
     getFinnhubEarningsSurprises({ limit: 4, signal: options.signal, symbol }),
     getFinnhubBasicFinancials({ signal: options.signal, symbol }),
     getFinnhubCompanyNews({
@@ -525,7 +482,6 @@ export async function getFinnhubCompanyInsights(options: {
   }
 
   return {
-    dividends: valueOrDefault("dividends", dividendsResult, []),
     earningsSurprises: valueOrDefault(
       "earningsSurprises",
       earningsSurprisesResult,

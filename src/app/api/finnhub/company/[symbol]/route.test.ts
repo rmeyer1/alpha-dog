@@ -20,7 +20,6 @@ beforeEach(() => {
 describe("GET /api/finnhub/company/[symbol]", () => {
   it("returns aggregate Finnhub company insights", async () => {
     getFinnhubCompanyInsightsMock.mockResolvedValue({
-      dividends: [],
       earningsSurprises: [],
       metrics: { metric: {}, metricType: "all", series: {}, symbol: "AAPL" },
       news: [],

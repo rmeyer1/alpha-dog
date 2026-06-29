@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getFinnhubCompanyInsights,
   getFinnhubCompanyNews,
-  getFinnhubDividends,
   getFinnhubEarningsCalendar,
   getFinnhubEarningsSurprises,
   getFinnhubRecommendationTrends,
@@ -110,11 +109,6 @@ describe("Finnhub client", () => {
             period: "2026-03-31",
             symbol: "AAPL",
           }]));
-        case "/api/v1/stock/dividend2":
-          return Promise.resolve(Response.json({
-            data: [{ amount: 0.25, exDate: "2026-08-01" }],
-            symbol: "AAPL",
-          }));
         case "/api/v1/company-news":
           return Promise.resolve(Response.json([{
             datetime: 1782864000,
@@ -143,8 +137,6 @@ describe("Finnhub client", () => {
     await expect(
       getFinnhubEarningsSurprises({ limit: 4, symbol: "aapl" }),
     ).resolves.toMatchObject([{ symbol: "AAPL", actual: 1.5 }]);
-    await expect(getFinnhubDividends({ symbol: "aapl" }))
-      .resolves.toMatchObject([{ symbol: "AAPL", amount: 0.25 }]);
     await expect(
       getFinnhubCompanyNews({
         from: "2026-06-01",
@@ -159,22 +151,16 @@ describe("Finnhub client", () => {
 
     expect(urls.map((url) => url.pathname)).toEqual([
       "/api/v1/stock/earnings",
-      "/api/v1/stock/dividend2",
       "/api/v1/company-news",
       "/api/v1/stock/recommendation",
     ]);
     expect(urls[0].searchParams.get("limit")).toBe("4");
-    expect(urls[2].searchParams.get("from")).toBe("2026-06-01");
+    expect(urls[1].searchParams.get("from")).toBe("2026-06-01");
   });
 
   it("builds aggregate company insights", async () => {
     const fetchMock = vi.fn((url: URL) => {
       switch (url.pathname) {
-        case "/api/v1/stock/dividend2":
-          return Promise.resolve(Response.json({
-            data: [{ amount: 0.25, exDate: "2026-08-01" }],
-            symbol: "AAPL",
-          }));
         case "/api/v1/stock/earnings":
           return Promise.resolve(Response.json([{ symbol: "AAPL" }]));
         case "/api/v1/stock/metric":
@@ -208,18 +194,17 @@ describe("Finnhub client", () => {
     });
 
     expect(insights).toMatchObject({
-      dividends: [{ amount: 0.25 }],
       errors: [],
       metrics: { metric: { peNormalizedAnnual: 30 } },
       profile: { name: "Apple Inc" },
       symbol: "AAPL",
     });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("returns partial aggregate insights when one section is unavailable", async () => {
     const fetchMock = vi.fn((url: URL) => {
-      if (url.pathname === "/api/v1/stock/dividend2") {
+      if (url.pathname === "/api/v1/stock/metric") {
         return Promise.resolve(Response.json(
           { error: "You don't have access to this resource." },
           { status: 403 },
@@ -233,10 +218,6 @@ describe("Finnhub client", () => {
         }));
       }
 
-      if (url.pathname === "/api/v1/stock/metric") {
-        return Promise.resolve(Response.json({ metric: {}, series: {} }));
-      }
-
       return Promise.resolve(Response.json([]));
     });
 
@@ -245,10 +226,9 @@ describe("Finnhub client", () => {
     const insights = await getFinnhubCompanyInsights({ symbol: "aapl" });
 
     expect(insights).toMatchObject({
-      dividends: [],
       errors: [{
         message: "You don't have access to this resource.",
-        section: "dividends",
+        section: "metrics",
       }],
       profile: { name: "Apple Inc" },
     });
