@@ -18,8 +18,18 @@ import {
   buildVerticalSpreads,
   round,
 } from "./calculations";
+import {
+  emptyEarningsRiskContext,
+  earningsProviderEnabled,
+  getCachedEarningsRiskContexts,
+  type EarningsRiskContext,
+} from "./earnings";
 import { getPersona, mergeFilters } from "./personas";
-import { scoreCandidate, scoreVerticalSpreadCandidate } from "./scoring";
+import {
+  hasKnownEarningsBeforeExpiration,
+  scoreCandidate,
+  scoreVerticalSpreadCandidate,
+} from "./scoring";
 import type {
   DataFeed,
   OptionType,
@@ -734,14 +744,30 @@ function selectBestCandidate(
   personaId: WheelScreenerRequest["persona"],
   strategy: WheelCompanyStrategy,
   filters: WheelFilters,
+  earningsContext: EarningsRiskContext,
 ) {
   const now = new Date();
   const persona = getPersona(personaId);
   const candidates = rawContracts
     .map((contract) => buildCandidate(contract, underlying, filters, now))
     .filter((candidate) => candidate != null)
+    .filter((candidate) =>
+      !filters.excludeEarnings ||
+      !hasKnownEarningsBeforeExpiration(
+        candidate.expirationDate,
+        earningsContext,
+        now,
+      )
+    )
     .map((candidate) =>
-      scoreCandidate(candidate, persona, filters, underlying),
+      scoreCandidate(
+        candidate,
+        persona,
+        filters,
+        underlying,
+        earningsContext,
+        now,
+      ),
     );
 
   switch (strategy) {
@@ -763,8 +789,23 @@ function selectBestCandidate(
         optionType,
         now,
       )
+        .filter((candidate) =>
+          !filters.excludeEarnings ||
+          !hasKnownEarningsBeforeExpiration(
+            candidate.expirationDate,
+            earningsContext,
+            now,
+          )
+        )
         .map((candidate) =>
-          scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
+          scoreVerticalSpreadCandidate(
+            candidate,
+            persona,
+            filters,
+            underlying,
+            earningsContext,
+            now,
+          ),
         )
         .sort((left, right) => right.score - left.score)[0];
 
@@ -1363,14 +1404,26 @@ async function upsertDeepScanCoverageRows(
 }
 
 function globalWarnings(feed: DataFeed): Warning[] {
-  return feed === "indicative"
-    ? [{
+  const warnings: Warning[] = [];
+
+  if (feed === "indicative") {
+    warnings.push({
         type: "data_quality",
         severity: "warning",
         message:
           "Indicative options feed selected. Confirm OPRA access before relying on live quotes.",
-      }]
-    : [];
+      });
+  }
+
+  if (!earningsProviderEnabled()) {
+    warnings.push({
+      type: "earnings",
+      severity: "info",
+      message: "Earnings provider is disabled. Verify earnings before trading.",
+    });
+  }
+
+  return warnings;
 }
 
 function addMinutes(date: Date, minutes: number) {
@@ -1422,6 +1475,10 @@ export async function analyzeStagedUniverseWheelCompanies(
 
     const { cached: technicals, summary: technicalSummary } =
       await ensureTechnicals(deepScan);
+    const earningsContexts = await getCachedEarningsRiskContexts(
+      deepScan.map((item) => item.asset.symbol),
+      now,
+    );
     const knownCandidateContracts = await getRecentKnownCandidateContracts(
       context,
       deepScan.map((item) => item.asset.symbol),
@@ -1484,6 +1541,8 @@ export async function analyzeStagedUniverseWheelCompanies(
             request.persona,
             strategy,
             filters,
+            earningsContexts.get(item.asset.symbol) ??
+              emptyEarningsRiskContext(item.asset.symbol),
           );
 
           if (!bestCandidate) {
@@ -1679,6 +1738,9 @@ export async function runUniverseDeepScanCoverage(
     const { cached: technicals, summary: technicalSummary } =
       await ensureTechnicals(selected);
     runSummary.technicals = technicalSummary;
+    const earningsContexts = await getCachedEarningsRiskContexts(
+      selected.map((item) => item.asset.symbol),
+    );
     const knownCandidateContracts = await getRecentKnownCandidateContracts(
       context,
       selected.map((item) => item.asset.symbol),
@@ -1725,6 +1787,8 @@ export async function runUniverseDeepScanCoverage(
             context.persona,
             context.strategy,
             context.filters,
+            earningsContexts.get(item.asset.symbol) ??
+              emptyEarningsRiskContext(item.asset.symbol),
           );
 
           if (!bestCandidate) {

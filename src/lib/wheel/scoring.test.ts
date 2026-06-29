@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildCandidate } from "./calculations";
 import { getPersona, mergeFilters } from "./personas";
-import { scoreCandidate } from "./scoring";
+import {
+  assessEarningsRisk,
+  hasKnownEarningsBeforeExpiration,
+  scoreCandidate,
+} from "./scoring";
 import type { RawOptionContract, UnderlyingContext } from "./types";
 
 const bearishUnderlying: UnderlyingContext = {
@@ -99,5 +103,120 @@ describe("wheel scoring", () => {
 
     expect(conservativeScore.scoreBreakdown.eventRisk).toBe(82);
     expect(balancedScore.scoreBreakdown.eventRisk).toBe(90);
+  });
+
+  it("penalizes and warns when earnings occur before expiration", () => {
+    const filters = mergeFilters("balanced_wheel");
+    const candidate = buildCandidate(
+      riskyPut,
+      bearishUnderlying,
+      filters,
+      new Date("2026-05-27T12:00:00-04:00"),
+    );
+
+    expect(candidate).not.toBeNull();
+
+    const scored = scoreCandidate(
+      candidate!,
+      getPersona("balanced_wheel"),
+      filters,
+      bearishUnderlying,
+      {
+        asOf: "2026-05-27T16:00:00.000Z",
+        coverageThrough: "2026-06-27",
+        events: [{
+          date: "2026-06-05",
+          epsActual: null,
+          epsEstimate: 1.2,
+          hour: "amc",
+          quarter: 2,
+          revenueActual: null,
+          revenueEstimate: null,
+          source: "finnhub",
+          symbol: "TEST",
+          year: 2026,
+        }],
+        providerEnabled: true,
+        symbol: "TEST",
+      },
+      new Date("2026-05-27T12:00:00-04:00"),
+    );
+
+    expect(scored.scoreBreakdown.eventRisk).toBe(58);
+    expect(scored.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "earnings",
+          severity: "danger",
+        }),
+      ]),
+    );
+    expect(
+      hasKnownEarningsBeforeExpiration(
+        candidate!.expirationDate,
+        {
+          asOf: null,
+          coverageThrough: "2026-06-27",
+          events: [{
+            date: "2026-06-05",
+            epsActual: null,
+            epsEstimate: null,
+            hour: "amc",
+            quarter: null,
+            revenueActual: null,
+            revenueEstimate: null,
+            source: "finnhub",
+            symbol: "TEST",
+            year: null,
+          }],
+          providerEnabled: true,
+          symbol: "TEST",
+        },
+        new Date("2026-05-27T12:00:00-04:00"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not penalize when earnings are after expiration", () => {
+    expect(
+      assessEarningsRisk(
+        "2026-06-19",
+        {
+          asOf: null,
+          coverageThrough: "2026-06-27",
+          events: [{
+            date: "2026-06-22",
+            epsActual: null,
+            epsEstimate: null,
+            hour: "bmo",
+            quarter: null,
+            revenueActual: null,
+            revenueEstimate: null,
+            source: "finnhub",
+            symbol: "TEST",
+            year: null,
+          }],
+          providerEnabled: true,
+          symbol: "TEST",
+        },
+        new Date("2026-05-27T12:00:00-04:00"),
+      ).status,
+    ).toBe("clear");
+  });
+
+  it("flags expirations beyond earnings coverage as unknown", () => {
+    expect(
+      assessEarningsRisk(
+        "2026-07-17",
+        {
+          asOf: null,
+          coverageThrough: "2026-06-27",
+          events: [],
+          providerEnabled: true,
+          symbol: "TEST",
+        },
+        new Date("2026-05-27T12:00:00-04:00"),
+      ).status,
+    ).toBe("beyond_coverage");
   });
 });

@@ -3,6 +3,7 @@ import {
   qualityScore,
   round,
 } from "./calculations";
+import type { EarningsRiskContext } from "./earnings";
 import type {
   PersonaConfig,
   QualityLabel,
@@ -14,6 +15,18 @@ import type {
   WheelCandidate,
   WheelFilters,
 } from "./types";
+
+type EarningsRiskStatus =
+  | "known_before_expiration"
+  | "beyond_coverage"
+  | "provider_unavailable"
+  | "clear";
+
+interface EarningsRiskAssessment {
+  eventDate?: string;
+  hour?: string | null;
+  status: EarningsRiskStatus;
+}
 
 function fitScore(value: number, min: number, max: number, tolerance: number) {
   if (value >= min && value <= max) {
@@ -80,7 +93,18 @@ function technicalScore(candidate: WheelCandidate, underlying: UnderlyingContext
   return clamp(score);
 }
 
-function eventRiskScore(filters: WheelFilters) {
+function eventRiskScore(
+  filters: WheelFilters,
+  earningsRisk: EarningsRiskAssessment,
+) {
+  if (earningsRisk.status === "known_before_expiration") {
+    return filters.excludeEarnings ? 40 : 58;
+  }
+
+  if (earningsRisk.status === "beyond_coverage") {
+    return filters.excludeEarnings ? 70 : 78;
+  }
+
   return filters.excludeEarnings ? 82 : 90;
 }
 
@@ -133,6 +157,88 @@ function weightedScore(breakdown: ScoreBreakdown, weights: ScoreWeights) {
   }, 0);
 
   return Math.round(totalScore / totalWeight);
+}
+
+function dateOnly(value: string | Date) {
+  return typeof value === "string"
+    ? value.slice(0, 10)
+    : value.toISOString().slice(0, 10);
+}
+
+export function assessEarningsRisk(
+  expirationDate: string,
+  context: EarningsRiskContext | null | undefined,
+  now = new Date(),
+): EarningsRiskAssessment {
+  if (!context?.providerEnabled) {
+    return { status: "provider_unavailable" };
+  }
+
+  const today = dateOnly(now);
+  const expiration = dateOnly(expirationDate);
+  const event = context.events.find((candidateEvent) =>
+    candidateEvent.date >= today && candidateEvent.date <= expiration
+  );
+
+  if (event) {
+    return {
+      eventDate: event.date,
+      hour: event.hour,
+      status: "known_before_expiration",
+    };
+  }
+
+  if (!context.coverageThrough || expiration > context.coverageThrough) {
+    return { status: "beyond_coverage" };
+  }
+
+  return { status: "clear" };
+}
+
+export function hasKnownEarningsBeforeExpiration(
+  expirationDate: string,
+  context: EarningsRiskContext | null | undefined,
+  now = new Date(),
+) {
+  return assessEarningsRisk(expirationDate, context, now).status ===
+    "known_before_expiration";
+}
+
+function earningsHourLabel(hour: string | null | undefined) {
+  switch (hour) {
+    case "bmo":
+      return "before market open";
+    case "amc":
+      return "after market close";
+    case "dmh":
+      return "during market hours";
+    default:
+      return "time unknown";
+  }
+}
+
+function warningForEarningsRisk(
+  assessment: EarningsRiskAssessment,
+): Warning | null {
+  if (assessment.status === "known_before_expiration") {
+    return {
+      type: "earnings",
+      severity: "danger",
+      message:
+        `Earnings on ${assessment.eventDate} (${earningsHourLabel(assessment.hour)}) before expiration - gap and assignment risk elevated.`,
+    };
+  }
+
+  if (assessment.status === "beyond_coverage") {
+    return {
+      type: "earnings",
+      severity: "info",
+      message:
+        "Earnings coverage does not extend through expiration. Verify the earnings date before trading.",
+    };
+  }
+
+  return null;
 }
 
 function warningForLiquidity(
@@ -223,7 +329,14 @@ export function scoreCandidate(
   persona: PersonaConfig,
   filters: WheelFilters,
   underlying: UnderlyingContext,
+  earningsContext?: EarningsRiskContext | null,
+  now = new Date(),
 ) {
+  const earningsRisk = assessEarningsRisk(
+    candidate.expirationDate,
+    earningsContext,
+    now,
+  );
   const absDelta = Math.abs(candidate.delta ?? 0);
   const deltaFit = candidate.delta == null
     ? 45
@@ -239,7 +352,7 @@ export function scoreCandidate(
     dteFit: dteScore(candidate, filters),
     liquidity,
     technicalFit: technicalScore(candidate, underlying),
-    eventRisk: eventRiskScore(filters),
+    eventRisk: eventRiskScore(filters, earningsRisk),
     volatilityRisk: volatilityScore(candidate),
     thetaEfficiency: thetaEfficiencyScore(candidate),
   };
@@ -251,6 +364,7 @@ export function scoreCandidate(
   }
 
   const warnings = [
+    warningForEarningsRisk(earningsRisk),
     warningForLiquidity(candidate.liquidityQuality, candidate),
     candidate.impliedVolatility != null && candidate.impliedVolatility >= 0.7
       ? {
@@ -317,7 +431,14 @@ export function scoreVerticalSpreadCandidate(
   persona: PersonaConfig,
   filters: WheelFilters,
   underlying: UnderlyingContext,
+  earningsContext?: EarningsRiskContext | null,
+  now = new Date(),
 ) {
+  const earningsRisk = assessEarningsRisk(
+    candidate.expirationDate,
+    earningsContext,
+    now,
+  );
   const absDelta = Math.abs(candidate.shortDelta ?? 0);
   const deltaFit = candidate.shortDelta == null
     ? 45
@@ -329,7 +450,7 @@ export function scoreVerticalSpreadCandidate(
     dteFit: dteValueScore(candidate.dte, filters),
     liquidity: qualityScore(candidate.liquidityQuality),
     technicalFit: spreadTechnicalScore(candidate, underlying),
-    eventRisk: eventRiskScore(filters),
+    eventRisk: eventRiskScore(filters, earningsRisk),
     volatilityRisk: volatilityValueScore(candidate.impliedVolatility),
     thetaEfficiency: spreadThetaEfficiencyScore(candidate),
   };
@@ -341,6 +462,7 @@ export function scoreVerticalSpreadCandidate(
   }
 
   const warnings = [
+    warningForEarningsRisk(earningsRisk),
     warningForSpreadLiquidity(candidate.liquidityQuality, candidate),
     candidate.definedRiskQuality === "weak" ||
     candidate.definedRiskQuality === "poor"

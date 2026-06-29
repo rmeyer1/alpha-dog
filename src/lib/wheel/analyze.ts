@@ -9,9 +9,18 @@ import {
   setRuntimeAnalysisCache,
 } from "./analysis-cache";
 import { buildCandidate, buildVerticalSpreads } from "./calculations";
+import {
+  emptyEarningsRiskContext,
+  earningsProviderEnabled,
+  getCachedEarningsRiskContexts,
+} from "./earnings";
 import { getDemoContracts, getDemoUnderlying } from "./mock-data";
 import { getPersona, mergeFilters } from "./personas";
-import { scoreCandidate, scoreVerticalSpreadCandidate } from "./scoring";
+import {
+  hasKnownEarningsBeforeExpiration,
+  scoreCandidate,
+  scoreVerticalSpreadCandidate,
+} from "./scoring";
 import type {
   DataFeed,
   PersonaId,
@@ -128,7 +137,6 @@ function staleFallbackWarning(error: unknown, asOf: string): Warning {
 
 async function computeWheelCandidates(
   options: {
-    env: ReturnType<typeof getEnv>;
     filters: WheelFilters;
     now: Date;
     personaId: PersonaId;
@@ -140,7 +148,6 @@ async function computeWheelCandidates(
   },
 ): Promise<WheelAnalysisResponse> {
   const {
-    env,
     filters,
     forceRefresh,
     now,
@@ -166,11 +173,31 @@ async function computeWheelCandidates(
       : await getLiveWheelMarketData(ticker, filters, strategy);
   const { underlying, rawContracts } = marketData;
   const feed: DataFeed = marketData.feed;
+  const earningsContexts = useDemoData
+    ? new Map()
+    : await getCachedEarningsRiskContexts([ticker], now);
+  const earningsContext = earningsContexts.get(ticker) ??
+    emptyEarningsRiskContext(ticker);
   const candidates = rawContracts
     .map((contract) => buildCandidate(contract, underlying, filters, now))
     .filter((candidate) => candidate != null)
+    .filter((candidate) =>
+      !filters.excludeEarnings ||
+      !hasKnownEarningsBeforeExpiration(
+        candidate.expirationDate,
+        earningsContext,
+        now,
+      )
+    )
     .map((candidate) =>
-      scoreCandidate(candidate, persona, filters, underlying),
+      scoreCandidate(
+        candidate,
+        persona,
+        filters,
+        underlying,
+        earningsContext,
+        now,
+      ),
     );
   const shortPuts = strategyNeedsContracts(strategy, "put")
     ? withRanks(
@@ -184,18 +211,48 @@ async function computeWheelCandidates(
     : [];
   const putCreditSpreads = strategyNeedsSpreads(strategy, "put")
     ? withRanks(
-        buildVerticalSpreads(rawContracts, underlying, filters, "put", now).map(
-          (candidate) =>
-            scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
-        ),
+        buildVerticalSpreads(rawContracts, underlying, filters, "put", now)
+          .filter((candidate) =>
+            !filters.excludeEarnings ||
+            !hasKnownEarningsBeforeExpiration(
+              candidate.expirationDate,
+              earningsContext,
+              now,
+            )
+          )
+          .map((candidate) =>
+            scoreVerticalSpreadCandidate(
+              candidate,
+              persona,
+              filters,
+              underlying,
+              earningsContext,
+              now,
+            ),
+          ),
       ).slice(0, resultLimit)
     : [];
   const callCreditSpreads = strategyNeedsSpreads(strategy, "call")
     ? withRanks(
-        buildVerticalSpreads(rawContracts, underlying, filters, "call", now).map(
-          (candidate) =>
-            scoreVerticalSpreadCandidate(candidate, persona, filters, underlying),
-        ),
+        buildVerticalSpreads(rawContracts, underlying, filters, "call", now)
+          .filter((candidate) =>
+            !filters.excludeEarnings ||
+            !hasKnownEarningsBeforeExpiration(
+              candidate.expirationDate,
+              earningsContext,
+              now,
+            )
+          )
+          .map((candidate) =>
+            scoreVerticalSpreadCandidate(
+              candidate,
+              persona,
+              filters,
+              underlying,
+              earningsContext,
+              now,
+            ),
+          ),
       ).slice(0, resultLimit)
     : [];
 
@@ -217,7 +274,7 @@ async function computeWheelCandidates(
     coveredCalls,
     putCreditSpreads,
     callCreditSpreads,
-    warnings: globalWarnings(feed, env.EARNINGS_PROVIDER_ENABLED),
+    warnings: globalWarnings(feed, earningsProviderEnabled()),
     errors:
       candidates.length === 0 &&
       putCreditSpreads.length === 0 &&
@@ -240,7 +297,6 @@ export async function analyzeWheelCandidates(
 
   if (useDemoData) {
     return computeWheelCandidates({
-      env,
       filters,
       forceRefresh: request.forceRefresh,
       now,
@@ -288,7 +344,6 @@ export async function analyzeWheelCandidates(
 
   try {
     const response = await computeWheelCandidates({
-      env,
       filters,
       forceRefresh: request.forceRefresh,
       now,

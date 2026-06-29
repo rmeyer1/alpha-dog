@@ -67,6 +67,15 @@ const envSchema = z.object({
     .url()
     .default("https://gamma-api.polymarket.com"),
   POLYMARKET_REFRESH_TTL_MINUTES: optionalPositiveInteger("15"),
+  FINNHUB_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://finnhub.io/api/v1"),
+  FINNHUB_API_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
+  FINNHUB_EARNINGS_LOOKAHEAD_DAYS: optionalPositiveInteger("31"),
   TRADE_ANALYSIS_PROVIDER: z.enum(["openai"]).default("openai"),
   OPENAI_API_KEY: z.preprocess(
     emptyStringToUndefined,
@@ -152,4 +161,8 @@ export function hasAlpacaCredentials() {
   const env = getEnv();
 
   return Boolean(env.APCA_API_KEY_ID && env.APCA_API_SECRET_KEY);
+}
+
+export function hasFinnhubCredentials() {
+  return Boolean(getEnv().FINNHUB_API_KEY);
 }
