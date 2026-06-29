@@ -20,6 +20,7 @@ import type {
 } from "@/lib/wheel/types";
 import type { JsonValue } from "@/lib/trade-analysis/types";
 import { CandidateResults } from "./wheel-dashboard/candidate-results";
+import { CompanyInsightStrip } from "@/components/company-insights";
 import { CompanyResults } from "./wheel-dashboard/company-results";
 import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
@@ -35,6 +36,7 @@ import {
 } from "./wheel-dashboard/persona-utils";
 import { PresetsPanel } from "./wheel-dashboard/presets-panel";
 import type { RequestState, StrategyTab } from "./wheel-dashboard/types";
+import { useCompanyInsights } from "./wheel-dashboard/use-company-insights";
 
 interface WheelDashboardProps {
   initialPersonas: PersonaConfig[];
@@ -553,6 +555,9 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       ? response?.callCreditSpreads ?? []
       : [];
   const hasTicker = ticker.trim().length > 0;
+  const companyInsightState = useCompanyInsights(
+    hasTicker ? response?.ticker ?? ticker : null,
+  );
   const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
   const isServerRefreshRunning =
     freshness?.refreshStatus === "refreshing" || requestState === "refreshing";
@@ -596,6 +601,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                 response={response}
                 ticker={ticker}
               />
+              <CompanyInsightStrip state={companyInsightState} />
 
               {response ? (
                 <CandidateResults
@@ -608,6 +614,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
                     ticker: response.ticker,
                     underlying: response.underlying,
                   }}
+                  companyInsightState={companyInsightState}
                   onTabChange={setActiveTab}
                   requestState={requestState}
                   rows={rows}

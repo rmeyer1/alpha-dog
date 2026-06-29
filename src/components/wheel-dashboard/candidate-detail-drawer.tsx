@@ -1,4 +1,8 @@
 import { AlertTriangle, BarChart3, X } from "lucide-react";
+import {
+  CompanyContextPanel,
+  type CompanyInsightState,
+} from "@/components/company-insights";
 import type { WheelCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
@@ -141,12 +145,14 @@ function CashMetrics({
 export function CandidateDetailDrawer({
   analysis,
   candidate,
+  companyInsightState,
   underlyingPrice,
   onAnalyze,
   onClose,
 }: {
   analysis: CandidateAnalysisState;
   candidate: WheelCandidate | null;
+  companyInsightState: CompanyInsightState;
   underlyingPrice: number | null | undefined;
   onAnalyze: () => void;
   onClose: () => void;
@@ -229,6 +235,13 @@ export function CandidateDetailDrawer({
         </div>
 
         <div className="mt-5">
+          <CompanyContextPanel
+            insights={companyInsightState.data}
+            status={companyInsightState.status}
+          />
+        </div>
+
+        <div className="mt-5">
           <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />
         </div>
 
@@ -245,6 +258,12 @@ export function CandidateDetailDrawer({
         <CandidateHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5">
           <ScoreBreakdownPanel breakdownRows={breakdownRows} />
+        </div>
+        <div className="mt-5">
+          <CompanyContextPanel
+            insights={companyInsightState.data}
+            status={companyInsightState.status}
+          />
         </div>
         <div className="mt-5">
           <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { CompanyInsightState } from "@/components/company-insights";
 import type {
   VerticalSpreadCandidate,
   WheelCandidate,
@@ -52,11 +53,13 @@ function strategyForTab(tab: StrategyTab): WheelCompanyStrategy {
 
 function CandidateRows({
   analysisContext,
+  companyInsightState,
   rows,
   strategy,
   underlyingPrice,
 }: {
   analysisContext: CandidateAnalysisContext;
+  companyInsightState: CompanyInsightState;
   rows: WheelCandidate[];
   strategy: WheelCompanyStrategy;
   underlyingPrice: number | null | undefined;
@@ -174,6 +177,7 @@ function CandidateRows({
             : idleAnalysis
         }
         candidate={selectedCandidate}
+        companyInsightState={companyInsightState}
         underlyingPrice={underlyingPrice}
         onAnalyze={() => {
           if (selectedCandidate) {
@@ -188,10 +192,12 @@ function CandidateRows({
 
 function SpreadRows({
   analysisContext,
+  companyInsightState,
   rows,
   strategy,
 }: {
   analysisContext: CandidateAnalysisContext;
+  companyInsightState: CompanyInsightState;
   rows: VerticalSpreadCandidate[];
   strategy: WheelCompanyStrategy;
 }) {
@@ -308,6 +314,7 @@ function SpreadRows({
             : idleAnalysis
         }
         candidate={selectedCandidate}
+        companyInsightState={companyInsightState}
         onAnalyze={() => {
           if (selectedCandidate) {
             void analyzeCandidate(selectedCandidate);
@@ -322,6 +329,7 @@ function SpreadRows({
 export function CandidateResults({
   activeTab,
   analysisContext,
+  companyInsightState,
   onTabChange,
   requestState,
   spreadRows,
@@ -330,6 +338,7 @@ export function CandidateResults({
 }: {
   activeTab: StrategyTab;
   analysisContext: CandidateAnalysisContext;
+  companyInsightState: CompanyInsightState;
   onTabChange: (tab: StrategyTab) => void;
   requestState: RequestState;
   spreadRows: VerticalSpreadCandidate[];
@@ -400,12 +409,14 @@ export function CandidateResults({
       {isSpreadTab ? (
         <SpreadRows
           analysisContext={analysisContext}
+          companyInsightState={companyInsightState}
           rows={spreadRows}
           strategy={activeStrategy}
         />
       ) : (
         <CandidateRows
           analysisContext={analysisContext}
+          companyInsightState={companyInsightState}
           rows={rows}
           strategy={activeStrategy}
           underlyingPrice={underlyingPrice}

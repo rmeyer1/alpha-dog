@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { CompanyInsightSections } from "@/components/company-insights";
 import { CompanyLogo } from "@/components/company-logo";
 import {
   getCompanyProfile,
@@ -18,6 +19,10 @@ import {
   type SignalScribeFinancialFact,
   type SignalScribeProfile,
 } from "@/lib/company-profile";
+import {
+  getFinnhubCompanyInsights,
+  type FinnhubCompanyInsights,
+} from "@/lib/finnhub/client";
 import {
   FilingAnalysisCards,
   FilingSectionCards,
@@ -65,6 +70,35 @@ function formatDateTime(value: string | null | undefined) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function dateOnly(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+
+  next.setUTCDate(next.getUTCDate() + days);
+
+  return next;
+}
+
+async function getCompanyInsightsSafely(
+  ticker: string,
+): Promise<FinnhubCompanyInsights | null> {
+  try {
+    const to = dateOnly(new Date());
+    const from = dateOnly(addDays(new Date(), -7));
+
+    return await getFinnhubCompanyInsights({
+      newsFrom: from,
+      newsTo: to,
+      symbol: ticker,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function formatMetricValue(value: number | string | null, unit: string | null) {
@@ -400,6 +434,7 @@ export default async function CompanyProfilePage({
   const { ticker: tickerParam } = await params;
   const profile = await getCompanyProfile(tickerParam);
   const { market, signalScribe, ticker } = profile;
+  const companyInsights = await getCompanyInsightsSafely(ticker);
   const stats = market.stats;
   const companyName =
     signalScribe.company?.company_name ?? market.asset?.name ?? ticker;
@@ -527,6 +562,8 @@ export default async function CompanyProfilePage({
               </div>
             </SectionShell>
 
+            <CompanyInsightSections insights={companyInsights} />
+
             <SectionShell
               icon={<FileText className="size-4 text-cyan-200" />}
               title="SEC Filing Analysis"
@@ -565,7 +602,19 @@ export default async function CompanyProfilePage({
                 />
                 <InfoRow
                   label="Industry"
-                  value={signalScribe.company?.industry ?? "-"}
+                  value={
+                    signalScribe.company?.industry ??
+                    companyInsights?.profile.finnhubIndustry ??
+                    "-"
+                  }
+                />
+                <InfoRow
+                  label="Country"
+                  value={companyInsights?.profile.country ?? "-"}
+                />
+                <InfoRow
+                  label="Website"
+                  value={companyInsights?.profile.weburl ?? "-"}
                 />
                 <InfoRow label="SIC" value={signalScribe.company?.sic ?? "-"} />
                 <InfoRow
@@ -622,7 +671,9 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-white/10 pb-2 last:border-b-0 last:pb-0">
       <span className="text-zinc-500">{label}</span>
-      <span className="text-right text-zinc-200">{value}</span>
+      <span className="min-w-0 break-words text-right text-zinc-200">
+        {value}
+      </span>
     </div>
   );
 }
