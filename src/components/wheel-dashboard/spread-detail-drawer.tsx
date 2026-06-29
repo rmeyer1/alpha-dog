@@ -1,4 +1,8 @@
 import { AlertTriangle, BarChart3, X } from "lucide-react";
+import {
+  CompanyContextPanel,
+  type CompanyInsightState,
+} from "@/components/company-insights";
 import type { SpreadLeg, VerticalSpreadCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
@@ -157,11 +161,13 @@ function LegDetails({ candidate }: { candidate: VerticalSpreadCandidate }) {
 export function SpreadDetailDrawer({
   analysis,
   candidate,
+  companyInsightState,
   onAnalyze,
   onClose,
 }: {
   analysis: CandidateAnalysisState;
   candidate: VerticalSpreadCandidate | null;
+  companyInsightState: CompanyInsightState;
   onAnalyze: () => void;
   onClose: () => void;
 }) {
@@ -186,6 +192,12 @@ export function SpreadDetailDrawer({
         <SpreadHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5">
           <SpreadScorePanel candidate={candidate} />
+        </div>
+        <div className="mt-5">
+          <CompanyContextPanel
+            insights={companyInsightState.data}
+            status={companyInsightState.status}
+          />
         </div>
         <div className="mt-5">
           <TradeAnalysisPanel analysis={analysis} onAnalyze={onAnalyze} />
