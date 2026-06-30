@@ -65,6 +65,40 @@ Safe callback outcomes:
 - provider cancellation: redirect with `auth_error=oauth_cancelled`
 - callback/session errors: redirect with safe `auth_error` codes
 
+### `POST /api/auth/logout`
+
+Clears the active Supabase browser session. The route returns a stable success
+payload even when the app is already unauthenticated.
+
+Success response:
+
+```json
+{
+  "status": "signed_out"
+}
+```
+
+Error codes:
+
+- `LOGOUT_FAILED`: Supabase session sign-out failed before cookies could be
+  cleared.
+
+### Session Refresh and Route Guards
+
+The app includes middleware that refreshes Supabase browser sessions across page
+reloads without using client-only auth state as the source of truth. Middleware
+does not block OAuth or cron routes:
+
+- `/auth/callback`
+- `/api/auth/oauth/{provider}`
+- `/api/cron/*`
+- static assets and Next.js internals
+
+Account-required route handlers must resolve the current user server-side with
+the shared account session guard. Missing or expired sessions return
+`UNAUTHENTICATED`. Authenticated sessions whose `account_profiles` row is
+missing `email`, `first_name`, or `last_name` return `PROFILE_INCOMPLETE`.
+
 Manual account creation should use `EMAIL_ALREADY_REGISTERED` when a requested
 normalized email already exists. OAuth should use `ACCOUNT_EMAIL_CONFLICT` when
 the provider email already belongs to a different account and cannot be linked

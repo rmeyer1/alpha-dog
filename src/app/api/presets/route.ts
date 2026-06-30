@@ -4,33 +4,18 @@ import {
   listSavedPresets,
 } from "@/lib/presets/store";
 import {
+  accountSessionErrorResponse,
   copyAuthCookies,
   getRequiredAccountSession,
-  PROFILE_INCOMPLETE,
-  UNAUTHENTICATED,
 } from "@/lib/supabase/account-session";
 import { savedPresetInputSchema } from "@/lib/wheel/validation";
-
-function authErrorResponse(code: typeof UNAUTHENTICATED | typeof PROFILE_INCOMPLETE) {
-  return NextResponse.json(
-    {
-      error: {
-        code,
-        message: code === UNAUTHENTICATED
-          ? "Sign in to use saved presets."
-          : "Complete your account profile to use saved presets.",
-      },
-    },
-    { status: code === UNAUTHENTICATED ? 401 : 403 },
-  );
-}
 
 export async function GET(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return authErrorResponse(auth.code);
+    return accountSessionErrorResponse(auth.code, "saved presets");
   }
 
   const presets = await listSavedPresets(auth.supabase, auth.user.id);
@@ -43,7 +28,7 @@ export async function POST(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return authErrorResponse(auth.code);
+    return accountSessionErrorResponse(auth.code, "saved presets");
   }
 
   const json = await request.json().catch(() => null);
