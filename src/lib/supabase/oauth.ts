@@ -6,6 +6,9 @@ import {
 
 export type SupportedOAuthProvider = "apple" | "google";
 
+export const ACCOUNT_EMAIL_CONFLICT = "ACCOUNT_EMAIL_CONFLICT";
+export const EMAIL_ALREADY_REGISTERED = "EMAIL_ALREADY_REGISTERED";
+
 export interface OAuthProfileInput {
   display_name: string | null;
   email: string;
@@ -17,7 +20,12 @@ export interface OAuthProfileInput {
 
 export type OAuthProfileResult =
   | { status: "complete"; profile: OAuthProfileInput }
-  | { status: "duplicate_email"; email: string }
+  | {
+      code: typeof ACCOUNT_EMAIL_CONFLICT;
+      email: string;
+      provider: string | null;
+      status: "email_conflict";
+    }
   | { status: "missing_email" }
   | {
       status: "needs_completion";
@@ -29,6 +37,10 @@ export type OAuthProfileResult =
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function firstIdentity(user: User) {
+  return user.identities?.[0] as Record<string, unknown> | undefined;
 }
 
 function namePartsFromFullName(fullName: string | null) {
@@ -85,8 +97,34 @@ export function accountProfileCompletionUrl(
 
 export function oauthProviderFromUser(user: User) {
   return stringValue(user.app_metadata?.provider) ??
-    stringValue(user.identities?.[0]?.provider) ??
+    stringValue(firstIdentity(user)?.provider) ??
     null;
+}
+
+export function oauthProviderUserIdFromUser(user: User) {
+  const identity = firstIdentity(user);
+
+  return stringValue(identity?.id) ??
+    stringValue(identity?.identity_id) ??
+    stringValue(identity?.user_id) ??
+    user.id;
+}
+
+export function manualDuplicateEmailResult(email: string) {
+  return {
+    code: EMAIL_ALREADY_REGISTERED,
+    email: normalizeAccountEmail(email),
+    status: "email_conflict" as const,
+  } as const;
+}
+
+export function oauthEmailConflictResult(email: string, provider: string | null) {
+  return {
+    code: ACCOUNT_EMAIL_CONFLICT,
+    email: normalizeAccountEmail(email),
+    provider,
+    status: "email_conflict" as const,
+  } as const;
 }
 
 export function oauthProfileFromUser(user: User): OAuthProfileResult {
@@ -167,6 +205,8 @@ export async function ensureOAuthAccountProfile(
       };
     }
 
+    await recordOAuthAccountIdentity(supabase, user);
+
     return profile;
   }
 
@@ -175,15 +215,50 @@ export async function ensureOAuthAccountProfile(
     .insert(profile.profile);
 
   if (!insertError) {
+    await recordOAuthAccountIdentity(supabase, user);
+
     return profile;
   }
 
   if (insertError.code === "23505") {
-    return {
-      email: normalizeAccountEmail(profile.profile.email),
-      status: "duplicate_email",
-    };
+    return oauthEmailConflictResult(
+      profile.profile.email,
+      profile.profile.primary_provider,
+    );
   }
 
   throw new Error("Unable to create account profile.");
+}
+
+export async function recordOAuthAccountIdentity(
+  supabase: SupabaseClient,
+  user: User,
+) {
+  const provider = oauthProviderFromUser(user);
+  const providerUserId = oauthProviderUserIdFromUser(user);
+
+  if (!provider || !providerUserId) {
+    return { recorded: false as const, reason: "missing_provider_identity" };
+  }
+
+  const { error } = await supabase
+    .from("account_identities")
+    .upsert(
+      {
+        provider,
+        provider_email: user.email ?? null,
+        provider_user_id: providerUserId,
+        user_id: user.id,
+      },
+      {
+        ignoreDuplicates: true,
+        onConflict: "provider,provider_user_id",
+      },
+    );
+
+  if (error) {
+    throw new Error("Unable to record account identity.");
+  }
+
+  return { recorded: true as const };
 }

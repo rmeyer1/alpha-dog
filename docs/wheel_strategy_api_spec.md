@@ -61,9 +61,14 @@ Safe callback outcomes:
 
 - complete OAuth profile: redirect to `next`
 - missing first or last name: redirect to profile completion
-- duplicate email: redirect with `auth_error=duplicate_email`
+- duplicate email/provider conflict: redirect with `auth_error=ACCOUNT_EMAIL_CONFLICT`
 - provider cancellation: redirect with `auth_error=oauth_cancelled`
 - callback/session errors: redirect with safe `auth_error` codes
+
+Manual account creation should use `EMAIL_ALREADY_REGISTERED` when a requested
+normalized email already exists. OAuth should use `ACCOUNT_EMAIL_CONFLICT` when
+the provider email already belongs to a different account and cannot be linked
+automatically.
 
 ---
 
