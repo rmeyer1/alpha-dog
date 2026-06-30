@@ -164,7 +164,7 @@ export function oauthProfileFromUser(user: User): OAuthProfileResult {
   return {
     profile: {
       display_name: fullName,
-      email,
+      email: normalizeAccountEmail(email),
       first_name: firstName,
       id: user.id,
       last_name: lastName,
