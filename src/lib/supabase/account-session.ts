@@ -1,5 +1,5 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import type { NextRequest, NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { isAccountProfileComplete } from "./auth";
 import { createSupabaseRouteClient } from "./server";
 
@@ -16,12 +16,10 @@ export type AccountSessionResult =
   | AccountSession
   | { code: typeof UNAUTHENTICATED | typeof PROFILE_INCOMPLETE };
 
-export async function getRequiredAccountSession(
-  request: NextRequest,
+export async function resolveAccountSession(
+  supabase: SupabaseClient | null,
   response: NextResponse,
 ): Promise<AccountSessionResult> {
-  const supabase = createSupabaseRouteClient(request, response);
-
   if (!supabase) {
     return { code: UNAUTHENTICATED };
   }
@@ -47,6 +45,33 @@ export async function getRequiredAccountSession(
     supabase,
     user: data.user,
   };
+}
+
+export async function getRequiredAccountSession(
+  request: NextRequest,
+  response: NextResponse,
+): Promise<AccountSessionResult> {
+  return resolveAccountSession(
+    createSupabaseRouteClient(request, response),
+    response,
+  );
+}
+
+export function accountSessionErrorResponse(
+  code: typeof UNAUTHENTICATED | typeof PROFILE_INCOMPLETE,
+  feature = "this account feature",
+) {
+  return NextResponse.json(
+    {
+      error: {
+        code,
+        message: code === UNAUTHENTICATED
+          ? `Sign in to use ${feature}.`
+          : `Complete your account profile to use ${feature}.`,
+      },
+    },
+    { status: code === UNAUTHENTICATED ? 401 : 403 },
+  );
 }
 
 export function copyAuthCookies(
