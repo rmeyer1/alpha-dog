@@ -37,6 +37,34 @@ such as Gmail dot removal is intentionally not applied.
 Market-data cache/materialization tables remain service-managed and are not
 directly exposed to browser clients.
 
+### `GET /api/auth/oauth/{provider}`
+
+Starts Supabase OAuth sign-in for supported providers:
+
+- `google`
+- `apple`
+
+Optional query params:
+
+- `next`: local app path to return to after profile creation or completion.
+
+Unsupported providers redirect to `/account?auth_error=unsupported_provider`.
+
+### `GET /auth/callback`
+
+Handles Supabase OAuth callbacks. The route exchanges the provider code for a
+Supabase session, creates `account_profiles` when complete profile data is
+available, and routes incomplete profiles to
+`/account?profile=complete&next=...`.
+
+Safe callback outcomes:
+
+- complete OAuth profile: redirect to `next`
+- missing first or last name: redirect to profile completion
+- duplicate email: redirect with `auth_error=duplicate_email`
+- provider cancellation: redirect with `auth_error=oauth_cancelled`
+- callback/session errors: redirect with safe `auth_error` codes
+
 ---
 
 ## 3. Endpoint: Analyze Wheel Candidates

@@ -11,6 +11,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.0",
+    "@supabase/supabase-js": "^2.108.2",
     "@vercel/functions": "^3.6.2",
     "lucide-react": "^1.16.0",
     "next": "16.2.6",
