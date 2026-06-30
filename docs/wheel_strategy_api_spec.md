@@ -70,6 +70,54 @@ normalized email already exists. OAuth should use `ACCOUNT_EMAIL_CONFLICT` when
 the provider email already belongs to a different account and cannot be linked
 automatically.
 
+### `POST /api/auth/manual-account`
+
+Creates a passwordless/manual account invite and the required account profile.
+The design layer can call this endpoint from the manual account creation form.
+
+Request:
+
+```json
+{
+  "email": "desk@example.com",
+  "firstName": "Ryan",
+  "lastName": "Meyer",
+  "redirectTo": "https://alpha-dog.vercel.app/account"
+}
+```
+
+Field notes:
+
+- `email`, `firstName`, and `lastName` are required.
+- `email` is trimmed, lowercased, and validated before any Supabase Auth call.
+- `redirectTo` is optional and must be a URL if provided.
+- Password auth is intentionally out of scope; this route uses Supabase invite
+  semantics for a passwordless/manual account start.
+
+Success response:
+
+```json
+{
+  "status": "invite_sent",
+  "account": {
+    "id": "auth-user-id",
+    "email": "desk@example.com",
+    "firstName": "Ryan",
+    "lastName": "Meyer"
+  }
+}
+```
+
+Error codes:
+
+- `INVALID_MANUAL_ACCOUNT`: missing required fields or invalid email.
+- `EMAIL_ALREADY_REGISTERED`: normalized email already belongs to an account.
+- `ACCOUNT_AUTH_NOT_CONFIGURED`: Supabase service-role auth is unavailable.
+- `ACCOUNT_INVITE_FAILED`: Supabase Auth invite failed before profile creation.
+- `ACCOUNT_PROFILE_CREATE_FAILED`: profile creation failed after auth user
+  creation. The server attempts to delete the newly created auth user as
+  compensating cleanup before returning this error.
+
 ---
 
 ## 3. Endpoint: Analyze Wheel Candidates
