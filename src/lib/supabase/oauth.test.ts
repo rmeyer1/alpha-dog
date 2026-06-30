@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import {
+  ACCOUNT_EMAIL_CONFLICT,
+  EMAIL_ALREADY_REGISTERED,
   accountAuthErrorUrl,
   accountProfileCompletionUrl,
   ensureOAuthAccountProfile,
+  manualDuplicateEmailResult,
   oauthProfileFromUser,
+  oauthProviderUserIdFromUser,
   parseOAuthProvider,
+  recordOAuthAccountIdentity,
   safeRedirectPath,
 } from "./oauth";
 
@@ -24,9 +29,11 @@ function user(overrides: Partial<User>): User {
 function supabaseMock({
   existingProfile = null,
   insertError = null,
+  upsertError = null,
 }: {
   existingProfile?: unknown;
   insertError?: { code?: string } | null;
+  upsertError?: { code?: string } | null;
 }) {
   const maybeSingle = vi.fn(async () => ({
     data: existingProfile,
@@ -35,11 +42,17 @@ function supabaseMock({
   const eq = vi.fn(() => ({ maybeSingle }));
   const select = vi.fn(() => ({ eq }));
   const insert = vi.fn(async () => ({ error: insertError }));
-  const from = vi.fn(() => ({ insert, select }));
+  const upsert = vi.fn(async () => ({ error: upsertError }));
+  const from = vi.fn((table: string) =>
+    table === "account_identities"
+      ? { upsert }
+      : { insert, select },
+  );
 
   return {
     client: { from } as unknown as SupabaseClient,
     insert,
+    upsert,
   };
 }
 
@@ -111,16 +124,19 @@ describe("oauth helpers", () => {
     }));
 
     expect(result).toEqual({
+      code: ACCOUNT_EMAIL_CONFLICT,
       email: "desk@example.com",
-      status: "duplicate_email",
+      provider: "google",
+      status: "email_conflict",
     });
   });
 
   it("creates one complete profile when none exists", async () => {
-    const { client, insert } = supabaseMock({});
+    const { client, insert, upsert } = supabaseMock({});
 
     const result = await ensureOAuthAccountProfile(client, user({
       app_metadata: { provider: "google" },
+      identities: [{ id: "google-subject", provider: "google" }],
       user_metadata: {
         family_name: "Meyer",
         given_name: "Ryan",
@@ -129,6 +145,77 @@ describe("oauth helpers", () => {
 
     expect(result.status).toBe("complete");
     expect(insert).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledWith(
+      {
+        provider: "google",
+        provider_email: "desk@example.com",
+        provider_user_id: "google-subject",
+        user_id: "00000000-0000-0000-0000-000000000001",
+      },
+      {
+        ignoreDuplicates: true,
+        onConflict: "provider,provider_user_id",
+      },
+    );
+  });
+
+  it("records linked providers for an existing authenticated profile", async () => {
+    const { client, insert, upsert } = supabaseMock({
+      existingProfile: {
+        email: "desk@example.com",
+        first_name: "Ryan",
+        last_name: "Meyer",
+      },
+    });
+
+    const result = await ensureOAuthAccountProfile(client, user({
+      app_metadata: { provider: "google" },
+      identities: [{ id: "google-subject", provider: "google" }],
+      user_metadata: {
+        family_name: "Meyer",
+        given_name: "Ryan",
+      },
+    }));
+
+    expect(result.status).toBe("complete");
+    expect(insert).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps Apple relay or any future provider email distinct by normalization only", () => {
+    expect(manualDuplicateEmailResult(" Desk@Example.com ")).toEqual({
+      code: EMAIL_ALREADY_REGISTERED,
+      email: "desk@example.com",
+      status: "email_conflict",
+    });
+    expect(manualDuplicateEmailResult("relay@privaterelay.appleid.com"))
+      .toEqual({
+        code: EMAIL_ALREADY_REGISTERED,
+        email: "relay@privaterelay.appleid.com",
+        status: "email_conflict",
+      });
+  });
+
+  it("uses provider subject identifiers for audit linking", async () => {
+    expect(oauthProviderUserIdFromUser(user({
+      identities: [{ id: "google-subject", provider: "google" }],
+    }))).toBe("google-subject");
+
+    const { client, upsert } = supabaseMock({});
+    await recordOAuthAccountIdentity(client, user({
+      app_metadata: { provider: "google" },
+      identities: [{ identity_id: "google-identity", provider: "google" }],
+    }));
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "google",
+        provider_user_id: "google-identity",
+      }),
+      expect.objectContaining({
+        ignoreDuplicates: true,
+      }),
+    );
   });
 
   it("builds safe account status URLs", () => {

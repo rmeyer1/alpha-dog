@@ -52,9 +52,9 @@ export async function GET(request: NextRequest) {
     return response;
   }
 
-  if (profileResult.status === "duplicate_email") {
+  if (profileResult.status === "email_conflict") {
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "duplicate_email", nextPath),
+      accountAuthErrorUrl(request.url, profileResult.code, nextPath),
       { status: 303 },
     );
   }
