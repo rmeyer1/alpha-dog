@@ -126,6 +126,11 @@ Error codes:
 
 Returns ranked short put and covered call candidates for a ticker.
 
+If the request includes an active Supabase session with a complete profile, the
+API records an `analysis_requests` audit row with `user_id`, ticker, persona,
+and filters. This does not change the market-data response shape. Anonymous
+analysis remains available.
+
 #### Request
 
 ```json
@@ -291,6 +296,15 @@ Returns saved filter presets.
 Presets are account-owned records. The persisted `saved_presets.user_id`
 references the authenticated account ID and RLS policies restrict reads and
 writes to the owning user.
+
+All preset CRUD routes require an active Supabase session and complete account
+profile. Stable preset auth/ownership errors:
+
+- `UNAUTHENTICATED`: no active Supabase session.
+- `PROFILE_INCOMPLETE`: authenticated user has not completed the required
+  account profile.
+- `PRESET_FORBIDDEN`: preset exists but belongs to a different user.
+- `PRESET_NOT_FOUND`: preset does not exist or cannot be found.
 
 ### `POST /api/presets`
 

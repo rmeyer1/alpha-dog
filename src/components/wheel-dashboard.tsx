@@ -192,7 +192,16 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
   async function loadPresets() {
     const presetResponse = await fetch("/api/presets", { cache: "no-store" });
-    const payload = (await presetResponse.json()) as { presets: SavedPreset[] };
+    const payload = (await presetResponse.json()) as
+      | { presets: SavedPreset[] }
+      | ApiErrorPayload;
+
+    if (!presetResponse.ok || isApiErrorPayload(payload)) {
+      setPresets([]);
+
+      return;
+    }
+
     setPresets(payload.presets);
   }
 
@@ -399,11 +408,36 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     if (apiResponse.ok) {
       await loadPresets();
+
+      return;
     }
+
+    const payload = (await apiResponse.json().catch(() => null)) as
+      | ApiErrorPayload
+      | null;
+    setError(
+      payload && isApiErrorPayload(payload)
+        ? payload.error.message
+        : "Unable to save preset.",
+    );
   }
 
   async function deletePreset(id: string) {
-    await fetch(`/api/presets/${id}`, { method: "DELETE" });
+    const apiResponse = await fetch(`/api/presets/${id}`, { method: "DELETE" });
+
+    if (!apiResponse.ok) {
+      const payload = (await apiResponse.json().catch(() => null)) as
+        | ApiErrorPayload
+        | null;
+      setError(
+        payload && isApiErrorPayload(payload)
+          ? payload.error.message
+          : "Unable to delete preset.",
+      );
+
+      return;
+    }
+
     await loadPresets();
   }
 
@@ -510,11 +544,11 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         const presetResponse = await fetch("/api/presets", {
           cache: "no-store",
         });
-        const presetPayload = (await presetResponse.json()) as {
-          presets: SavedPreset[];
-        };
+        const presetPayload = (await presetResponse.json()) as
+          | { presets: SavedPreset[] }
+          | ApiErrorPayload;
 
-        if (!cancelled) {
+        if (!cancelled && presetResponse.ok && !isApiErrorPayload(presetPayload)) {
           setPresets(presetPayload.presets);
         }
       } catch (caught) {

@@ -1,97 +1,137 @@
-import "server-only";
-
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import type { SavedPreset } from "@/lib/wheel/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { z } from "zod";
 import type { savedPresetInputSchema } from "@/lib/wheel/validation";
+import type { SavedPreset } from "@/lib/wheel/types";
 
-const storePath = path.join(process.cwd(), ".data", "presets.json");
-
-async function ensureStoreDir() {
-  await mkdir(path.dirname(storePath), { recursive: true });
+interface SavedPresetRow {
+  base_persona_id: SavedPreset["basePersona"];
+  created_at: string;
+  filters: SavedPreset["filters"];
+  id: string;
+  name: string;
+  updated_at: string;
+  user_id: string;
 }
 
-async function readPresets(): Promise<SavedPreset[]> {
-  try {
-    const contents = await readFile(storePath, "utf8");
+function toSavedPreset(row: SavedPresetRow): SavedPreset {
+  return {
+    basePersona: row.base_persona_id,
+    createdAt: row.created_at,
+    filters: row.filters ?? {},
+    id: row.id,
+    name: row.name,
+    updatedAt: row.updated_at,
+  };
+}
 
-    return JSON.parse(contents) as SavedPreset[];
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return [];
-    }
+const presetColumns = [
+  "id",
+  "user_id",
+  "name",
+  "base_persona_id",
+  "filters",
+  "created_at",
+  "updated_at",
+].join(",");
 
-    throw error;
+export async function listSavedPresets(
+  supabase: SupabaseClient,
+  userId: string,
+) {
+  const { data, error } = await supabase
+    .from("saved_presets")
+    .select(presetColumns)
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw new Error("Unable to load saved presets.");
   }
-}
 
-async function writePresets(presets: SavedPreset[]) {
-  await ensureStoreDir();
-  await writeFile(storePath, JSON.stringify(presets, null, 2));
-}
-
-export async function listSavedPresets() {
-  return readPresets();
+  return (data as unknown as SavedPresetRow[]).map(toSavedPreset);
 }
 
 export async function createSavedPreset(
+  supabase: SupabaseClient,
+  userId: string,
   input: z.infer<typeof savedPresetInputSchema>,
 ) {
-  const now = new Date().toISOString();
-  const presets = await readPresets();
-  const preset: SavedPreset = {
-    id: randomUUID(),
-    name: input.name,
-    basePersona: input.basePersona,
-    filters: input.filters,
-    createdAt: now,
-    updatedAt: now,
-  };
+  const { data, error } = await supabase
+    .from("saved_presets")
+    .insert({
+      base_persona_id: input.basePersona,
+      filters: input.filters,
+      name: input.name,
+      user_id: userId,
+    })
+    .select(presetColumns)
+    .single();
 
-  await writePresets([...presets, preset]);
+  if (error) {
+    throw new Error("Unable to create saved preset.");
+  }
 
-  return preset;
+  return toSavedPreset(data as unknown as SavedPresetRow);
 }
 
 export async function updateSavedPreset(
+  supabase: SupabaseClient,
+  userId: string,
   id: string,
   input: z.infer<typeof savedPresetInputSchema>,
 ) {
-  const presets = await readPresets();
-  const index = presets.findIndex((preset) => preset.id === id);
+  const { data, error } = await supabase
+    .from("saved_presets")
+    .update({
+      base_persona_id: input.basePersona,
+      filters: input.filters,
+      name: input.name,
+    })
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select(presetColumns)
+    .maybeSingle();
 
-  if (index === -1) {
-    return null;
+  if (error) {
+    throw new Error("Unable to update saved preset.");
   }
 
-  const updated: SavedPreset = {
-    ...presets[index],
-    name: input.name,
-    basePersona: input.basePersona,
-    filters: input.filters,
-    updatedAt: new Date().toISOString(),
-  };
-  presets[index] = updated;
-  await writePresets(presets);
-
-  return updated;
+  return data ? toSavedPreset(data as unknown as SavedPresetRow) : null;
 }
 
-export async function deleteSavedPreset(id: string) {
-  const presets = await readPresets();
-  const nextPresets = presets.filter((preset) => preset.id !== id);
+export async function deleteSavedPreset(
+  supabase: SupabaseClient,
+  userId: string,
+  id: string,
+) {
+  const { data, error } = await supabase
+    .from("saved_presets")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("id")
+    .maybeSingle();
 
-  if (nextPresets.length === presets.length) {
-    return false;
+  if (error) {
+    throw new Error("Unable to delete saved preset.");
   }
 
-  await writePresets(nextPresets);
+  return Boolean(data);
+}
 
-  return true;
+export async function getSavedPresetOwner(
+  supabase: SupabaseClient,
+  id: string,
+) {
+  const { data, error } = await supabase
+    .from("saved_presets")
+    .select("user_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Unable to inspect saved preset ownership.");
+  }
+
+  return (data as { user_id: string } | null)?.user_id ?? null;
 }
