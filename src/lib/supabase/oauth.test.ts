@@ -109,6 +109,37 @@ describe("oauth helpers", () => {
     });
   });
 
+  it("treats Apple private relay addresses as distinct normalized emails", () => {
+    const relayProfile = oauthProfileFromUser(user({
+      app_metadata: { provider: "apple" },
+      email: "Relay@Privaterelay.AppleID.com",
+      user_metadata: {
+        full_name: "Desk User",
+      },
+    }));
+
+    const directProfile = oauthProfileFromUser(user({
+      app_metadata: { provider: "apple" },
+      email: "Desk@Example.com",
+      user_metadata: {
+        full_name: "Desk User",
+      },
+    }));
+
+    expect(relayProfile).toMatchObject({
+      profile: {
+        email: "relay@privaterelay.appleid.com",
+      },
+      status: "complete",
+    });
+    expect(directProfile).toMatchObject({
+      profile: {
+        email: "desk@example.com",
+      },
+      status: "complete",
+    });
+  });
+
   it("does not create a duplicate profile for duplicate provider email", async () => {
     const { client } = supabaseMock({
       insertError: { code: "23505" },
@@ -127,6 +158,27 @@ describe("oauth helpers", () => {
       code: ACCOUNT_EMAIL_CONFLICT,
       email: "desk@example.com",
       provider: "google",
+      status: "email_conflict",
+    });
+  });
+
+  it("returns a clean Apple same-email conflict from database uniqueness", async () => {
+    const { client } = supabaseMock({
+      insertError: { code: "23505" },
+    });
+
+    const result = await ensureOAuthAccountProfile(client, user({
+      app_metadata: { provider: "apple" },
+      email: "Desk@Example.com",
+      user_metadata: {
+        full_name: "Ryan Meyer",
+      },
+    }));
+
+    expect(result).toEqual({
+      code: ACCOUNT_EMAIL_CONFLICT,
+      email: "desk@example.com",
+      provider: "apple",
       status: "email_conflict",
     });
   });
@@ -180,6 +232,37 @@ describe("oauth helpers", () => {
     expect(result.status).toBe("complete");
     expect(insert).not.toHaveBeenCalled();
     expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("links Apple to an existing same-user profile without creating another profile", async () => {
+    const { client, insert, upsert } = supabaseMock({
+      existingProfile: {
+        email: "desk@example.com",
+        first_name: "Ryan",
+        last_name: "Meyer",
+      },
+    });
+
+    const result = await ensureOAuthAccountProfile(client, user({
+      app_metadata: { provider: "apple" },
+      email: "desk@example.com",
+      identities: [{ id: "apple-subject", provider: "apple" }],
+      user_metadata: {
+        full_name: "Ryan Meyer",
+      },
+    }));
+
+    expect(result.status).toBe("complete");
+    expect(insert).not.toHaveBeenCalled();
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "apple",
+        provider_user_id: "apple-subject",
+      }),
+      expect.objectContaining({
+        ignoreDuplicates: true,
+      }),
+    );
   });
 
   it("keeps Apple relay or any future provider email distinct by normalization only", () => {

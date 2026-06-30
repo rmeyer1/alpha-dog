@@ -144,6 +144,25 @@ describe("manual account creation", () => {
     });
   });
 
+  it("maps profile unique constraint races to reusable email conflict errors", async () => {
+    const { client, deleteUser } = supabaseMock({
+      profileError: { code: "23505" },
+    });
+
+    const result = await createManualAccount({
+      email: "desk@example.com",
+      firstName: "Ryan",
+      lastName: "Meyer",
+    }, client);
+
+    expect(result).toEqual({
+      code: EMAIL_ALREADY_REGISTERED,
+      email: "desk@example.com",
+      status: "email_conflict",
+    });
+    expect(deleteUser).toHaveBeenCalledWith("auth-user-id");
+  });
+
   it("cleans up the auth user when profile creation fails", async () => {
     const { client, deleteUser } = supabaseMock({
       profileError: { code: "OTHER" },

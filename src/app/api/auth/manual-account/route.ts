@@ -4,17 +4,29 @@ import {
   manualAccountInputSchema,
 } from "@/lib/supabase/manual-account";
 import { getSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  authCorrelationIdFromRequest,
+  logAuthAccountFailure,
+} from "@/lib/supabase/auth-observability";
 
 export async function POST(request: Request) {
+  const correlationId = authCorrelationIdFromRequest(request);
   const json = await request.json().catch(() => null);
   const parsed = manualAccountInputSchema.safeParse(json);
 
   if (!parsed.success) {
+    logAuthAccountFailure({
+      code: "INVALID_MANUAL_ACCOUNT",
+      correlationId,
+      operation: "manual_account",
+    });
+
     return NextResponse.json(
       {
         error: {
           code: "INVALID_MANUAL_ACCOUNT",
           message: "Manual account payload is invalid.",
+          correlationId,
           details: parsed.error.flatten(),
         },
       },
@@ -32,10 +44,17 @@ export async function POST(request: Request) {
   }
 
   if (result.status === "email_conflict") {
+    logAuthAccountFailure({
+      code: result.code,
+      correlationId,
+      operation: "manual_account",
+    });
+
     return NextResponse.json(
       {
         error: {
           code: result.code,
+          correlationId,
           message: "An account already exists for this email.",
         },
       },
@@ -45,10 +64,17 @@ export async function POST(request: Request) {
 
   const status = result.code === "ACCOUNT_AUTH_NOT_CONFIGURED" ? 503 : 502;
 
+  logAuthAccountFailure({
+    code: result.code,
+    correlationId,
+    operation: "manual_account",
+  });
+
   return NextResponse.json(
     {
       error: {
         code: result.code,
+        correlationId,
         message: "Manual account creation failed.",
       },
     },
