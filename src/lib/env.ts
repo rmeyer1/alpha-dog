@@ -102,6 +102,18 @@ const envSchema = z.object({
     emptyStringToUndefined,
     z.string().optional(),
   ),
+  NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.string().url().optional(),
+  ),
+  NEXT_PUBLIC_ALPHA_DOG_SUPABASE_ANON_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
   SIGNAL_SCRIBE_SUPABASE_URL: z
     .preprocess(emptyStringToUndefined, z.string().url().optional())
     .default("https://kauwcybbiwsmmljovmit.supabase.co"),
