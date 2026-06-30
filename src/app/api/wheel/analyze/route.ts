@@ -1,8 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { persistAuthenticatedAnalysisRequest } from "@/lib/wheel/analysis-audit";
 import { analyzeWheelCandidates } from "@/lib/wheel/analyze";
 import { analyzeRequestSchema } from "@/lib/wheel/validation";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const json = await request.json().catch(() => null);
   const parsed = analyzeRequestSchema.safeParse(json);
 
@@ -21,6 +22,7 @@ export async function POST(request: Request) {
 
   try {
     const response = await analyzeWheelCandidates(parsed.data);
+    await persistAuthenticatedAnalysisRequest(request, parsed.data).catch(() => null);
 
     return NextResponse.json(response);
   } catch (error) {
