@@ -11,10 +11,18 @@ interface AccountProfileRow {
   updated_at: string | null;
 }
 
-export interface AccountIdentity {
-  createdAt: string | null;
-  provider: string;
-  providerEmail: string | null;
+export interface AccountPresetSummary {
+  basePersona: string;
+  id: string;
+  name: string;
+  updatedAt: string | null;
+}
+
+interface AccountPresetRow {
+  base_persona_id: string;
+  id: string;
+  name: string;
+  updated_at: string | null;
 }
 
 export type AccountHubState =
@@ -30,13 +38,10 @@ export type AccountHubState =
   | {
       email: string;
       firstName: string;
-      identities: AccountIdentity[];
       lastName: string;
       presetCount: number;
-      primaryProvider: string | null;
-      profileUpdatedAt: string | null;
+      presets: AccountPresetSummary[];
       status: "ready";
-      userId: string;
     }
   | {
       message: string;
@@ -105,23 +110,12 @@ export async function loadAccountHubState(
 
   const completeProfile = profile.data;
 
-  const identities = await supabase
-    .from("account_identities")
-    .select("provider, provider_email, created_at")
-    .eq("user_id", user.id)
-    .order("provider", { ascending: true });
-
-  if (identities.error) {
-    return {
-      message: "Unable to load account identities.",
-      status: "error",
-    };
-  }
-
   const presets = await supabase
     .from("saved_presets")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user.id);
+    .select("id, name, base_persona_id, updated_at", { count: "exact" })
+    .eq("user_id", user.id)
+    .order("updated_at", { ascending: false })
+    .limit(4);
 
   if (presets.error) {
     return {
@@ -133,16 +127,14 @@ export async function loadAccountHubState(
   return {
     email: completeProfile.email!,
     firstName: completeProfile.first_name!,
-    identities: (identities.data ?? []).map((identity) => ({
-      createdAt: identity.created_at ?? null,
-      provider: identity.provider,
-      providerEmail: identity.provider_email ?? null,
-    })),
     lastName: completeProfile.last_name!,
     presetCount: presets.count ?? 0,
-    primaryProvider: completeProfile.primary_provider,
-    profileUpdatedAt: completeProfile.updated_at,
+    presets: ((presets.data ?? []) as AccountPresetRow[]).map((preset) => ({
+      basePersona: preset.base_persona_id,
+      id: preset.id,
+      name: preset.name,
+      updatedAt: preset.updated_at,
+    })),
     status: "ready",
-    userId: user.id,
   };
 }
