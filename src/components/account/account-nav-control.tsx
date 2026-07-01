@@ -97,13 +97,25 @@ export function AccountNavControl({
 
   if (state.status === "unauthenticated") {
     return (
-      <Link
-        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#111314]"
-        href={signInHref(returnPath)}
-      >
-        <UserCircle className="size-4" />
-        Sign in
-      </Link>
+      <div className="grid gap-1">
+        <Link
+          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#111314]"
+          href={signInHref(returnPath)}
+        >
+          <UserCircle className="size-4" />
+          Sign in
+        </Link>
+        {logoutState === "signed_out" ? (
+          <p aria-live="polite" className="px-1 text-xs text-emerald-100">
+            Signed out.
+          </p>
+        ) : null}
+        {logoutState === "error" ? (
+          <p aria-live="polite" className="px-1 text-xs text-red-100">
+            Unable to sign out. Try again.
+          </p>
+        ) : null}
+      </div>
     );
   }
 
