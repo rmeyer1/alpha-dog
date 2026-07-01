@@ -395,6 +395,16 @@ profile. Stable preset auth/ownership errors:
 - `PRESET_FORBIDDEN`: preset exists but belongs to a different user.
 - `PRESET_NOT_FOUND`: preset does not exist or cannot be found.
 
+Frontend handling:
+
+- `GET /api/presets` returning `UNAUTHENTICATED` or `PROFILE_INCOMPLETE` should
+  gate save/delete controls in the presets panel while keeping public screener
+  analysis usable.
+- Save/delete validation, forbidden, and not-found errors should render as
+  recoverable preset-panel messages.
+- Successful save/delete operations should reload the account-owned preset list
+  and show a short success message.
+
 ### `POST /api/presets`
 
 Creates a saved preset.

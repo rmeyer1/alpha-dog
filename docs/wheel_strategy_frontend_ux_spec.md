@@ -220,6 +220,13 @@ MVP requirements:
 - Rename preset.
 - Delete preset.
 - Reset to system persona defaults.
+- Keep public screening usable when the user is signed out.
+- Gate account-owned save/delete controls when the preset API returns
+  `UNAUTHENTICATED` or `PROFILE_INCOMPLETE`.
+- Show loading, empty, save success, delete success, and recoverable API error
+  states inside the preset panel.
+- Provide a sign-in/profile CTA that returns to `/screeners` after auth or
+  profile completion.
 
 Custom preset panel fields:
 
