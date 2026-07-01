@@ -188,6 +188,7 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
     <AccountShell
       eyebrow="Session required"
       icon={<LockKeyhole className="size-6" />}
+      showAccountControl={false}
       title="Sign in to manage your account"
     >
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">

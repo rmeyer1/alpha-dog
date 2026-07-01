@@ -21,6 +21,7 @@ export default async function ManualAccountPage({
     <AccountShell
       eyebrow="Manual account"
       icon={<UserPlus className="size-6" />}
+      showAccountControl={false}
       title="Create a manual account"
     >
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">

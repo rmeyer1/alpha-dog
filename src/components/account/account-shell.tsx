@@ -6,11 +6,13 @@ export function AccountShell({
   children,
   eyebrow,
   icon,
+  showAccountControl = true,
   title,
 }: {
   children: React.ReactNode;
   eyebrow: string;
   icon: React.ReactNode;
+  showAccountControl?: boolean;
   title: string;
 }) {
   return (
@@ -63,7 +65,9 @@ export function AccountShell({
                 </Link>
               </div>
             </nav>
-            <AccountNavControl returnPath="/account" />
+            {showAccountControl ? (
+              <AccountNavControl returnPath="/account" />
+            ) : null}
           </div>
         </div>
       </header>
