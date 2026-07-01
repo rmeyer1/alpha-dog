@@ -32,6 +32,23 @@ export interface ScreenerRefreshDecision {
   status: "due" | "recent" | "running" | "not_configured";
 }
 
+export interface ScreenerRefreshHealthSummary {
+  configuredCount: number;
+  dueCount: number;
+  maxAgeMinutes: number | null;
+  notConfiguredCount: number;
+  recentCount: number;
+  runningCount: number;
+  strategies: {
+    ageMinutes: number | null;
+    persona: PersonaId;
+    reason: string;
+    snapshotId: string | null;
+    status: ScreenerRefreshDecision["status"];
+    strategy: WheelCompanyStrategy | undefined;
+  }[];
+}
+
 export interface EasternMarketHoursState {
   easternMinutes: number;
   isMarketDay: boolean;
@@ -109,7 +126,7 @@ export function getEasternMarketHoursState(
 }
 
 export function getScreenerRefreshMaxRuns() {
-  return parsePositiveInteger(getEnv().WHEEL_SCREENER_REFRESH_MAX_RUNS, 1);
+  return parsePositiveInteger(getEnv().WHEEL_SCREENER_REFRESH_MAX_RUNS, 4);
 }
 
 export function getScreenerWeekendRefreshMaxRuns() {
@@ -150,6 +167,39 @@ export function getScheduledScreenerRefreshRequests(): WheelScreenerRequest[] {
       forceRefresh: true,
     })),
   );
+}
+
+function ageMinutes(ageMs: number | null) {
+  return ageMs == null ? null : Math.max(0, Math.round(ageMs / 60_000));
+}
+
+export function summarizeScreenerRefreshDecisions(
+  decisions: ScreenerRefreshDecision[],
+): ScreenerRefreshHealthSummary {
+  const ages = decisions
+    .map((decision) => decision.ageMs)
+    .filter((age): age is number => age != null);
+
+  return {
+    configuredCount: decisions.length,
+    dueCount: decisions.filter((decision) => decision.status === "due").length,
+    maxAgeMinutes: ages.length > 0 ? ageMinutes(Math.max(...ages)) : null,
+    notConfiguredCount: decisions.filter((decision) =>
+      decision.status === "not_configured"
+    ).length,
+    recentCount: decisions.filter((decision) => decision.status === "recent")
+      .length,
+    runningCount: decisions.filter((decision) => decision.status === "running")
+      .length,
+    strategies: decisions.map((decision) => ({
+      ageMinutes: ageMinutes(decision.ageMs),
+      persona: decision.request.persona,
+      reason: decision.reason,
+      snapshotId: decision.snapshotId,
+      status: decision.status,
+      strategy: decision.request.strategy,
+    })),
+  };
 }
 
 export async function getScreenerRefreshDecision(

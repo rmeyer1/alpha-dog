@@ -8,6 +8,7 @@ import {
   getScreenerRefreshDecision,
   getScreenerRefreshMaxRuns,
   getScreenerWeekendRefreshMaxRuns,
+  summarizeScreenerRefreshDecisions,
   type ScreenerRefreshDecision,
 } from "@/lib/wheel/screener-refresh";
 import type { WheelScreenerRequest } from "@/lib/wheel/types";
@@ -172,6 +173,7 @@ async function handleRefresh(request: Request) {
     ok: true,
     dryRun,
     force,
+    health: summarizeScreenerRefreshDecisions(decisions),
     marketHours,
     maxRuns,
     configuredCount: configuredRequests.length,
