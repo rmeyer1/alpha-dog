@@ -27,6 +27,7 @@ import {
   type AccountSearchParams,
   type AuthUiNotice,
 } from "@/lib/supabase/auth-ui";
+import { AccountNavControl } from "@/components/account/account-nav-control";
 import { createSupabaseServerComponentClient } from "@/lib/supabase/server-component";
 
 export const dynamic = "force-dynamic";
@@ -82,31 +83,34 @@ function AccountShell({
               </h1>
             </div>
           </div>
-          <nav
-            aria-label="Account navigation"
-            className="max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-1"
-          >
-            <div className="flex w-max gap-1">
-              <Link
-                className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
-                href="/screeners"
-              >
-                Screeners
-              </Link>
-              <Link
-                className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
-                href="/traders"
-              >
-                Traders
-              </Link>
-              <Link
-                className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
-                href="/account"
-              >
-                Account
-              </Link>
-            </div>
-          </nav>
+          <div className="flex max-w-full flex-col gap-3 sm:flex-row sm:items-start">
+            <nav
+              aria-label="Account navigation"
+              className="max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-1"
+            >
+              <div className="flex w-max gap-1">
+                <Link
+                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
+                  href="/screeners"
+                >
+                  Screeners
+                </Link>
+                <Link
+                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
+                  href="/traders"
+                >
+                  Traders
+                </Link>
+                <Link
+                  className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
+                  href="/account"
+                >
+                  Account
+                </Link>
+              </div>
+            </nav>
+            <AccountNavControl returnPath="/account" />
+          </div>
         </div>
       </header>
       {children}

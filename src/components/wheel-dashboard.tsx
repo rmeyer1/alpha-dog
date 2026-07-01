@@ -680,6 +680,17 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     void loadTopCompanies({ nextStrategy: strategy });
   }
 
+  function handleAccountSignedOut() {
+    setPresets([]);
+    setPresetAccessState({
+      message: "Sign in to use saved presets.",
+      status: "unauthenticated",
+    });
+    setPresetFeedback(null);
+    setPresetOperation("idle");
+    setDeletingPresetId(null);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -743,6 +754,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             : !isServerRefreshRunning
         }
         initialPersonas={initialPersonas}
+        onAccountSignedOut={handleAccountSignedOut}
         onAnalyze={handleSubmit}
         onForceRefresh={handleForceRefresh}
         onPersonaChange={selectPersona}

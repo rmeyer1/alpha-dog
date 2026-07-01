@@ -265,6 +265,9 @@ UI must distinguish initial loading from background refresh.
 - Do not encode risk with color alone.
 - Table headers are semantic and sortable buttons are screen-reader clear.
 - Loading states should not trap focus.
+- Account navigation controls must expose signed-out, loading, signed-in,
+  incomplete-profile, logout pending, logout success, and logout error states
+  without clipping at mobile widths.
 
 ---
 
@@ -273,6 +276,10 @@ UI must distinguish initial loading from background refresh.
 - User can search a ticker and see short put/covered call tabs.
 - User can switch personas and see the table rerank.
 - User can save and reload a filter preset.
+- User can identify account/session state from home, dashboard, and account
+  surfaces.
+- User can sign out from app navigation, clearing visible account-owned preset
+  state.
 - Every row shows visible warnings when present.
 - Data feed and freshness timestamp are visible.
 - Rate-limit/stale-cache states are understandable.

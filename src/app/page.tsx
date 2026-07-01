@@ -9,6 +9,7 @@ import {
   UserCircle,
   UserRoundSearch,
 } from "lucide-react";
+import { AccountNavControl } from "@/components/account/account-nav-control";
 
 const destinations = [
   {
@@ -85,9 +86,12 @@ export default function Home() {
               Alpha Dog
             </span>
           </Link>
-          <div className="hidden items-center gap-2 text-xs text-zinc-400 sm:flex">
-            <ShieldAlert className="size-4 text-amber-200" />
-            Decision support only
+          <div className="flex items-center gap-3">
+            <div className="hidden items-center gap-2 text-xs text-zinc-400 sm:flex">
+              <ShieldAlert className="size-4 text-amber-200" />
+              Decision support only
+            </div>
+            <AccountNavControl returnPath="/" />
           </div>
         </header>
 
