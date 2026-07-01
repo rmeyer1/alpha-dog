@@ -29,6 +29,7 @@ import { CandidateResults } from "./wheel-dashboard/candidate-results";
 import { CompanyInsightStrip } from "@/components/company-insights";
 import { CompanyResults } from "./wheel-dashboard/company-results";
 import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
+import { shouldAutoRefreshScreenerResponse } from "@/lib/wheel/screener-auto-refresh";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
 import {
@@ -210,6 +211,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     useState<PresetOperation>("loading");
   const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
   const didLoadInitialScreener = useRef(false);
+  const didAutoRefreshInitialScreener = useRef(false);
   const activePersona = useMemo(
     () => personaById(initialPersonas, personaId, defaultPersona),
     [defaultPersona, initialPersonas, personaId],
@@ -307,18 +309,22 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
       nextFilters = filters,
       nextPersonaId = personaId,
       nextStrategy = screenerStrategy,
+      showAsRefresh = false,
     }: {
       forceRefresh?: boolean;
       nextFilters?: WheelFilters;
       nextPersonaId?: PersonaId;
       nextStrategy?: WheelCompanyStrategy;
+      showAsRefresh?: boolean;
     } = {}) => {
       await Promise.resolve();
 
       const strategyChanged = nextStrategy !== screenerStrategy;
       const filtersChanged = nextFilters !== filters;
 
-      setRequestState(screenerResponse ? "refreshing" : "loading");
+      setRequestState(
+        showAsRefresh || screenerResponse ? "refreshing" : "loading",
+      );
       setError(null);
       setScreenerStrategy(nextStrategy);
 
@@ -363,6 +369,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             ? "successStale"
             : "successFresh",
         );
+
+        return nextResponse;
       } catch (caught) {
         setRequestState("errorNoCache");
         setError(
@@ -370,6 +378,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             ? caught.message
             : "Unable to load top companies.",
         );
+
+        return null;
       }
     },
     [
@@ -712,7 +722,23 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     if (!didLoadInitialScreener.current) {
       didLoadInitialScreener.current = true;
       screenerLoadTimer = window.setTimeout(() => {
-        void loadTopCompanies();
+        void (async () => {
+          const initialResponse = await loadTopCompanies();
+
+          if (
+            !cancelled &&
+            shouldAutoRefreshScreenerResponse({
+              alreadyRefreshed: didAutoRefreshInitialScreener.current,
+              response: initialResponse,
+            })
+          ) {
+            didAutoRefreshInitialScreener.current = true;
+            void loadTopCompanies({
+              forceRefresh: true,
+              showAsRefresh: true,
+            });
+          }
+        })();
       }, 0);
     }
 
