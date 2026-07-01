@@ -140,7 +140,7 @@ const envSchema = z.object({
     ),
   WHEEL_SCREENER_REFRESH_MAX_RUNS: z
     .preprocess(emptyStringToUndefined, z.string().optional())
-    .default("1"),
+    .default("4"),
   WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS: z
     .preprocess(emptyStringToUndefined, z.string().optional())
     .default("4"),

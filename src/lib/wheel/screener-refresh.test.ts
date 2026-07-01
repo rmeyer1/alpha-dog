@@ -154,8 +154,80 @@ describe("screener refresh scheduling", () => {
       getScreenerWeekendRefreshMaxRuns,
     } = await importRefresh();
 
-    expect(getScreenerRefreshMaxRuns()).toBe(1);
+    expect(getScreenerRefreshMaxRuns()).toBe(4);
     expect(getScreenerWeekendRefreshMaxRuns()).toBe(4);
+  });
+
+  it("summarizes per-strategy refresh health decisions", async () => {
+    const { summarizeScreenerRefreshDecisions } = await importRefresh();
+
+    expect(
+      summarizeScreenerRefreshDecisions([
+        {
+          ageMs: 20 * 60 * 1000,
+          reason: "Latest materialized snapshot is due for refresh.",
+          request: {
+            persona: "balanced_wheel",
+            strategy: "short_put",
+          },
+          snapshotId: "snapshot-1",
+          status: "due",
+        },
+        {
+          ageMs: 5 * 60 * 1000,
+          reason: "Latest materialized snapshot is still within refresh age.",
+          request: {
+            persona: "balanced_wheel",
+            strategy: "covered_call",
+          },
+          snapshotId: "snapshot-2",
+          status: "recent",
+        },
+        {
+          ageMs: 2 * 60 * 1000,
+          reason: "A matching screener snapshot is already running.",
+          request: {
+            persona: "balanced_wheel",
+            strategy: "put_credit_spread",
+          },
+          snapshotId: "snapshot-3",
+          status: "running",
+        },
+      ]),
+    ).toEqual({
+      configuredCount: 3,
+      dueCount: 1,
+      maxAgeMinutes: 20,
+      notConfiguredCount: 0,
+      recentCount: 1,
+      runningCount: 1,
+      strategies: [
+        {
+          ageMinutes: 20,
+          persona: "balanced_wheel",
+          reason: "Latest materialized snapshot is due for refresh.",
+          snapshotId: "snapshot-1",
+          status: "due",
+          strategy: "short_put",
+        },
+        {
+          ageMinutes: 5,
+          persona: "balanced_wheel",
+          reason: "Latest materialized snapshot is still within refresh age.",
+          snapshotId: "snapshot-2",
+          status: "recent",
+          strategy: "covered_call",
+        },
+        {
+          ageMinutes: 2,
+          persona: "balanced_wheel",
+          reason: "A matching screener snapshot is already running.",
+          snapshotId: "snapshot-3",
+          status: "running",
+          strategy: "put_credit_spread",
+        },
+      ],
+    });
   });
 
   it("does not query snapshots when Supabase service-role config is missing", async () => {
