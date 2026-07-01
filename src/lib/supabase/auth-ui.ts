@@ -74,3 +74,9 @@ export function accountAuthNoticeFromSearchParams(
     title: "Sign-in failed",
   };
 }
+
+export function accountNextPathFromSearchParams(
+  searchParams: AccountSearchParams,
+) {
+  return safeRedirectPath(firstParam(searchParams.next) ?? "/account");
+}
