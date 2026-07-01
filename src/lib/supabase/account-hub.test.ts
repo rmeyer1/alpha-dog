@@ -120,6 +120,8 @@ describe("account hub state", () => {
 
     await expect(loadAccountHubState(client)).resolves.toEqual({
       email: "desk@example.com",
+      firstName: "Ryan",
+      lastName: "",
       missingFields: ["last name"],
       status: "incomplete_profile",
       userId: "user-1",

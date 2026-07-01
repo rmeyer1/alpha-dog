@@ -12,9 +12,11 @@ import {
   ShieldCheck,
   UserCircle,
 } from "lucide-react";
+import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
 import {
   accountAuthNoticeFromSearchParams,
+  accountNextPathFromSearchParams,
   googleSignInPath,
   type AccountSearchParams,
   type AuthUiNotice,
@@ -234,7 +236,11 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
   );
 }
 
-function IncompleteProfileState({ state }: {
+function IncompleteProfileState({
+  nextPath,
+  state,
+}: {
+  nextPath: string;
   state: Extract<AccountHubState, { status: "incomplete_profile" }>;
 }) {
   return (
@@ -256,6 +262,12 @@ function IncompleteProfileState({ state }: {
             needs {state.missingFields.join(", ") || "profile details"} before
             saved presets and account-owned workflows are available.
           </p>
+          <ProfileCompletionForm
+            email={state.email}
+            firstName={state.firstName}
+            lastName={state.lastName}
+            nextPath={nextPath}
+          />
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <MetricTile
               icon={<CircleUserRound className="size-4 text-amber-200" />}
@@ -414,9 +426,12 @@ export default async function AccountPage({
 }: {
   searchParams?: Promise<AccountSearchParams>;
 }) {
+  const resolvedSearchParams = await searchParams ?? {};
   const authNotice = accountAuthNoticeFromSearchParams(
-    await searchParams ?? {},
+    resolvedSearchParams,
   );
+  const nextPath = authNotice?.nextPath ??
+    accountNextPathFromSearchParams(resolvedSearchParams);
   const state = await loadAccountHubState(
     await createSupabaseServerComponentClient(),
   );
@@ -426,7 +441,7 @@ export default async function AccountPage({
   }
 
   if (state.status === "incomplete_profile") {
-    return <IncompleteProfileState state={state} />;
+    return <IncompleteProfileState nextPath={nextPath} state={state} />;
   }
 
   if (state.status === "error") {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   accountAuthNoticeFromSearchParams,
+  accountNextPathFromSearchParams,
   googleSignInPath,
 } from "./auth-ui";
 
@@ -10,6 +11,13 @@ describe("auth UI state", () => {
       .toBe("/api/auth/oauth/google?next=%2Fscreeners");
     expect(googleSignInPath("https://evil.example"))
       .toBe("/api/auth/oauth/google?next=%2Faccount");
+  });
+
+  it("extracts safe account next destinations", () => {
+    expect(accountNextPathFromSearchParams({ next: "/screeners" }))
+      .toBe("/screeners");
+    expect(accountNextPathFromSearchParams({ next: "https://evil.example" }))
+      .toBe("/account");
   });
 
   it("maps profile completion callbacks to a profile-required notice", () => {

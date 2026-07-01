@@ -152,6 +152,44 @@ Error codes:
   creation. The server attempts to delete the newly created auth user as
   compensating cleanup before returning this error.
 
+### `PATCH /api/auth/profile`
+
+Completes the signed-in user's required account profile. The route derives
+`id` and `email` from the active Supabase session; the client may only submit
+editable profile name fields.
+
+Request:
+
+```json
+{
+  "firstName": "Ryan",
+  "lastName": "Meyer"
+}
+```
+
+Success response:
+
+```json
+{
+  "status": "complete",
+  "profile": {
+    "id": "auth-user-id",
+    "email": "desk@example.com",
+    "firstName": "Ryan",
+    "lastName": "Meyer"
+  }
+}
+```
+
+Error codes:
+
+- `INVALID_PROFILE`: missing first or last name.
+- `PROFILE_UNAUTHENTICATED`: no active Supabase session.
+- `PROFILE_MISSING_EMAIL`: Supabase Auth did not provide an email.
+- `ACCOUNT_EMAIL_CONFLICT`: session email conflicts with another profile.
+- `PROFILE_AUTH_NOT_CONFIGURED`: Supabase Auth config is unavailable.
+- `PROFILE_SAVE_FAILED`: profile upsert failed.
+
 ---
 
 ## 3. Endpoint: Analyze Wheel Candidates

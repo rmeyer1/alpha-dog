@@ -21,6 +21,8 @@ export type AccountHubState =
   | { status: "unauthenticated" }
   | {
       email: string | null;
+      firstName: string | null;
+      lastName: string | null;
       missingFields: string[];
       status: "incomplete_profile";
       userId: string;
@@ -93,6 +95,8 @@ export async function loadAccountHubState(
   if (!profile.data || !isAccountProfileComplete(profile.data)) {
     return {
       email: profile.data?.email ?? fallbackEmail(user),
+      firstName: profile.data?.first_name ?? null,
+      lastName: profile.data?.last_name ?? null,
       missingFields: missingProfileFields(profile.data),
       status: "incomplete_profile",
       userId: user.id,

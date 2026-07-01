@@ -19,6 +19,18 @@ Use this checklist for the OAuth foundation and account sign-in UX.
 - Confirm Apple sign-in is shown as deferred and is not an enabled provider
   launch action for MVP.
 
+## Profile Completion
+
+- Sign in with an account that has no complete `account_profiles` row.
+- Confirm `/account?profile=complete&next=/screeners` shows the profile
+  completion form instead of the generic account hub.
+- Confirm the provider/session email is displayed as immutable identity data.
+- Submit empty first and last names and confirm inline validation appears.
+- Submit valid first and last names and confirm `PATCH /api/auth/profile`
+  returns `status = complete`.
+- Confirm the app routes back to the intended `next` destination or refreshes
+  the account hub when `next=/account`.
+
 ## Future Apple Support
 
 - Apple login is post-MVP. Do not configure, require, or test Apple as a launch
