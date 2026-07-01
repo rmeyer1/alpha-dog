@@ -115,6 +115,12 @@ The account UI recognizes these safe routing states:
   confirm/cancel actions and may submit confirmation to a backend provider-link
   endpoint when that endpoint exists.
 
+The manual account form posts to `POST /api/auth/manual-account` with
+`email`, `firstName`, `lastName`, and a safe `redirectTo` back to
+`/account?profile=complete&next=...`. A successful invite renders an
+invite-sent state. `EMAIL_ALREADY_REGISTERED` redirects back into the account
+conflict UI instead of leaving the user on a dead-end form error.
+
 ### `POST /api/auth/manual-account`
 
 Creates a passwordless/manual account invite and the required account profile.

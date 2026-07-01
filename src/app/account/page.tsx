@@ -11,8 +11,10 @@ import {
   LockKeyhole,
   Save,
   ShieldCheck,
+  UserPlus,
   UserCircle,
 } from "lucide-react";
+import { ManualAccountForm } from "@/components/account/manual-account-form";
 import { ProviderLinkingForm } from "@/components/account/provider-linking-form";
 import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
@@ -218,7 +220,7 @@ function ProviderLinkPromptCard({
 
 function SignInActions({ nextPath }: { nextPath: string }) {
   return (
-    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+    <div className="mt-6 grid gap-3 lg:grid-cols-3">
       <Link
         aria-label="Sign in with Google"
         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
@@ -236,6 +238,14 @@ function SignInActions({ nextPath }: { nextPath: string }) {
         <Clock3 className="size-5" />
         Apple sign-in deferred
       </button>
+      <a
+        aria-label="Create a manual account"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+        href="#manual-account"
+      >
+        <UserPlus className="size-5" />
+        Create manual account
+      </a>
     </div>
   );
 }
@@ -261,6 +271,9 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
               presets, and account-owned controls.
             </p>
             <SignInActions nextPath={nextPath} />
+            <section id="manual-account">
+              <ManualAccountForm nextPath={nextPath} />
+            </section>
             <Link
               className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
               href="/screeners"

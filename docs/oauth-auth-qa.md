@@ -16,6 +16,8 @@ Use this checklist for the OAuth foundation and account sign-in UX.
 - Confirm the page shows an accessible Google sign-in action.
 - Confirm the Google link preserves a safe `next` destination when supplied,
   such as `/account?next=/screeners`.
+- Confirm the manual account path focuses the manual account form and preserves
+  the same safe `next` value for invite redirects.
 - Confirm Apple sign-in is shown as deferred and is not an enabled provider
   launch action for MVP.
 
