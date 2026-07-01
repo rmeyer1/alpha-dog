@@ -26,6 +26,16 @@ that was sent in `redirectTo` was not accepted by Supabase, so Supabase fell
 back to its configured Site URL. Add the current Vercel preview callback URL
 or a matching wildcard pattern to Supabase Redirect URLs and retry.
 
+## Automated Frontend Coverage
+
+- `tests/e2e/auth-flows.spec.ts` runs Playwright coverage for:
+  - signed-out account page auth actions and manual account form labels
+  - unauthenticated presets panel gating
+  - signed-in dashboard account navigation and logout clearing saved presets
+  - incomplete-profile account navigation state
+- The Playwright suite mocks account-state, preset, logout, and screener API
+  responses so it does not require live Supabase users or provider credentials.
+
 ## Google Success
 
 - Visit `/api/auth/oauth/google?next=/screeners`.
@@ -64,6 +74,26 @@ or a matching wildcard pattern to Supabase Redirect URLs and retry.
 - Future Apple private relay email addresses should display as returned by the
   backend/account policy and should not be inferred as equivalent to another
   email without an explicit linking flow.
+- When Apple or another future provider is enabled, repeat the duplicate-email
+  and provider-link prompt scenarios with private relay and direct provider
+  emails. Confirm the UI treats both as backend-provided email strings only.
+
+## Manual Provider Matrix
+
+- Google new account, complete provider profile: returns to the requested
+  `next` route and shows complete account state.
+- Google new account, missing first or last name: routes to
+  `/account?profile=complete&next=...` and shows the profile completion form.
+- Google cancellation: routes to `/account?auth_error=oauth_cancelled&next=...`
+  and shows recoverable retry/dashboard actions.
+- Google duplicate normalized email: routes to
+  `/account?auth_error=ACCOUNT_EMAIL_CONFLICT&next=...` and shows the account
+  conflict state.
+- Manual account duplicate normalized email: routes to
+  `/account?auth_error=EMAIL_ALREADY_REGISTERED&next=...` and shows the manual
+  duplicate conflict state.
+- Future provider private relay/direct email: keep disabled for MVP, then test
+  only after provider support is explicitly enabled.
 
 ## Missing Email
 
