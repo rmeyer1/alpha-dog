@@ -1,20 +1,18 @@
 import Link from "next/link";
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   CircleUserRound,
-  Clock3,
   Database,
   KeyRound,
-  Link2,
   LockKeyhole,
   Save,
   ShieldCheck,
   UserPlus,
   UserCircle,
 } from "lucide-react";
-import { ManualAccountForm } from "@/components/account/manual-account-form";
+import { AccountShell } from "@/components/account/account-shell";
+import { GoogleSignInButton } from "@/components/account/google-sign-in-button";
 import { ProviderLinkingForm } from "@/components/account/provider-linking-form";
 import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
@@ -27,7 +25,7 @@ import {
   type AccountSearchParams,
   type AuthUiNotice,
 } from "@/lib/supabase/auth-ui";
-import { AccountNavControl } from "@/components/account/account-nav-control";
+import { manualAccountCreatePath } from "@/lib/supabase/manual-account-ui";
 import { createSupabaseServerComponentClient } from "@/lib/supabase/server-component";
 
 export const dynamic = "force-dynamic";
@@ -46,76 +44,6 @@ function formatDateTime(value: string | null) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-function AccountShell({
-  children,
-  eyebrow,
-  icon,
-  title,
-}: {
-  children: React.ReactNode;
-  eyebrow: string;
-  icon: React.ReactNode;
-  title: string;
-}) {
-  return (
-    <main className="min-h-screen bg-[#080a0c] text-zinc-100">
-      <header className="border-b border-white/10 bg-[#111314]">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
-          <div>
-            <Link
-              className="inline-flex items-center gap-2 text-sm font-medium text-zinc-400 transition hover:text-white"
-              href="/"
-            >
-              <ArrowLeft className="size-4" />
-              Alpha Dog
-            </Link>
-            <p className="mt-4 text-sm font-medium uppercase text-emerald-200">
-              {eyebrow}
-            </p>
-            <div className="mt-2 flex items-center gap-3">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-emerald-300/25 bg-emerald-300/10 text-emerald-100">
-                {icon}
-              </span>
-              <h1 className="text-3xl font-semibold tracking-normal text-white">
-                {title}
-              </h1>
-            </div>
-          </div>
-          <div className="flex max-w-full flex-col gap-3 sm:flex-row sm:items-start">
-            <nav
-              aria-label="Account navigation"
-              className="max-w-full overflow-x-auto rounded-lg border border-white/10 bg-black/25 p-1"
-            >
-              <div className="flex w-max gap-1">
-                <Link
-                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
-                  href="/screeners"
-                >
-                  Screeners
-                </Link>
-                <Link
-                  className="rounded-md px-3 py-2 text-sm font-medium text-zinc-300 hover:bg-white/10 hover:text-white"
-                  href="/traders"
-                >
-                  Traders
-                </Link>
-                <Link
-                  className="rounded-md bg-emerald-300 px-3 py-2 text-sm font-medium text-black"
-                  href="/account"
-                >
-                  Account
-                </Link>
-              </div>
-            </nav>
-            <AccountNavControl returnPath="/account" />
-          </div>
-        </div>
-      </header>
-      {children}
-    </main>
-  );
 }
 
 function MetricTile({
@@ -149,9 +77,7 @@ function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
       notice.status === "email_conflict"
     ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
     : "border-red-300/25 bg-red-300/10 text-red-100";
-  const primaryAction = notice.status === "email_conflict"
-    ? { href: "/account", label: "Account hub" }
-    : { href: googleSignInPath(notice.nextPath), label: "Retry Google" };
+  const isGoogleRetry = notice.status !== "email_conflict";
 
   return (
     <section className={`rounded-lg border p-4 ${tone}`}>
@@ -163,13 +89,20 @@ function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
           </p>
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-          <Link
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-            href={primaryAction.href}
-          >
-            <UserCircle className="size-4" />
-            {primaryAction.label}
-          </Link>
+          {isGoogleRetry ? (
+            <GoogleSignInButton
+              href={googleSignInPath(notice.nextPath)}
+              label="Retry with Google"
+            />
+          ) : (
+            <Link
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+              href="/account"
+            >
+              <UserCircle className="size-4" />
+              Account hub
+            </Link>
+          )}
           <Link
             className="inline-flex min-h-10 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
             href="/screeners"
@@ -195,7 +128,7 @@ function ProviderLinkPromptCard({
     <section className="rounded-lg border border-cyan-300/25 bg-cyan-300/10 p-5">
       <div className="flex items-start gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
-          <Link2 className="size-5" />
+          <UserCircle className="size-5" />
         </span>
         <div>
           <p className="text-sm font-medium uppercase text-cyan-200">
@@ -224,32 +157,16 @@ function ProviderLinkPromptCard({
 
 function SignInActions({ nextPath }: { nextPath: string }) {
   return (
-    <div className="mt-6 grid gap-3 lg:grid-cols-3">
+    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+      <GoogleSignInButton href={googleSignInPath(nextPath)} />
       <Link
-        aria-label="Sign in with Google"
-        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-        href={googleSignInPath(nextPath)}
-      >
-        <UserCircle className="size-5" />
-        Sign in with Google
-      </Link>
-      <button
-        aria-disabled="true"
-        className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-500"
-        disabled
-        type="button"
-      >
-        <Clock3 className="size-5" />
-        Apple sign-in deferred
-      </button>
-      <a
         aria-label="Create a manual account"
         className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-        href="#manual-account"
+        href={manualAccountCreatePath(nextPath)}
       >
         <UserPlus className="size-5" />
         Create manual account
-      </a>
+      </Link>
     </div>
   );
 }
@@ -275,9 +192,6 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
               presets, and account-owned controls.
             </p>
             <SignInActions nextPath={nextPath} />
-            <section id="manual-account">
-              <ManualAccountForm nextPath={nextPath} />
-            </section>
             <Link
               className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
               href="/screeners"

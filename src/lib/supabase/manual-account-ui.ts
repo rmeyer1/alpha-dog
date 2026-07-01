@@ -60,6 +60,14 @@ export function manualAccountConflictPath(nextPath: string) {
   return `/account?${params.toString()}`;
 }
 
+export function manualAccountCreatePath(nextPath: string) {
+  const params = new URLSearchParams({
+    next: safeRedirectPath(nextPath),
+  });
+
+  return `/account/manual?${params.toString()}`;
+}
+
 export function manualAccountRedirectTo(origin: string, nextPath: string) {
   const url = new URL("/account", origin);
   url.searchParams.set("profile", "complete");
