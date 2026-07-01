@@ -11,12 +11,14 @@ import type {
   PersonaConfig,
   PersonaId,
 } from "@/lib/wheel/types";
+import { AccountNavControl } from "@/components/account/account-nav-control";
 import type { RequestState } from "./types";
 
 export function DashboardHeader({
   canAnalyze,
   canRefresh,
   initialPersonas,
+  onAccountSignedOut,
   onAnalyze,
   onForceRefresh,
   onPersonaChange,
@@ -29,6 +31,7 @@ export function DashboardHeader({
   canAnalyze: boolean;
   canRefresh: boolean;
   initialPersonas: PersonaConfig[];
+  onAccountSignedOut: () => void;
   onAnalyze: (event: FormEvent<HTMLFormElement>) => void;
   onForceRefresh: () => void;
   onPersonaChange: (personaId: PersonaId) => void;
@@ -87,6 +90,10 @@ export function DashboardHeader({
               <ShieldAlert className="size-4 text-amber-200" />
               Decision support only. Not financial advice.
             </div>
+            <AccountNavControl
+              onSignedOut={onAccountSignedOut}
+              returnPath="/screeners"
+            />
           </div>
         </div>
 

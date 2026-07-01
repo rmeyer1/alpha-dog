@@ -45,11 +45,22 @@ blocking behavior.
 2. Call `GET /api/presets`.
 3. Confirm HTTP `200` and a `{ "presets": [] }` or populated presets response.
 
+### Account Navigation State
+
+1. Clear Supabase auth cookies or use a private browser session.
+2. Call `GET /api/auth/account-state`.
+3. Confirm HTTP `200` with `account.status = unauthenticated`.
+4. Sign in with an incomplete profile and confirm
+   `account.status = incomplete_profile`.
+5. Complete the profile and confirm `account.status = ready` with displayable
+   account identity fields only.
+
 ### Logout
 
 1. Sign in and confirm `GET /api/presets` returns HTTP `200`.
-2. Call `POST /api/auth/logout`.
-3. Confirm the response is:
+2. Confirm the app header exposes a sign-out control.
+3. Call `POST /api/auth/logout` or use the header control.
+4. Confirm the response is:
 
 ```json
 {
@@ -57,9 +68,11 @@ blocking behavior.
 }
 ```
 
-4. Reload the app or call `GET /api/presets` again.
-5. Confirm the user is unauthenticated and account-owned APIs return
+5. Reload the app or call `GET /api/presets` again.
+6. Confirm the user is unauthenticated and account-owned APIs return
    `UNAUTHENTICATED`.
+7. Confirm dashboard preset state clears instead of showing stale
+   account-owned presets.
 
 ### Route Exclusions
 
@@ -73,5 +86,6 @@ Confirm middleware does not block:
 ## Automated Coverage
 
 - `src/lib/supabase/account-session.test.ts`
+- `src/lib/supabase/account-nav.test.ts`
 - `src/lib/supabase/session-middleware.test.ts`
 - `src/lib/supabase/logout.test.ts`

@@ -65,6 +65,18 @@ Safe callback outcomes:
 - provider cancellation: redirect with `auth_error=oauth_cancelled`
 - callback/session errors: redirect with safe `auth_error` codes
 
+### `GET /api/auth/account-state`
+
+Returns safe account navigation state for client-rendered app headers. It does
+not return provider tokens, raw Supabase profile payloads, or service-role data.
+
+Possible `account.status` values:
+
+- `unauthenticated`: no active Supabase browser session.
+- `incomplete_profile`: signed in but missing required account profile fields.
+- `ready`: signed in with a complete account profile.
+- `error`: account state could not be loaded.
+
 ### `POST /api/auth/logout`
 
 Clears the active Supabase browser session. The route returns a stable success
