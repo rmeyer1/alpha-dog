@@ -49,7 +49,27 @@ Use this checklist for the OAuth foundation and account sign-in UX.
 
 - Sign in with an OAuth provider whose normalized email already belongs to another profile.
 - Confirm the callback redirects with `auth_error=ACCOUNT_EMAIL_CONFLICT`.
-- Confirm the unique `normalized_email` constraint prevents a duplicate profile.
+- Confirm `/account?auth_error=ACCOUNT_EMAIL_CONFLICT&next=/screeners`
+  renders the account conflict state instead of the generic sign-in failure.
+- Confirm the conflict state offers safe actions back to the account hub and
+  dashboard without implying that the client can merge accounts.
+- Confirm a future manual account form can use
+  `/account?auth_error=EMAIL_ALREADY_REGISTERED` to render the manual duplicate
+  email state.
+- Confirm the unique `normalized_email` constraint prevents a duplicate
+  profile.
+
+## Provider Link Prompt
+
+- While signed in, visit
+  `/account?provider_link=required&provider=google&provider_email=desk@example.com&next=/screeners`.
+- Confirm the account page renders a provider-link confirmation panel with
+  confirm and cancel actions.
+- Confirm the provider email is displayed exactly as supplied by the backend.
+- Confirm the confirm and cancel controls are keyboard reachable and have
+  screen-reader labels.
+- Confirm unavailable backend linking returns a plain recoverable error instead
+  of exposing stack traces or provider internals.
 
 ## Cancelled OAuth
 
