@@ -158,7 +158,7 @@ function ProviderLinkPromptCard({
 
 function SignInActions({ nextPath }: { nextPath: string }) {
   return (
-    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-3 sm:grid-cols-2">
       <GoogleSignInButton href={googleSignInPath(nextPath)} />
       <Link
         aria-label="Create a manual account"
@@ -186,35 +186,18 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
 
   return (
     <AccountShell
-      eyebrow="Session required"
+      eyebrow="Account access"
       icon={<LockKeyhole className="size-6" />}
       showAccountControl={false}
       title="Sign in to manage your account"
     >
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
         <section className="grid gap-4">
           <AuthNoticeCard notice={notice} />
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <h2 className="text-2xl font-semibold tracking-normal text-white">
-              Account-owned settings need a Supabase session.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-              Sign in to view profile status, connected providers, saved
-              presets, and account-owned controls.
-            </p>
             <SignInActions nextPath={nextPath} />
           </section>
         </section>
-        <aside className="rounded-lg border border-white/10 bg-[#151718] p-5">
-          <ShieldCheck className="size-5 text-cyan-200" />
-          <h2 className="mt-4 text-lg font-semibold text-white">
-            Server-checked access
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">
-            Account data is read server-side from Supabase Auth and
-            account-owned RLS tables.
-          </p>
-        </aside>
       </div>
     </AccountShell>
   );
