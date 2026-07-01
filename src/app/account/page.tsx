@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   CircleUserRound,
   Database,
@@ -167,6 +168,15 @@ function SignInActions({ nextPath }: { nextPath: string }) {
         <UserPlus className="size-5" />
         Create manual account
       </Link>
+      <div className="sm:col-span-2 sm:flex sm:justify-center">
+        <Link
+          className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718] sm:w-[calc(50%-0.375rem)]"
+          href="/screeners"
+        >
+          Continue to public screeners
+          <ArrowRight className="size-4" />
+        </Link>
+      </div>
     </div>
   );
 }
@@ -192,12 +202,6 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
               presets, and account-owned controls.
             </p>
             <SignInActions nextPath={nextPath} />
-            <Link
-              className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-              href="/screeners"
-            >
-              Continue to public screeners
-            </Link>
           </section>
         </section>
         <aside className="rounded-lg border border-white/10 bg-[#151718] p-5">
