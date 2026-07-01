@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   accountAuthErrorUrl,
   accountProfileCompletionUrl,
+  appOriginFromHeaders,
   ensureOAuthAccountProfile,
   safeRedirectPath,
 } from "@/lib/supabase/oauth";
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const providerError = request.nextUrl.searchParams.get("error");
   const nextPath = safeRedirectPath(request.nextUrl.searchParams.get("next"));
+  const appOrigin = appOriginFromHeaders(request.url, request.headers);
 
   if (providerError) {
     logAuthAccountFailure({
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "oauth_cancelled", nextPath),
+      accountAuthErrorUrl(appOrigin, "oauth_cancelled", nextPath),
       { status: 303 },
     );
   }
@@ -38,12 +40,12 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "missing_oauth_code", nextPath),
+      accountAuthErrorUrl(appOrigin, "missing_oauth_code", nextPath),
       { status: 303 },
     );
   }
 
-  const destination = new URL(nextPath, request.url);
+  const destination = new URL(nextPath, appOrigin);
   const response = NextResponse.redirect(destination, { status: 303 });
   const supabase = createSupabaseRouteClient(request, response);
 
@@ -55,7 +57,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "auth_not_configured", nextPath),
+      accountAuthErrorUrl(appOrigin, "auth_not_configured", nextPath),
       { status: 303 },
     );
   }
@@ -70,7 +72,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "oauth_callback_failed", nextPath),
+      accountAuthErrorUrl(appOrigin, "oauth_callback_failed", nextPath),
       { status: 303 },
     );
   }
@@ -86,7 +88,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "oauth_callback_failed", nextPath),
+      accountAuthErrorUrl(appOrigin, "oauth_callback_failed", nextPath),
       { status: 303 },
     );
   }
@@ -104,7 +106,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, profileResult.code, nextPath),
+      accountAuthErrorUrl(appOrigin, profileResult.code, nextPath),
       { status: 303 },
     );
   }
@@ -117,7 +119,7 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "missing_email", nextPath),
+      accountAuthErrorUrl(appOrigin, "missing_email", nextPath),
       { status: 303 },
     );
   }
@@ -130,7 +132,7 @@ export async function GET(request: NextRequest) {
   });
 
   return NextResponse.redirect(
-    accountProfileCompletionUrl(request.url, nextPath),
+    accountProfileCompletionUrl(appOrigin, nextPath),
     { status: 303 },
   );
 }

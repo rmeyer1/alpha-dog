@@ -2,6 +2,30 @@
 
 Use this checklist for the OAuth foundation and account sign-in UX.
 
+## Provider Redirect Configuration
+
+Google OAuth is brokered through Supabase, so Google should redirect to
+Supabase and Supabase should redirect back to this app.
+
+In Google Cloud OAuth client settings, add the Supabase callback URL:
+
+- `https://<supabase-project-ref>.supabase.co/auth/v1/callback`
+
+In Supabase Dashboard > Authentication > URL Configuration:
+
+- Set Site URL to the production app origin, not localhost.
+- Add the exact production callback URL:
+  - `https://<production-domain>/auth/callback`
+- Add a Vercel preview wildcard callback URL:
+  - `https://*-<vercel-team-or-account-slug>.vercel.app/**`
+- Keep local development allowed separately:
+  - `http://localhost:3000/**`
+
+If Supabase redirects to `localhost:3000/?code=...`, the app callback URL
+that was sent in `redirectTo` was not accepted by Supabase, so Supabase fell
+back to its configured Site URL. Add the current Vercel preview callback URL
+or a matching wildcard pattern to Supabase Redirect URLs and retry.
+
 ## Google Success
 
 - Visit `/api/auth/oauth/google?next=/screeners`.

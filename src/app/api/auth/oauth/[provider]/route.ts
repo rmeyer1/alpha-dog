@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   accountAuthErrorUrl,
+  appOriginFromHeaders,
   parseOAuthProvider,
   safeRedirectPath,
 } from "@/lib/supabase/oauth";
@@ -16,10 +17,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const { provider: rawProvider } = await context.params;
   const provider = parseOAuthProvider(rawProvider);
   const nextPath = safeRedirectPath(request.nextUrl.searchParams.get("next"));
+  const appOrigin = appOriginFromHeaders(request.url, request.headers);
 
   if (!provider) {
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "unsupported_provider", nextPath),
+      accountAuthErrorUrl(appOrigin, "unsupported_provider", nextPath),
       { status: 303 },
     );
   }
@@ -29,12 +31,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   if (!supabase) {
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "auth_not_configured", nextPath),
+      accountAuthErrorUrl(appOrigin, "auth_not_configured", nextPath),
       { status: 303 },
     );
   }
 
-  const redirectTo = new URL("/auth/callback", request.url);
+  const redirectTo = new URL("/auth/callback", appOrigin);
   redirectTo.searchParams.set("next", nextPath);
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -49,7 +51,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   if (error || !data.url) {
     return NextResponse.redirect(
-      accountAuthErrorUrl(request.url, "oauth_start_failed", nextPath),
+      accountAuthErrorUrl(appOrigin, "oauth_start_failed", nextPath),
       { status: 303 },
     );
   }
