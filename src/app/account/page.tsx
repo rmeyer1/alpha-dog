@@ -7,17 +7,21 @@ import {
   Clock3,
   Database,
   KeyRound,
+  Link2,
   LockKeyhole,
   Save,
   ShieldCheck,
   UserCircle,
 } from "lucide-react";
+import { ProviderLinkingForm } from "@/components/account/provider-linking-form";
 import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
 import {
   accountAuthNoticeFromSearchParams,
   accountNextPathFromSearchParams,
+  accountProviderLinkPromptFromSearchParams,
   googleSignInPath,
+  type AccountProviderLinkPrompt,
   type AccountSearchParams,
   type AuthUiNotice,
 } from "@/lib/supabase/auth-ui";
@@ -135,9 +139,13 @@ function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
     return null;
   }
 
-  const tone = notice.status === "profile_required"
+  const tone = notice.status === "profile_required" ||
+      notice.status === "email_conflict"
     ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
     : "border-red-300/25 bg-red-300/10 text-red-100";
+  const primaryAction = notice.status === "email_conflict"
+    ? { href: "/account", label: "Account hub" }
+    : { href: googleSignInPath(notice.nextPath), label: "Retry Google" };
 
   return (
     <section className={`rounded-lg border p-4 ${tone}`}>
@@ -151,10 +159,10 @@ function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
           <Link
             className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-            href={googleSignInPath(notice.nextPath)}
+            href={primaryAction.href}
           >
             <UserCircle className="size-4" />
-            Retry Google
+            {primaryAction.label}
           </Link>
           <Link
             className="inline-flex min-h-10 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
@@ -162,6 +170,46 @@ function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
           >
             Dashboard
           </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProviderLinkPromptCard({
+  prompt,
+}: {
+  prompt: AccountProviderLinkPrompt | null;
+}) {
+  if (!prompt) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-lg border border-cyan-300/25 bg-cyan-300/10 p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-cyan-300/25 bg-cyan-300/10 text-cyan-100">
+          <Link2 className="size-5" />
+        </span>
+        <div>
+          <p className="text-sm font-medium uppercase text-cyan-200">
+            Provider link confirmation
+          </p>
+          <h2 className="mt-2 text-xl font-semibold tracking-normal text-white">
+            Link {titleCase(prompt.provider)} to this account?
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300">
+            Confirm only if you are signed in to the account that should own
+            this provider. {prompt.email
+              ? `The provider reported ${prompt.email}.`
+              : "The provider did not return a displayable email."} The client
+            cannot merge accounts or override an existing account email.
+          </p>
+          <ProviderLinkingForm
+            email={prompt.email}
+            nextPath={prompt.nextPath}
+            provider={prompt.provider}
+          />
         </div>
       </div>
     </section>
@@ -237,10 +285,14 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
 }
 
 function IncompleteProfileState({
+  linkPrompt,
   nextPath,
+  notice,
   state,
 }: {
+  linkPrompt: AccountProviderLinkPrompt | null;
   nextPath: string;
+  notice: AuthUiNotice;
   state: Extract<AccountHubState, { status: "incomplete_profile" }>;
 }) {
   return (
@@ -249,7 +301,9 @@ function IncompleteProfileState({
       icon={<AlertTriangle className="size-6" />}
       title="Complete your account profile"
     >
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto grid max-w-7xl gap-4 px-4 py-8 sm:px-6 lg:px-8">
+        <AuthNoticeCard notice={notice} />
+        <ProviderLinkPromptCard prompt={linkPrompt} />
         <section className="rounded-lg border border-amber-300/25 bg-[#151718] p-5">
           <p className="text-sm font-medium uppercase text-amber-200">
             Missing profile fields
@@ -307,7 +361,13 @@ function ErrorState({ message }: { message: string }) {
   );
 }
 
-function ReadyState({ state }: {
+function ReadyState({
+  linkPrompt,
+  notice,
+  state,
+}: {
+  linkPrompt: AccountProviderLinkPrompt | null;
+  notice: AuthUiNotice;
   state: Extract<AccountHubState, { status: "ready" }>;
 }) {
   const fullName = `${state.firstName} ${state.lastName}`;
@@ -320,6 +380,8 @@ function ReadyState({ state }: {
     >
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
         <section className="grid gap-4">
+          <AuthNoticeCard notice={notice} />
+          <ProviderLinkPromptCard prompt={linkPrompt} />
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
@@ -363,6 +425,11 @@ function ReadyState({ state }: {
             <h2 className="text-lg font-semibold text-white">
               Connected providers
             </h2>
+            <p className="mt-2 text-sm leading-6 text-zinc-400">
+              These providers are linked to this signed-in account. Future
+              provider emails, including Apple private relay addresses, are
+              shown exactly as recorded by the backend.
+            </p>
             {state.identities.length === 0 ? (
               <p className="mt-3 text-sm leading-6 text-zinc-400">
                 No provider identity rows have been recorded yet.
@@ -430,6 +497,9 @@ export default async function AccountPage({
   const authNotice = accountAuthNoticeFromSearchParams(
     resolvedSearchParams,
   );
+  const linkPrompt = accountProviderLinkPromptFromSearchParams(
+    resolvedSearchParams,
+  );
   const nextPath = authNotice?.nextPath ??
     accountNextPathFromSearchParams(resolvedSearchParams);
   const state = await loadAccountHubState(
@@ -441,12 +511,25 @@ export default async function AccountPage({
   }
 
   if (state.status === "incomplete_profile") {
-    return <IncompleteProfileState nextPath={nextPath} state={state} />;
+    return (
+      <IncompleteProfileState
+        linkPrompt={linkPrompt}
+        nextPath={nextPath}
+        notice={authNotice}
+        state={state}
+      />
+    );
   }
 
   if (state.status === "error") {
     return <ErrorState message={state.message} />;
   }
 
-  return <ReadyState state={state} />;
+  return (
+    <ReadyState
+      linkPrompt={linkPrompt}
+      notice={authNotice}
+      state={state}
+    />
+  );
 }

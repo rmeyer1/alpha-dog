@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accountAuthNoticeFromSearchParams,
   accountNextPathFromSearchParams,
+  accountProviderLinkPromptFromSearchParams,
   googleSignInPath,
 } from "./auth-ui";
 
@@ -53,6 +54,59 @@ describe("auth UI state", () => {
       nextPath: "/account",
       status: "error",
       title: "Sign-in failed",
+    });
+  });
+
+  it("maps OAuth duplicate email conflicts to a specific notice", () => {
+    expect(accountAuthNoticeFromSearchParams({
+      auth_error: "ACCOUNT_EMAIL_CONFLICT",
+      next: "/screeners",
+    })).toEqual({
+      message: "That provider email already belongs to another account. Use the original sign-in method or return to the dashboard.",
+      nextPath: "/screeners",
+      status: "email_conflict",
+      title: "Account conflict needs your attention",
+    });
+  });
+
+  it("maps manual duplicate email conflicts to a specific notice", () => {
+    expect(accountAuthNoticeFromSearchParams({
+      auth_error: "EMAIL_ALREADY_REGISTERED",
+      next: "/account",
+    })).toEqual({
+      message: "That email already has an account. Use the existing sign-in method or return to the dashboard.",
+      nextPath: "/account",
+      status: "email_conflict",
+      title: "Email already registered",
+    });
+  });
+
+  it("extracts safe provider-link prompts from account URLs", () => {
+    expect(accountProviderLinkPromptFromSearchParams({
+      next: "/screeners",
+      provider: "Google",
+      provider_email: "relay@example.com",
+      provider_link: "required",
+    })).toEqual({
+      email: "relay@example.com",
+      nextPath: "/screeners",
+      provider: "google",
+    });
+  });
+
+  it("rejects unsafe provider-link prompt values", () => {
+    expect(accountProviderLinkPromptFromSearchParams({
+      provider: "google<script>",
+      provider_link: "required",
+    })).toBeNull();
+    expect(accountProviderLinkPromptFromSearchParams({
+      provider: "google",
+      provider_email: "desk@example.com\nSet-Cookie: secret",
+      provider_link: "required",
+    })).toEqual({
+      email: null,
+      nextPath: "/account",
+      provider: "google",
     });
   });
 });

@@ -104,6 +104,17 @@ normalized email already exists. OAuth should use `ACCOUNT_EMAIL_CONFLICT` when
 the provider email already belongs to a different account and cannot be linked
 automatically.
 
+The account UI recognizes these safe routing states:
+
+- `/account?auth_error=ACCOUNT_EMAIL_CONFLICT&next=/screeners`: OAuth provider
+  email conflicts with another account and must show the account conflict state.
+- `/account?auth_error=EMAIL_ALREADY_REGISTERED&next=/account`: manual account
+  creation attempted an email that is already registered.
+- `/account?provider_link=required&provider=google&provider_email=desk@example.com&next=/screeners`:
+  authenticated provider-link confirmation prompt. The client must show
+  confirm/cancel actions and may submit confirmation to a backend provider-link
+  endpoint when that endpoint exists.
+
 ### `POST /api/auth/manual-account`
 
 Creates a passwordless/manual account invite and the required account profile.

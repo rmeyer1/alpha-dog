@@ -4,7 +4,7 @@ export type AuthUiNotice =
   | {
       message: string;
       nextPath: string;
-      status: "error";
+      status: "email_conflict" | "error";
       title: string;
     }
   | {
@@ -19,6 +19,30 @@ export type AccountSearchParams = Record<string, string | string[] | undefined>;
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function safeProviderLabel(value: string | string[] | undefined) {
+  const provider = firstParam(value)?.trim().toLowerCase();
+
+  return provider && /^[a-z][a-z0-9_-]{0,31}$/.test(provider)
+    ? provider
+    : null;
+}
+
+function safeEmailDisplay(value: string | string[] | undefined) {
+  const email = firstParam(value)?.trim();
+
+  if (!email || email.length > 254 || /[\r\n<>]/.test(email)) {
+    return null;
+  }
+
+  return email;
+}
+
+export interface AccountProviderLinkPrompt {
+  email: string | null;
+  nextPath: string;
+  provider: string;
 }
 
 export function googleSignInPath(nextPath = "/account") {
@@ -58,12 +82,21 @@ export function accountAuthNoticeFromSearchParams(
     };
   }
 
-  if (authError === "ACCOUNT_EMAIL_CONFLICT") {
+  if (
+    authError === "ACCOUNT_EMAIL_CONFLICT" ||
+    authError === "EMAIL_ALREADY_REGISTERED"
+  ) {
+    const isManualConflict = authError === "EMAIL_ALREADY_REGISTERED";
+
     return {
-      message: "That email is already connected to another account. Use the original sign-in method or create a manual-account flow.",
+      message: isManualConflict
+        ? "That email already has an account. Use the existing sign-in method or return to the dashboard."
+        : "That provider email already belongs to another account. Use the original sign-in method or return to the dashboard.",
       nextPath,
-      status: "error",
-      title: "Email already registered",
+      status: "email_conflict",
+      title: isManualConflict
+        ? "Email already registered"
+        : "Account conflict needs your attention",
     };
   }
 
@@ -79,4 +112,24 @@ export function accountNextPathFromSearchParams(
   searchParams: AccountSearchParams,
 ) {
   return safeRedirectPath(firstParam(searchParams.next) ?? "/account");
+}
+
+export function accountProviderLinkPromptFromSearchParams(
+  searchParams: AccountSearchParams,
+): AccountProviderLinkPrompt | null {
+  if (firstParam(searchParams.provider_link) !== "required") {
+    return null;
+  }
+
+  const provider = safeProviderLabel(searchParams.provider);
+
+  if (!provider) {
+    return null;
+  }
+
+  return {
+    email: safeEmailDisplay(searchParams.provider_email ?? searchParams.email),
+    nextPath: accountNextPathFromSearchParams(searchParams),
+    provider,
+  };
 }
