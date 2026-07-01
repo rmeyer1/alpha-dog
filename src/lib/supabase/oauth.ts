@@ -72,6 +72,60 @@ export function safeRedirectPath(value: string | null) {
   return value;
 }
 
+function firstForwardedValue(value: string | null) {
+  return value?.split(",")[0]?.trim() || null;
+}
+
+function normalizedOrigin(origin: string | null) {
+  if (!origin) {
+    return null;
+  }
+
+  try {
+    const url = new URL(origin);
+
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return null;
+    }
+
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLocalhostOrigin(origin: string) {
+  const hostname = new URL(origin).hostname;
+
+  return hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+}
+
+export function appOriginFromHeaders(requestUrl: string, headers: Headers) {
+  const forwardedHost = firstForwardedValue(headers.get("x-forwarded-host"));
+  const host = forwardedHost ?? firstForwardedValue(headers.get("host"));
+  const forwardedProto = firstForwardedValue(headers.get("x-forwarded-proto"));
+  const fallbackUrl = new URL(requestUrl);
+  const proto = forwardedProto ?? fallbackUrl.protocol.replace(/:$/, "");
+  const forwardedOrigin = host
+    ? normalizedOrigin(`${proto}://${host}`)
+    : null;
+  const vercelUrl = firstForwardedValue(process.env.VERCEL_URL ?? null);
+  const vercelOrigin = vercelUrl
+    ? normalizedOrigin(
+        vercelUrl.startsWith("http") ? vercelUrl : `https://${vercelUrl}`,
+      )
+    : null;
+
+  if (forwardedOrigin && !isLocalhostOrigin(forwardedOrigin)) {
+    return forwardedOrigin;
+  }
+
+  return vercelOrigin ?? forwardedOrigin ?? fallbackUrl.origin;
+}
+
 export function accountAuthErrorUrl(
   requestUrl: string,
   code: string,

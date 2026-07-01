@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import {
   ACCOUNT_EMAIL_CONFLICT,
   EMAIL_ALREADY_REGISTERED,
   accountAuthErrorUrl,
   accountProfileCompletionUrl,
+  appOriginFromHeaders,
   ensureOAuthAccountProfile,
   manualDuplicateEmailResult,
   oauthProfileFromUser,
@@ -55,6 +56,10 @@ function supabaseMock({
     upsert,
   };
 }
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("oauth helpers", () => {
   it("accepts only supported providers", () => {
@@ -299,6 +304,46 @@ describe("oauth helpers", () => {
         ignoreDuplicates: true,
       }),
     );
+  });
+
+  it("prefers forwarded Vercel origin over internal localhost request URLs", () => {
+    const headers = new Headers({
+      host: "localhost:3000",
+      "x-forwarded-host": "alpha-dog.vercel.app",
+      "x-forwarded-proto": "https",
+    });
+
+    expect(
+      appOriginFromHeaders(
+        "http://localhost:3000/api/auth/oauth/google?next=/screeners",
+        headers,
+      ),
+    ).toBe("https://alpha-dog.vercel.app");
+  });
+
+  it("falls back to VERCEL_URL before the internal request origin", () => {
+    vi.stubEnv("VERCEL_URL", "alpha-dog.vercel.app");
+
+    expect(
+      appOriginFromHeaders(
+        "http://localhost:3000/api/auth/oauth/google?next=/screeners",
+        new Headers(),
+      ),
+    ).toBe("https://alpha-dog.vercel.app");
+  });
+
+  it("uses VERCEL_URL when forwarded headers still point at localhost", () => {
+    vi.stubEnv("VERCEL_URL", "alpha-dog.vercel.app");
+
+    expect(
+      appOriginFromHeaders(
+        "http://localhost:3000/api/auth/oauth/google?next=/screeners",
+        new Headers({
+          host: "localhost:3000",
+          "x-forwarded-proto": "http",
+        }),
+      ),
+    ).toBe("https://alpha-dog.vercel.app");
   });
 
   it("builds safe account status URLs", () => {
