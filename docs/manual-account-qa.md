@@ -1,14 +1,30 @@
 # Manual Account QA
 
-Issue #54 implements the server-side contract for manual account creation. UI wiring is intentionally left for the design/frontend card.
+Issue #54 implements the server-side contract for manual account creation.
+Issue #62 adds the account-page form for that contract.
+
+## Account Page Form
+
+- Visit `/account`.
+- Confirm the sign-in actions include Google, deferred Apple, and a manual
+  account path.
+- Confirm the manual account form includes labeled first name, last name, and
+  email fields with `autocomplete` attributes.
+- Submit empty fields and confirm inline field errors render without sending a
+  request.
+- Submit an invalid email and confirm the email field shows an inline error.
+- Confirm the submit button is disabled while the request is in flight.
 
 ## Valid Create
 
-- Submit `POST /api/auth/manual-account` with `email`, `firstName`, and `lastName`.
+- Submit the account page form with `email`, `firstName`, and `lastName`.
 - Confirm the response is `201` with `status: invite_sent`.
+- Confirm the UI shows an invite-sent success state for the requested email.
 - Confirm Supabase Auth has one user for the email.
 - Confirm `account_profiles` has one row keyed by that auth user ID.
 - Confirm `primary_provider` is `email`.
+- Confirm the invite redirect returns to `/account?profile=complete` with the
+  preserved safe `next` value.
 
 ## Missing Required Fields
 
@@ -26,6 +42,9 @@ Issue #54 implements the server-side contract for manual account creation. UI wi
 
 - Submit an email whose normalized form already exists in `account_profiles`.
 - Confirm the response is `409` with `error.code = EMAIL_ALREADY_REGISTERED`.
+- Confirm the form routes to
+  `/account?auth_error=EMAIL_ALREADY_REGISTERED&next=...` and renders the
+  account conflict UX.
 - Confirm no second Supabase Auth user is created.
 
 ## Retry After Partial Failure
