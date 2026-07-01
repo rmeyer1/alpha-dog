@@ -19,6 +19,12 @@ import type {
   WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
 import type { JsonValue } from "@/lib/trade-analysis/types";
+import {
+  isPresetAccessError,
+  presetAccessStateFromApiError,
+  presetOperationErrorMessage,
+  type PresetAccessState,
+} from "@/lib/presets/ui";
 import { CandidateResults } from "./wheel-dashboard/candidate-results";
 import { CompanyInsightStrip } from "@/components/company-insights";
 import { CompanyResults } from "./wheel-dashboard/company-results";
@@ -47,8 +53,16 @@ const defaultScreenerStrategy: WheelCompanyStrategy = "short_put";
 
 type ApiErrorPayload = {
   error: {
+    code?: string;
     message: string;
   };
+};
+
+type PresetOperation = "deleting" | "idle" | "loading" | "saving";
+
+type PresetFeedback = {
+  message: string;
+  tone: "error" | "success";
 };
 
 function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
@@ -183,26 +197,70 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [requestState, setRequestState] = useState<RequestState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
+  const [presetAccessState, setPresetAccessState] =
+    useState<PresetAccessState>({
+      message: "Loading saved presets.",
+      status: "loading",
+    });
+  const [presetFeedback, setPresetFeedback] = useState<PresetFeedback | null>(
+    null,
+  );
   const [presetName, setPresetName] = useState("Balanced 21-30 DTE");
+  const [presetOperation, setPresetOperation] =
+    useState<PresetOperation>("loading");
+  const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
   const didLoadInitialScreener = useRef(false);
   const activePersona = useMemo(
     () => personaById(initialPersonas, personaId, defaultPersona),
     [defaultPersona, initialPersonas, personaId],
   );
 
-  async function loadPresets() {
-    const presetResponse = await fetch("/api/presets", { cache: "no-store" });
-    const payload = (await presetResponse.json()) as
-      | { presets: SavedPreset[] }
-      | ApiErrorPayload;
-
-    if (!presetResponse.ok || isApiErrorPayload(payload)) {
-      setPresets([]);
-
-      return;
+  async function loadPresets({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) {
+      setPresetAccessState((current) =>
+        current.status === "ready"
+          ? current
+          : {
+              message: "Loading saved presets.",
+              status: "loading",
+            });
+      setPresetOperation("loading");
     }
 
-    setPresets(payload.presets);
+    try {
+      const presetResponse = await fetch("/api/presets", { cache: "no-store" });
+      const payload = (await presetResponse.json()) as
+        | { presets: SavedPreset[] }
+        | ApiErrorPayload;
+
+      if (!presetResponse.ok || isApiErrorPayload(payload)) {
+        setPresets([]);
+        setPresetAccessState(
+          presetAccessStateFromApiError(
+            isApiErrorPayload(payload) ? payload : null,
+            presetResponse.status,
+          ),
+        );
+        setPresetOperation("idle");
+
+        return false;
+      }
+
+      setPresets(payload.presets);
+      setPresetAccessState({ status: "ready" });
+      setPresetOperation("idle");
+
+      return true;
+    } catch {
+      setPresets([]);
+      setPresetAccessState({
+        message: "Unable to load saved presets.",
+        status: "error",
+      });
+      setPresetOperation("idle");
+
+      return false;
+    }
   }
 
   function clearTickerResult() {
@@ -394,20 +452,48 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   }
 
   async function savePreset() {
-    const apiResponse = await fetch("/api/presets", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: presetName,
-        basePersona: personaId,
-        filters,
-      }),
-    });
+    if (presetAccessState.status !== "ready") {
+      return;
+    }
+
+    setPresetFeedback(null);
+    setPresetOperation("saving");
+
+    let apiResponse: Response;
+
+    try {
+      apiResponse = await fetch("/api/presets", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: presetName,
+          basePersona: personaId,
+          filters,
+        }),
+      });
+    } catch {
+      setPresetFeedback({
+        message: "Unable to save preset.",
+        tone: "error",
+      });
+      setPresetOperation("idle");
+
+      return;
+    }
 
     if (apiResponse.ok) {
-      await loadPresets();
+      const reloaded = await loadPresets({ silent: true });
+
+      if (reloaded) {
+        setPresetFeedback({
+          message: "Preset saved.",
+          tone: "success",
+        });
+      }
+
+      setPresetOperation("idle");
 
       return;
     }
@@ -415,30 +501,88 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     const payload = (await apiResponse.json().catch(() => null)) as
       | ApiErrorPayload
       | null;
-    setError(
-      payload && isApiErrorPayload(payload)
-        ? payload.error.message
-        : "Unable to save preset.",
-    );
+    if (
+      payload &&
+      isApiErrorPayload(payload) &&
+      isPresetAccessError(payload, apiResponse.status)
+    ) {
+      setPresetAccessState(
+        presetAccessStateFromApiError(payload, apiResponse.status),
+      );
+    }
+
+    setPresetFeedback({
+      message: presetOperationErrorMessage(
+        payload,
+        "Unable to save preset.",
+      ),
+      tone: "error",
+    });
+    setPresetOperation("idle");
   }
 
   async function deletePreset(id: string) {
-    const apiResponse = await fetch(`/api/presets/${id}`, { method: "DELETE" });
+    if (presetAccessState.status !== "ready") {
+      return;
+    }
+
+    setDeletingPresetId(id);
+    setPresetFeedback(null);
+    setPresetOperation("deleting");
+
+    let apiResponse: Response;
+
+    try {
+      apiResponse = await fetch(`/api/presets/${id}`, { method: "DELETE" });
+    } catch {
+      setPresetFeedback({
+        message: "Unable to delete preset.",
+        tone: "error",
+      });
+      setPresetOperation("idle");
+      setDeletingPresetId(null);
+
+      return;
+    }
 
     if (!apiResponse.ok) {
       const payload = (await apiResponse.json().catch(() => null)) as
         | ApiErrorPayload
         | null;
-      setError(
-        payload && isApiErrorPayload(payload)
-          ? payload.error.message
-          : "Unable to delete preset.",
-      );
+      if (
+        payload &&
+        isApiErrorPayload(payload) &&
+        isPresetAccessError(payload, apiResponse.status)
+      ) {
+        setPresetAccessState(
+          presetAccessStateFromApiError(payload, apiResponse.status),
+        );
+      }
+
+      setPresetFeedback({
+        message: presetOperationErrorMessage(
+          payload,
+          "Unable to delete preset.",
+        ),
+        tone: "error",
+      });
+      setPresetOperation("idle");
+      setDeletingPresetId(null);
 
       return;
     }
 
-    await loadPresets();
+    const reloaded = await loadPresets({ silent: true });
+
+    if (reloaded) {
+      setPresetFeedback({
+        message: "Preset deleted.",
+        tone: "success",
+      });
+    }
+
+    setPresetOperation("idle");
+    setDeletingPresetId(null);
   }
 
   function loadPreset(preset: SavedPreset) {
@@ -541,15 +685,8 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     async function loadInitialData() {
       try {
-        const presetResponse = await fetch("/api/presets", {
-          cache: "no-store",
-        });
-        const presetPayload = (await presetResponse.json()) as
-          | { presets: SavedPreset[] }
-          | ApiErrorPayload;
-
-        if (!cancelled && presetResponse.ok && !isApiErrorPayload(presetPayload)) {
-          setPresets(presetPayload.presets);
+        if (!cancelled) {
+          await loadPresets();
         }
       } catch (caught) {
         if (!cancelled) {
@@ -686,14 +823,20 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           />
 
           <PresetsPanel
+            accessState={presetAccessState}
             defaultPersona={defaultPersona}
+            deletingPresetId={deletingPresetId}
+            feedback={presetFeedback}
             initialPersonas={initialPersonas}
             onDelete={(id) => void deletePreset(id)}
             onLoad={loadPreset}
             onNameChange={setPresetName}
+            onRetry={() => void loadPresets()}
             onSave={() => void savePreset()}
+            operation={presetOperation}
             presetName={presetName}
             presets={presets}
+            signInHref="/account?next=/screeners"
           />
 
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
