@@ -3,12 +3,8 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  CircleUserRound,
-  Database,
-  KeyRound,
   LockKeyhole,
   Save,
-  ShieldCheck,
   UserPlus,
   UserCircle,
 } from "lucide-react";
@@ -38,35 +34,13 @@ function titleCase(value: string) {
 
 function formatDateTime(value: string | null) {
   if (!value) {
-    return "Not available";
+    return null;
   }
 
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
-}
-
-function MetricTile({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <section className="min-h-32 rounded-lg border border-white/10 bg-[#151718] p-5">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-zinc-500">
-        {icon}
-        {label}
-      </div>
-      <p className="mt-4 break-words text-lg font-semibold text-white">
-        {value}
-      </p>
-    </section>
-  );
 }
 
 function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
@@ -158,7 +132,7 @@ function ProviderLinkPromptCard({
 
 function SignInActions({ nextPath }: { nextPath: string }) {
   return (
-    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-3 sm:grid-cols-2">
       <GoogleSignInButton href={googleSignInPath(nextPath)} />
       <Link
         aria-label="Create a manual account"
@@ -186,35 +160,18 @@ function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
 
   return (
     <AccountShell
-      eyebrow="Session required"
+      eyebrow="Account access"
       icon={<LockKeyhole className="size-6" />}
       showAccountControl={false}
       title="Sign in to manage your account"
     >
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
         <section className="grid gap-4">
           <AuthNoticeCard notice={notice} />
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <h2 className="text-2xl font-semibold tracking-normal text-white">
-              Account-owned settings need a Supabase session.
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-              Sign in to view profile status, connected providers, saved
-              presets, and account-owned controls.
-            </p>
             <SignInActions nextPath={nextPath} />
           </section>
         </section>
-        <aside className="rounded-lg border border-white/10 bg-[#151718] p-5">
-          <ShieldCheck className="size-5 text-cyan-200" />
-          <h2 className="mt-4 text-lg font-semibold text-white">
-            Server-checked access
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-zinc-400">
-            Account data is read server-side from Supabase Auth and
-            account-owned RLS tables.
-          </p>
-        </aside>
       </div>
     </AccountShell>
   );
@@ -250,7 +207,7 @@ function IncompleteProfileState({
           <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
             The signed-in account {state.email ? `for ${state.email}` : ""}
             needs {state.missingFields.join(", ") || "profile details"} before
-            saved presets and account-owned workflows are available.
+            saved presets are available.
           </p>
           <ProfileCompletionForm
             email={state.email}
@@ -258,23 +215,6 @@ function IncompleteProfileState({
             lastName={state.lastName}
             nextPath={nextPath}
           />
-          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <MetricTile
-              icon={<CircleUserRound className="size-4 text-amber-200" />}
-              label="Profile status"
-              value="Incomplete"
-            />
-            <MetricTile
-              icon={<KeyRound className="size-4 text-cyan-200" />}
-              label="Account id"
-              value={state.userId}
-            />
-            <MetricTile
-              icon={<ShieldCheck className="size-4 text-zinc-300" />}
-              label="Next step"
-              value="Profile completion"
-            />
-          </div>
         </section>
       </div>
     </AccountShell>
@@ -307,118 +247,101 @@ function ReadyState({
   state: Extract<AccountHubState, { status: "ready" }>;
 }) {
   const fullName = `${state.firstName} ${state.lastName}`;
+  const hasPresets = state.presets.length > 0;
 
   return (
     <AccountShell
-      eyebrow="Account hub"
-      icon={<CheckCircle2 className="size-6" />}
-      title={fullName}
+      eyebrow="Account"
+      icon={<UserCircle className="size-6" />}
+      title="Account"
     >
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+      <div className="mx-auto grid max-w-5xl gap-4 px-4 py-8 sm:px-6 lg:px-8">
         <section className="grid gap-4">
           <AuthNoticeCard notice={notice} />
           <ProviderLinkPromptCard prompt={linkPrompt} />
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-sm font-medium uppercase text-emerald-200">
-                  Profile complete
+                <p className="text-xs font-medium uppercase text-zinc-500">
+                  Signed in as
                 </p>
-                <h2 className="mt-2 break-words text-2xl font-semibold tracking-normal text-white">
-                  {state.email}
+                <h2 className="mt-2 break-words text-2xl font-semibold tracking-normal text-white sm:text-3xl">
+                  {fullName}
                 </h2>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-                  Saved presets and account-owned workflows are scoped to this
-                  Supabase user.
+                <p className="mt-2 break-words text-sm leading-6 text-zinc-400">
+                  {state.email}
                 </p>
               </div>
               <span className="inline-flex w-fit items-center gap-2 rounded-md border border-emerald-300/25 bg-emerald-300/10 px-3 py-2 text-sm font-medium text-emerald-100">
                 <CheckCircle2 className="size-4" />
-                Ready
+                Active
               </span>
             </div>
           </section>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <MetricTile
-              icon={<CircleUserRound className="size-4 text-emerald-200" />}
-              label="Identity"
-              value={state.userId}
-            />
-            <MetricTile
-              icon={<Database className="size-4 text-cyan-200" />}
-              label="Saved presets"
-              value={`${state.presetCount}`}
-            />
-            <MetricTile
-              icon={<ShieldCheck className="size-4 text-amber-200" />}
-              label="Primary provider"
-              value={state.primaryProvider ? titleCase(state.primaryProvider) : "Not set"}
-            />
-          </div>
-
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <h2 className="text-lg font-semibold text-white">
-              Connected providers
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              These providers are linked to this signed-in account. Future
-              provider emails, including Apple private relay addresses, are
-              shown exactly as recorded by the backend.
-            </p>
-            {state.identities.length === 0 ? (
-              <p className="mt-3 text-sm leading-6 text-zinc-400">
-                No provider identity rows have been recorded yet.
-              </p>
-            ) : (
-              <div className="mt-4 grid gap-3">
-                {state.identities.map((identity) => (
-                  <div
-                    className="rounded-lg border border-white/10 bg-black/20 p-4"
-                    key={`${identity.provider}-${identity.providerEmail ?? "none"}`}
-                  >
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-medium uppercase text-emerald-200">
+                  <Save className="size-4" />
+                  Saved presets
+                </div>
+                <h2 className="mt-3 text-3xl font-semibold tracking-normal text-white">
+                  {state.presetCount}
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+                  Presets keep your preferred screener filters ready to reuse.
+                </p>
+              </div>
+              <Link
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+                href="/screeners"
+              >
+                Open screeners
+                <ArrowRight className="size-4" />
+              </Link>
+            </div>
+
+            <div className="mt-5 grid gap-3">
+              {hasPresets ? (
+                state.presets.map((preset) => {
+                  const updated = formatDateTime(preset.updatedAt);
+
+                  return (
+                    <div
+                      className="rounded-lg border border-white/10 bg-black/20 p-4"
+                      key={preset.id}
+                    >
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                         <p className="font-medium text-white">
-                          {titleCase(identity.provider)}
+                          {preset.name}
                         </p>
-                        <p className="mt-1 break-words text-sm text-zinc-400">
-                          {identity.providerEmail ?? "Provider email unavailable"}
-                        </p>
+                        {updated ? (
+                          <p className="text-xs text-zinc-500">
+                            Updated {updated}
+                          </p>
+                        ) : null}
                       </div>
-                      <p className="text-xs text-zinc-500">
-                        Added {formatDateTime(identity.createdAt)}
+                      <p className="mt-2 text-sm text-zinc-500">
+                        {titleCase(preset.basePersona)}
                       </p>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  );
+                })
+              ) : (
+                <div className="rounded-lg border border-dashed border-white/15 bg-black/20 p-4">
+                  <p className="text-sm font-medium text-white">
+                    No saved presets yet.
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-zinc-400">
+                    Save a filter setup from the screener when you want to come
+                    back to it later.
+                  </p>
+                </div>
+              )}
+            </div>
           </section>
         </section>
-
-        <aside className="grid content-start gap-4">
-          <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <Save className="size-5 text-emerald-200" />
-            <h2 className="mt-4 text-lg font-semibold text-white">
-              Preset ownership
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Saved presets are account-owned Supabase records protected by
-              server route guards and RLS.
-            </p>
-          </section>
-
-          <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-            <KeyRound className="size-5 text-amber-200" />
-            <h2 className="mt-4 text-lg font-semibold text-white">
-              Profile updated
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              {formatDateTime(state.profileUpdatedAt)}
-            </p>
-          </section>
-        </aside>
       </div>
     </AccountShell>
   );

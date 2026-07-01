@@ -17,9 +17,8 @@ function user(overrides: Partial<User> = {}): User {
 function supabaseMock({
   authError = null,
   currentUser = user(),
-  identities = [],
-  identityError = null,
   presetCount = 0,
+  presets = [],
   presetError = null,
   profile = {
     created_at: "2026-06-30T00:00:00.000Z",
@@ -34,9 +33,8 @@ function supabaseMock({
 }: {
   authError?: { message: string } | null;
   currentUser?: User | null;
-  identities?: unknown[];
-  identityError?: { message: string } | null;
   presetCount?: number;
+  presets?: unknown[];
   presetError?: { message: string } | null;
   profile?: unknown;
   profileError?: { message: string } | null;
@@ -58,21 +56,13 @@ function supabaseMock({
       return { select };
     }
 
-    if (table === "account_identities") {
-      const order = vi.fn(async () => ({
-        data: identities,
-        error: identityError,
-      }));
-      const eq = vi.fn(() => ({ order }));
-      const select = vi.fn(() => ({ eq }));
-
-      return { select };
-    }
-
-    const eq = vi.fn(async () => ({
+    const limit = vi.fn(async () => ({
       count: presetCount,
+      data: presets,
       error: presetError,
     }));
+    const order = vi.fn(() => ({ limit }));
+    const eq = vi.fn(() => ({ order }));
     const select = vi.fn(() => ({ eq }));
 
     return { select };
@@ -128,34 +118,33 @@ describe("account hub state", () => {
     });
   });
 
-  it("returns complete account state with provider and preset summaries", async () => {
+  it("returns complete account state with recent preset summaries", async () => {
     const { client } = supabaseMock({
-      identities: [
+      presets: [
         {
-          created_at: "2026-06-30T02:00:00.000Z",
-          provider: "google",
-          provider_email: "desk@example.com",
+          base_persona_id: "balanced_wheel",
+          id: "preset-1",
+          name: "Balanced income",
+          updated_at: "2026-06-30T02:00:00.000Z",
         },
       ],
-      presetCount: 2,
+      presetCount: 7,
     });
 
     await expect(loadAccountHubState(client)).resolves.toEqual({
       email: "desk@example.com",
       firstName: "Ryan",
-      identities: [
+      lastName: "Meyer",
+      presetCount: 7,
+      presets: [
         {
-          createdAt: "2026-06-30T02:00:00.000Z",
-          provider: "google",
-          providerEmail: "desk@example.com",
+          basePersona: "balanced_wheel",
+          id: "preset-1",
+          name: "Balanced income",
+          updatedAt: "2026-06-30T02:00:00.000Z",
         },
       ],
-      lastName: "Meyer",
-      presetCount: 2,
-      primaryProvider: "google",
-      profileUpdatedAt: "2026-06-30T01:00:00.000Z",
       status: "ready",
-      userId: "user-1",
     });
   });
 
