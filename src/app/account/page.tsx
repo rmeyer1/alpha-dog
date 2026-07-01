@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   CircleUserRound,
+  Clock3,
   Database,
   KeyRound,
   LockKeyhole,
@@ -12,6 +13,12 @@ import {
   UserCircle,
 } from "lucide-react";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
+import {
+  accountAuthNoticeFromSearchParams,
+  googleSignInPath,
+  type AccountSearchParams,
+  type AuthUiNotice,
+} from "@/lib/supabase/auth-ui";
 import { createSupabaseServerComponentClient } from "@/lib/supabase/server-component";
 
 export const dynamic = "force-dynamic";
@@ -121,7 +128,71 @@ function MetricTile({
   );
 }
 
-function UnauthenticatedState() {
+function AuthNoticeCard({ notice }: { notice: AuthUiNotice }) {
+  if (!notice) {
+    return null;
+  }
+
+  const tone = notice.status === "profile_required"
+    ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+    : "border-red-300/25 bg-red-300/10 text-red-100";
+
+  return (
+    <section className={`rounded-lg border p-4 ${tone}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="font-semibold text-white">{notice.title}</h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-300">
+            {notice.message}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <Link
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+            href={googleSignInPath(notice.nextPath)}
+          >
+            <UserCircle className="size-4" />
+            Retry Google
+          </Link>
+          <Link
+            className="inline-flex min-h-10 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] px-3 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+            href="/screeners"
+          >
+            Dashboard
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SignInActions({ nextPath }: { nextPath: string }) {
+  return (
+    <div className="mt-6 grid gap-3 sm:grid-cols-2">
+      <Link
+        aria-label="Sign in with Google"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+        href={googleSignInPath(nextPath)}
+      >
+        <UserCircle className="size-5" />
+        Sign in with Google
+      </Link>
+      <button
+        aria-disabled="true"
+        className="inline-flex min-h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-500"
+        disabled
+        type="button"
+      >
+        <Clock3 className="size-5" />
+        Apple sign-in deferred
+      </button>
+    </div>
+  );
+}
+
+function UnauthenticatedState({ notice }: { notice: AuthUiNotice }) {
+  const nextPath = notice?.nextPath ?? "/account";
+
   return (
     <AccountShell
       eyebrow="Session required"
@@ -129,29 +200,24 @@ function UnauthenticatedState() {
       title="Sign in to manage your account"
     >
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
-        <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
-          <h2 className="text-2xl font-semibold tracking-normal text-white">
-            Account-owned settings need a Supabase session.
-          </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
-            Sign in to view profile status, connected providers, saved presets,
-            and account-owned controls.
-          </p>
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        <section className="grid gap-4">
+          <AuthNoticeCard notice={notice} />
+          <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
+            <h2 className="text-2xl font-semibold tracking-normal text-white">
+              Account-owned settings need a Supabase session.
+            </h2>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-400">
+              Sign in to view profile status, connected providers, saved
+              presets, and account-owned controls.
+            </p>
+            <SignInActions nextPath={nextPath} />
             <Link
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
-              href="/api/auth/oauth/google?next=/account"
-            >
-              <UserCircle className="size-5" />
-              Sign in with Google
-            </Link>
-            <Link
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
+              className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.06] px-4 text-sm font-semibold text-white transition hover:bg-white/[0.1] focus:outline-none focus:ring-2 focus:ring-cyan-300 focus:ring-offset-2 focus:ring-offset-[#151718]"
               href="/screeners"
             >
               Continue to public screeners
             </Link>
-          </div>
+          </section>
         </section>
         <aside className="rounded-lg border border-white/10 bg-[#151718] p-5">
           <ShieldCheck className="size-5 text-cyan-200" />
@@ -343,13 +409,20 @@ function ReadyState({ state }: {
   );
 }
 
-export default async function AccountPage() {
+export default async function AccountPage({
+  searchParams,
+}: {
+  searchParams?: Promise<AccountSearchParams>;
+}) {
+  const authNotice = accountAuthNoticeFromSearchParams(
+    await searchParams ?? {},
+  );
   const state = await loadAccountHubState(
     await createSupabaseServerComponentClient(),
   );
 
   if (state.status === "unauthenticated") {
-    return <UnauthenticatedState />;
+    return <UnauthenticatedState notice={authNotice} />;
   }
 
   if (state.status === "incomplete_profile") {

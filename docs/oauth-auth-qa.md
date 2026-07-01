@@ -1,6 +1,6 @@
 # OAuth Auth QA
 
-Use this checklist for the issue #52 OAuth foundation. It intentionally avoids final visual styling expectations.
+Use this checklist for the OAuth foundation and account sign-in UX.
 
 ## Google Success
 
@@ -10,20 +10,22 @@ Use this checklist for the issue #52 OAuth foundation. It intentionally avoids f
 - Confirm Supabase has exactly one `account_profiles` row for the user ID.
 - Confirm the row has `email`, generated `normalized_email`, `first_name`, `last_name`, and `primary_provider = google`.
 
-## Apple Success
+## Account Sign-In Entry
 
-- Visit `/api/auth/oauth/apple?next=/account`.
-- Complete Apple sign-in with an account that returns email and name on first authorization.
-- Confirm the browser returns to `/account`.
-- Confirm Supabase has exactly one `account_profiles` row for the user ID.
-- Confirm private relay email addresses are accepted as the account email when Apple returns one.
+- Visit `/account`.
+- Confirm the page shows an accessible Google sign-in action.
+- Confirm the Google link preserves a safe `next` destination when supplied,
+  such as `/account?next=/screeners`.
+- Confirm Apple sign-in is shown as deferred and is not an enabled provider
+  launch action for MVP.
 
-## Missing Apple Name
+## Future Apple Support
 
-- Sign in with Apple in a scenario where Apple returns email but no first or last name.
-- Confirm the callback returns to `/account?profile=complete`.
-- Confirm no duplicate `account_profiles` row is created.
-- Confirm account-owned features remain gated until profile completion is implemented.
+- Apple login is post-MVP. Do not configure, require, or test Apple as a launch
+  provider.
+- Future Apple private relay email addresses should display as returned by the
+  backend/account policy and should not be inferred as equivalent to another
+  email without an explicit linking flow.
 
 ## Missing Email
 
@@ -34,11 +36,13 @@ Use this checklist for the issue #52 OAuth foundation. It intentionally avoids f
 ## Duplicate Email
 
 - Sign in with an OAuth provider whose normalized email already belongs to another profile.
-- Confirm the callback redirects with `auth_error=duplicate_email`.
+- Confirm the callback redirects with `auth_error=ACCOUNT_EMAIL_CONFLICT`.
 - Confirm the unique `normalized_email` constraint prevents a duplicate profile.
 
 ## Cancelled OAuth
 
-- Start Google or Apple OAuth and cancel at the provider screen.
+- Start Google OAuth and cancel at the provider screen.
 - Confirm the callback redirects with `auth_error=oauth_cancelled`.
+- Confirm `/account?auth_error=oauth_cancelled` shows a recoverable sign-in
+  cancelled state with retry and dashboard actions.
 - Confirm the URL does not expose provider tokens or raw Supabase error details.
