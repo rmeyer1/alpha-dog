@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   manualAccountConflictPath,
+  manualAccountCreatePath,
   manualAccountErrorsFromPayload,
   manualAccountRedirectTo,
   validateManualAccountFields,
@@ -32,6 +33,10 @@ describe("manual account UI helpers", () => {
       .toBe("/account?auth_error=EMAIL_ALREADY_REGISTERED&next=%2Fscreeners");
     expect(manualAccountConflictPath("https://evil.example"))
       .toBe("/account?auth_error=EMAIL_ALREADY_REGISTERED&next=%2Faccount");
+    expect(manualAccountCreatePath("/screeners"))
+      .toBe("/account/manual?next=%2Fscreeners");
+    expect(manualAccountCreatePath("https://evil.example"))
+      .toBe("/account/manual?next=%2Faccount");
     expect(manualAccountRedirectTo("https://alpha.example", "/screeners"))
       .toBe("https://alpha.example/account?profile=complete&next=%2Fscreeners");
   });
