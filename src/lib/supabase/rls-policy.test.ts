@@ -9,7 +9,11 @@ const hardening = readFileSync(
   "supabase/migrations/20260630022000_harden_account_auth_policies.sql",
   "utf8",
 );
-const migrations = `${foundation}\n${hardening}`;
+const simulatedPositions = readFileSync(
+  "supabase/migrations/20260702200000_create_simulated_position_tracker.sql",
+  "utf8",
+);
+const migrations = `${foundation}\n${hardening}\n${simulatedPositions}`;
 
 describe("account-owned Supabase RLS policies", () => {
   it.each([
@@ -17,9 +21,28 @@ describe("account-owned Supabase RLS policies", () => {
     ["account_identities", "user_id"],
     ["saved_presets", "user_id"],
     ["analysis_requests", "user_id"],
+    ["paper_accounts", "user_id"],
+    ["simulated_positions", "user_id"],
+    ["simulated_position_events", "user_id"],
+    ["simulated_equity_lots", "user_id"],
   ])("enables RLS and owner policies for %s", (table, ownerColumn) => {
     expect(migrations).toContain(`alter table public.${table} enable row level security`);
-    expect(hardening).toContain(`on public.${table}`);
-    expect(hardening).toContain(`using ((select auth.uid()) = ${ownerColumn})`);
+    expect(migrations).toContain(`on public.${table}`);
+    expect(migrations).toContain(`using ((select auth.uid()) = ${ownerColumn})`);
+  });
+
+  it("scopes simulated position legs through their owner position", () => {
+    expect(simulatedPositions).toContain(
+      "alter table public.simulated_position_legs enable row level security",
+    );
+    expect(simulatedPositions).toContain(
+      "from public.simulated_positions owner_position",
+    );
+    expect(simulatedPositions).toContain(
+      "where owner_position.id = position_id",
+    );
+    expect(simulatedPositions).toContain(
+      "and owner_position.user_id = (select auth.uid())",
+    );
   });
 });
