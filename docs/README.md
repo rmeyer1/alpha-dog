@@ -12,6 +12,7 @@ This documentation package translates the Wheel Strategy Dashboard BRD into impl
 - [`wheel_strategy_algorithms.md`](./wheel_strategy_algorithms.md) — Calculation, scoring, liquidity, warning, and persona-ranking specification.
 - [`wheel_strategy_frontend_ux_spec.md`](./wheel_strategy_frontend_ux_spec.md) — React/Next.js dashboard UX, table, warning, accessibility, and state behavior.
 - [`wheel_strategy_implementation_plan.md`](./wheel_strategy_implementation_plan.md) — Engineering build phases and acceptance criteria.
+- [`simulated_position_tracker_prd.md`](./simulated_position_tracker_prd.md) — PRD and rollout plan for simulated premium-selling position tracking.
 
 ## MVP Architecture Decision
 
