@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PROFILE_INCOMPLETE, UNAUTHENTICATED } from "@/lib/supabase/account-session";
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
 const createSimulatedPosition = vi.hoisted(() => vi.fn());
+const loadAccountPortfolio = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -23,6 +24,10 @@ vi.mock("@/lib/account/simulated-positions", async (importOriginal) => {
     createSimulatedPosition,
   };
 });
+
+vi.mock("@/lib/account/simulated-account-portfolio", () => ({
+  loadAccountPortfolio,
+}));
 
 function positionRequest(body: unknown) {
   return new Request("https://alpha-dog.test/api/account/positions", {
@@ -120,5 +125,49 @@ describe("POST /api/account/positions", () => {
       }),
     );
     expect(json.position.id).toBe("position-1");
+  });
+});
+
+describe("GET /api/account/positions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    loadAccountPortfolio.mockResolvedValue({
+      historyPositions: [{ id: "position-2", status: "closed" }],
+      openPositions: [{ id: "position-1", status: "open" }],
+      positions: [
+        { id: "position-1", status: "open" },
+        { id: "position-2", status: "closed" },
+      ],
+      summary: { cashBalance: 1_000 },
+    });
+  });
+
+  it("requires an authenticated account session", async () => {
+    getRequiredAccountSession.mockResolvedValue({ code: UNAUTHENTICATED });
+
+    const response = await GET(new Request("https://alpha-dog.test/api/account/positions"));
+    const json = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(json.error.code).toBe(UNAUTHENTICATED);
+    expect(loadAccountPortfolio).not.toHaveBeenCalled();
+  });
+
+  it("returns open and historical positions for the authenticated user", async () => {
+    const supabase = {};
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase,
+      user: { id: "user-1" },
+    });
+
+    const response = await GET(new Request("https://alpha-dog.test/api/account/positions"));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(loadAccountPortfolio).toHaveBeenCalledWith(supabase, "user-1");
+    expect(json.openPositions).toHaveLength(1);
+    expect(json.historyPositions).toHaveLength(1);
+    expect(json.summary.cashBalance).toBe(1_000);
   });
 });
