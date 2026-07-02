@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   buybackCost,
   OPTION_CONTRACT_MULTIPLIER,
+  premiumReceived,
   realizedPnlForClose,
 } from "./simulated-accounting";
 
@@ -96,8 +97,19 @@ export const closeSimulatedPositionInputSchema = z.object({
 
 export type CloseSimulatedPositionInput = z.infer<typeof closeSimulatedPositionInputSchema>;
 
+export const expireSimulatedPositionInputSchema = z.object({
+  expiredAt: z.string().datetime().optional(),
+  notes: z.string().trim().max(2000).optional(),
+  underlyingPriceAtExpiration: z.number().finite().positive(),
+});
+
+export type ExpireSimulatedPositionInput = z.infer<typeof expireSimulatedPositionInputSchema>;
+
 interface PaperAccountRow {
+  current_cash?: number | string | null;
   id: string;
+  margin_balance?: number | string | null;
+  user_id?: string;
 }
 
 export interface SimulatedPositionRow {
@@ -162,6 +174,23 @@ interface SimulatedPositionEventRow {
   user_id: string;
 }
 
+interface SimulatedEquityLotRow {
+  acquired_at: string;
+  cost_basis: number;
+  id: string;
+  paper_account_id: string;
+  shares: number;
+  source_position_id: string | null;
+  symbol: string;
+  user_id: string;
+}
+
+type AssignableShortPutLeg = SimulatedPositionLegRow & {
+  option_type: "put";
+  side: "short";
+  strike: number;
+};
+
 const positionColumns = [
   "id",
   "user_id",
@@ -224,6 +253,24 @@ const eventColumns = [
   "created_at",
 ].join(",");
 
+const paperAccountColumns = [
+  "id",
+  "user_id",
+  "current_cash",
+  "margin_balance",
+].join(",");
+
+const equityLotColumns = [
+  "id",
+  "user_id",
+  "paper_account_id",
+  "symbol",
+  "shares",
+  "cost_basis",
+  "source_position_id",
+  "acquired_at",
+].join(",");
+
 function calculateNetCredit(input: SimulatedPositionInput) {
   if (input.netCredit !== undefined) {
     return input.netCredit;
@@ -241,6 +288,37 @@ function assertPositiveNetCredit(netCredit: number) {
       "Position net credit must be greater than zero.",
     );
   }
+}
+
+function numberValue(value: number | string | null | undefined) {
+  if (value == null) {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function expirationDateFromTimestamp(timestamp: string) {
+  return timestamp.slice(0, 10);
+}
+
+function singleShortPutLeg(legs: SimulatedPositionLegRow[]): AssignableShortPutLeg | null {
+  if (legs.length !== 1) {
+    return null;
+  }
+
+  const [leg] = legs;
+
+  if (
+    leg.side !== "short" ||
+    leg.option_type !== "put" ||
+    leg.strike == null
+  ) {
+    return null;
+  }
+
+  return leg as AssignableShortPutLeg;
 }
 
 export class SimulatedPositionValidationError extends Error {
@@ -507,6 +585,363 @@ export async function closeSimulatedPosition(
       position: updatedPosition,
     };
   } catch (error) {
+    await supabase
+      .from("simulated_positions")
+      .update({
+        closed_at: position.closed_at,
+        contracts_remaining: position.contracts_remaining,
+        status: position.status,
+      })
+      .eq("id", position.id)
+      .eq("user_id", userId);
+
+    throw error;
+  }
+}
+
+export async function expireSimulatedPosition(
+  supabase: SupabaseClient,
+  userId: string,
+  positionId: string,
+  input: ExpireSimulatedPositionInput,
+  now = new Date(),
+) {
+  const expiredAt = input.expiredAt ?? now.toISOString();
+  const expirationDate = expirationDateFromTimestamp(expiredAt);
+  const positionResult = await supabase
+    .from("simulated_positions")
+    .select(positionColumns)
+    .eq("id", positionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (positionResult.error) {
+    throw new Error("Unable to load simulated position.");
+  }
+
+  if (!positionResult.data) {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_POSITION_NOT_FOUND",
+      "Simulated position was not found.",
+      404,
+    );
+  }
+
+  const position = positionResult.data as unknown as SimulatedPositionRow;
+
+  if (position.contracts_remaining <= 0 || position.status === "closed") {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_POSITION_ALREADY_CLOSED",
+      "Simulated position is already closed.",
+    );
+  }
+
+  if (position.expiration_date && position.expiration_date > expirationDate) {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_POSITION_NOT_EXPIRED",
+      "Simulated position has not reached expiration yet.",
+    );
+  }
+
+  const legsResult = await supabase
+    .from("simulated_position_legs")
+    .select(legColumns)
+    .eq("position_id", position.id)
+    .order("leg_index", { ascending: true });
+
+  if (legsResult.error) {
+    throw new Error("Unable to load simulated position legs.");
+  }
+
+  const legs = legsResult.data as unknown as SimulatedPositionLegRow[];
+  const shortPut = singleShortPutLeg(legs);
+
+  if (!shortPut) {
+    return markSimulatedPositionManualReview(
+      supabase,
+      userId,
+      position,
+      expiredAt,
+      "ambiguous_expiration_outcome",
+      input.notes,
+    );
+  }
+
+  if (input.underlyingPriceAtExpiration >= shortPut.strike) {
+    return expireShortPutWorthless(
+      supabase,
+      userId,
+      position,
+      expiredAt,
+      input.underlyingPriceAtExpiration,
+      input.notes,
+    );
+  }
+
+  return assignShortPut(
+    supabase,
+    userId,
+    position,
+    shortPut,
+    expiredAt,
+    input.underlyingPriceAtExpiration,
+    input.notes,
+  );
+}
+
+async function markSimulatedPositionManualReview(
+  supabase: SupabaseClient,
+  userId: string,
+  position: SimulatedPositionRow,
+  expiredAt: string,
+  reason: string,
+  notes: string | undefined,
+) {
+  const updateResult = await supabase
+    .from("simulated_positions")
+    .update({ status: "manual_review" })
+    .eq("id", position.id)
+    .eq("user_id", userId)
+    .select(positionColumns)
+    .single();
+
+  if (updateResult.error) {
+    throw new Error("Unable to mark simulated position for manual review.");
+  }
+
+  const eventResult = await supabase
+    .from("simulated_position_events")
+    .insert({
+      cash_delta: 0,
+      event_type: "manual_adjustment",
+      margin_delta: 0,
+      metadata: {
+        expiredAt,
+        notes: notes ?? null,
+        reason,
+      },
+      paper_account_id: position.paper_account_id,
+      position_id: position.id,
+      price: 0,
+      quantity: position.contracts_remaining,
+      realized_pnl_delta: 0,
+      user_id: userId,
+    })
+    .select(eventColumns)
+    .single();
+
+  if (eventResult.error) {
+    throw new Error("Unable to create manual review event.");
+  }
+
+  return {
+    event: eventResult.data as unknown as SimulatedPositionEventRow,
+    outcome: "manual_review" as const,
+    position: updateResult.data as unknown as SimulatedPositionRow,
+  };
+}
+
+async function expireShortPutWorthless(
+  supabase: SupabaseClient,
+  userId: string,
+  position: SimulatedPositionRow,
+  expiredAt: string,
+  underlyingPriceAtExpiration: number,
+  notes: string | undefined,
+) {
+  const realizedPnlDelta = premiumReceived(
+    position.net_credit,
+    position.contracts_remaining,
+  );
+  const updateResult = await supabase
+    .from("simulated_positions")
+    .update({
+      closed_at: expiredAt,
+      contracts_remaining: 0,
+      status: "closed",
+    })
+    .eq("id", position.id)
+    .eq("user_id", userId)
+    .select(positionColumns)
+    .single();
+
+  if (updateResult.error) {
+    throw new Error("Unable to close expired simulated position.");
+  }
+
+  const eventResult = await supabase
+    .from("simulated_position_events")
+    .insert({
+      cash_delta: 0,
+      event_type: "expired",
+      margin_delta: 0,
+      metadata: {
+        expiredAt,
+        notes: notes ?? null,
+        outcome: "expired_otm",
+        underlyingPriceAtExpiration,
+      },
+      paper_account_id: position.paper_account_id,
+      position_id: position.id,
+      price: 0,
+      quantity: position.contracts_remaining,
+      realized_pnl_delta: realizedPnlDelta,
+      user_id: userId,
+    })
+    .select(eventColumns)
+    .single();
+
+  if (eventResult.error) {
+    throw new Error("Unable to create expiration event.");
+  }
+
+  return {
+    event: eventResult.data as unknown as SimulatedPositionEventRow,
+    outcome: "expired_otm" as const,
+    position: updateResult.data as unknown as SimulatedPositionRow,
+  };
+}
+
+async function assignShortPut(
+  supabase: SupabaseClient,
+  userId: string,
+  position: SimulatedPositionRow,
+  shortPut: AssignableShortPutLeg,
+  expiredAt: string,
+  underlyingPriceAtExpiration: number,
+  notes: string | undefined,
+) {
+  const accountResult = await supabase
+    .from("paper_accounts")
+    .select(paperAccountColumns)
+    .eq("id", position.paper_account_id)
+    .eq("user_id", userId)
+    .single();
+
+  if (accountResult.error) {
+    throw new Error("Unable to load paper account for assignment.");
+  }
+
+  const account = accountResult.data as unknown as PaperAccountRow;
+  const shares = position.contracts_remaining * OPTION_CONTRACT_MULTIPLIER;
+  const assignmentCost = shortPut.strike * shares;
+  const currentCash = numberValue(account.current_cash);
+  const currentMargin = numberValue(account.margin_balance);
+  const cashAfterAssignment = currentCash - assignmentCost;
+  const marginDelta = Math.max(0, -cashAfterAssignment);
+  const nextCash = Math.max(0, cashAfterAssignment);
+  const nextMargin = currentMargin + marginDelta;
+  const realizedPnlDelta = premiumReceived(
+    position.net_credit,
+    position.contracts_remaining,
+  );
+  let equityLot: SimulatedEquityLotRow | null = null;
+
+  try {
+    const positionUpdate = await supabase
+      .from("simulated_positions")
+      .update({
+        closed_at: expiredAt,
+        contracts_remaining: 0,
+        status: "assigned",
+      })
+      .eq("id", position.id)
+      .eq("user_id", userId)
+      .select(positionColumns)
+      .single();
+
+    if (positionUpdate.error) {
+      throw new Error("Unable to assign simulated position.");
+    }
+
+    const accountUpdate = await supabase
+      .from("paper_accounts")
+      .update({
+        current_cash: nextCash,
+        margin_balance: nextMargin,
+      })
+      .eq("id", account.id)
+      .eq("user_id", userId)
+      .select(paperAccountColumns)
+      .single();
+
+    if (accountUpdate.error) {
+      throw new Error("Unable to update paper account for assignment.");
+    }
+
+    const lotResult = await supabase
+      .from("simulated_equity_lots")
+      .insert({
+        acquired_at: expiredAt,
+        cost_basis: shortPut.strike,
+        paper_account_id: position.paper_account_id,
+        shares,
+        source_position_id: position.id,
+        symbol: position.symbol,
+        user_id: userId,
+      })
+      .select(equityLotColumns)
+      .single();
+
+    if (lotResult.error) {
+      throw new Error("Unable to create simulated equity lot.");
+    }
+
+    equityLot = lotResult.data as unknown as SimulatedEquityLotRow;
+
+    const eventResult = await supabase
+      .from("simulated_position_events")
+      .insert({
+        cash_delta: -assignmentCost,
+        event_type: "assigned",
+        margin_delta: marginDelta,
+        metadata: {
+          assignmentCost,
+          costBasis: shortPut.strike,
+          expiredAt,
+          notes: notes ?? null,
+          shares,
+          underlyingPriceAtExpiration,
+        },
+        paper_account_id: position.paper_account_id,
+        position_id: position.id,
+        price: shortPut.strike,
+        quantity: position.contracts_remaining,
+        realized_pnl_delta: realizedPnlDelta,
+        user_id: userId,
+      })
+      .select(eventColumns)
+      .single();
+
+    if (eventResult.error) {
+      throw new Error("Unable to create assignment event.");
+    }
+
+    return {
+      account: accountUpdate.data as unknown as PaperAccountRow,
+      equityLot,
+      event: eventResult.data as unknown as SimulatedPositionEventRow,
+      outcome: "assigned_put" as const,
+      position: positionUpdate.data as unknown as SimulatedPositionRow,
+    };
+  } catch (error) {
+    if (equityLot) {
+      await supabase
+        .from("simulated_equity_lots")
+        .delete()
+        .eq("id", equityLot.id)
+        .eq("user_id", userId);
+    }
+
+    await supabase
+      .from("paper_accounts")
+      .update({
+        current_cash: currentCash,
+        margin_balance: currentMargin,
+      })
+      .eq("id", account.id)
+      .eq("user_id", userId);
+
     await supabase
       .from("simulated_positions")
       .update({
