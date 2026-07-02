@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import {
+  buybackCost,
+  OPTION_CONTRACT_MULTIPLIER,
+  realizedPnlForClose,
+} from "./simulated-accounting";
 
 const multiplier = 100;
 
@@ -82,11 +87,20 @@ export const simulatedPositionInputSchema = z.object({
 
 export type SimulatedPositionInput = z.infer<typeof simulatedPositionInputSchema>;
 
+export const closeSimulatedPositionInputSchema = z.object({
+  closedAt: z.string().datetime().optional(),
+  closePrice: z.number().finite().min(0),
+  contractsToClose: z.number().int().positive(),
+  notes: z.string().trim().max(2000).optional(),
+});
+
+export type CloseSimulatedPositionInput = z.infer<typeof closeSimulatedPositionInputSchema>;
+
 interface PaperAccountRow {
   id: string;
 }
 
-interface SimulatedPositionRow {
+export interface SimulatedPositionRow {
   closed_at: string | null;
   contracts_opened: number;
   contracts_remaining: number;
@@ -136,7 +150,7 @@ interface SimulatedPositionLegRow {
 interface SimulatedPositionEventRow {
   cash_delta: number;
   created_at: string;
-  event_type: "opened";
+  event_type: string;
   id: string;
   margin_delta: number;
   metadata: Record<string, unknown>;
@@ -233,6 +247,7 @@ export class SimulatedPositionValidationError extends Error {
   constructor(
     public readonly code: string,
     message: string,
+    public readonly status = 400,
   ) {
     super(message);
     this.name = "SimulatedPositionValidationError";
@@ -382,6 +397,123 @@ export async function createSimulatedPosition(
     await supabase
       .from("simulated_positions")
       .delete()
+      .eq("id", position.id)
+      .eq("user_id", userId);
+
+    throw error;
+  }
+}
+
+export async function closeSimulatedPosition(
+  supabase: SupabaseClient,
+  userId: string,
+  positionId: string,
+  input: CloseSimulatedPositionInput,
+  now = new Date(),
+) {
+  const positionResult = await supabase
+    .from("simulated_positions")
+    .select(positionColumns)
+    .eq("id", positionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (positionResult.error) {
+    throw new Error("Unable to load simulated position.");
+  }
+
+  if (!positionResult.data) {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_POSITION_NOT_FOUND",
+      "Simulated position was not found.",
+      404,
+    );
+  }
+
+  const position = positionResult.data as unknown as SimulatedPositionRow;
+
+  if (position.contracts_remaining <= 0 || position.status === "closed") {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_POSITION_ALREADY_CLOSED",
+      "Simulated position is already closed.",
+    );
+  }
+
+  if (input.contractsToClose > position.contracts_remaining) {
+    throw new SimulatedPositionValidationError(
+      "SIMULATED_CLOSE_QUANTITY_EXCEEDS_REMAINING",
+      "Contracts to close cannot exceed contracts remaining.",
+    );
+  }
+
+  const closedAt = input.closedAt ?? now.toISOString();
+  const contractsRemaining = position.contracts_remaining - input.contractsToClose;
+  const status = contractsRemaining === 0 ? "closed" : "partially_closed";
+  const closedAtForPosition = contractsRemaining === 0 ? closedAt : null;
+  const realizedPnlDelta = realizedPnlForClose(
+    position.net_credit,
+    input.closePrice,
+    input.contractsToClose,
+  );
+  const cashDelta = -buybackCost(input.closePrice, input.contractsToClose);
+
+  const updateResult = await supabase
+    .from("simulated_positions")
+    .update({
+      closed_at: closedAtForPosition,
+      contracts_remaining: contractsRemaining,
+      status,
+    })
+    .eq("id", position.id)
+    .eq("user_id", userId)
+    .select(positionColumns)
+    .single();
+
+  if (updateResult.error) {
+    throw new Error("Unable to update simulated position close state.");
+  }
+
+  const updatedPosition = updateResult.data as unknown as SimulatedPositionRow;
+
+  try {
+    const eventResult = await supabase
+      .from("simulated_position_events")
+      .insert({
+        cash_delta: cashDelta,
+        event_type: contractsRemaining === 0 ? "full_close" : "partial_close",
+        margin_delta: 0,
+        metadata: {
+          closedAt,
+          multiplier: OPTION_CONTRACT_MULTIPLIER,
+          notes: input.notes ?? null,
+          previousContractsRemaining: position.contracts_remaining,
+        },
+        paper_account_id: position.paper_account_id,
+        position_id: position.id,
+        price: input.closePrice,
+        quantity: input.contractsToClose,
+        realized_pnl_delta: realizedPnlDelta,
+        user_id: userId,
+      })
+      .select(eventColumns)
+      .single();
+
+    if (eventResult.error) {
+      throw new Error("Unable to create simulated position close event.");
+    }
+
+    return {
+      event: eventResult.data as unknown as SimulatedPositionEventRow,
+      position: updatedPosition,
+    };
+  } catch (error) {
+    await supabase
+      .from("simulated_positions")
+      .update({
+        closed_at: position.closed_at,
+        contracts_remaining: position.contracts_remaining,
+        status: position.status,
+      })
       .eq("id", position.id)
       .eq("user_id", userId);
 
