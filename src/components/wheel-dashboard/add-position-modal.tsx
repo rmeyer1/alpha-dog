@@ -9,6 +9,11 @@ import {
   contractValue,
   formatCurrency,
 } from "./formatters";
+import {
+  legSnapshotFromSpreadLeg,
+  PositionLegSnapshotList,
+  type PositionLegSnapshotData,
+} from "./position-leg-snapshot";
 import type { CandidateAnalysisContext } from "./types";
 import type { OpenPositionCandidateRequest } from "./candidate-results";
 
@@ -288,6 +293,56 @@ function candidateSummary(request: OpenPositionCandidateRequest) {
   };
 }
 
+function legSnapshotsForRequest(
+  request: OpenPositionCandidateRequest,
+  quantity: number | null,
+): PositionLegSnapshotData[] {
+  if (request.candidateType === "contract") {
+    const candidate = request.candidate;
+
+    return [{
+      askPrice: candidate.ask,
+      bidPrice: candidate.bid,
+      contractSymbol: candidate.contractSymbol,
+      delta: candidate.delta,
+      expirationDate: candidate.expirationDate,
+      impliedVolatility: candidate.impliedVolatility,
+      midPrice: candidate.midpoint,
+      openInterest: candidate.openInterest,
+      openPrice: candidate.midpoint,
+      optionType: candidate.optionType,
+      quantity,
+      side: "short",
+      strike: candidate.strike,
+      theta: candidate.theta,
+      volume: candidate.volume,
+    }];
+  }
+
+  const candidate = request.candidate;
+
+  return [
+    {
+      ...legSnapshotFromSpreadLeg({
+        expirationDate: candidate.expirationDate,
+        leg: candidate.shortLeg,
+        optionType: candidate.optionType,
+        side: "short",
+      }),
+      quantity,
+    },
+    {
+      ...legSnapshotFromSpreadLeg({
+        expirationDate: candidate.expirationDate,
+        leg: candidate.longLeg,
+        optionType: candidate.optionType,
+        side: "long",
+      }),
+      quantity,
+    },
+  ];
+}
+
 export function AddPositionModal({
   analysisContext,
   onClose,
@@ -343,6 +398,11 @@ function AddPositionModalContent({
   const priceLabel = request.candidateType === "contract"
     ? "Open price"
     : "Net credit";
+  const quantity = Number(values.contracts);
+  const legSnapshots = legSnapshotsForRequest(
+    request,
+    Number.isInteger(quantity) && quantity > 0 ? quantity : null,
+  );
 
   async function submitPosition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -459,6 +519,16 @@ function AddPositionModalContent({
               {contractValue(defaultCredit(request))} · {summary.priceContext}
             </span>
           </div>
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-2 text-sm font-medium text-white">
+            Leg snapshot
+          </div>
+          <PositionLegSnapshotList
+            defaultOpen={request.candidateType === "contract"}
+            legs={legSnapshots}
+          />
         </div>
 
         <form className="mt-5 grid gap-4" onSubmit={(event) => void submitPosition(event)}>

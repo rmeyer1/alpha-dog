@@ -3,15 +3,18 @@ import {
   CompanyContextPanel,
   type CompanyInsightState,
 } from "@/components/company-insights";
-import type { SpreadLeg, VerticalSpreadCandidate } from "@/lib/wheel/types";
+import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
   contractValue,
-  formatCompactNumber,
   formatCurrency,
   formatPercent,
   formatScoreLabel,
 } from "./formatters";
+import {
+  legSnapshotFromSpreadLeg,
+  PositionLegSnapshotList,
+} from "./position-leg-snapshot";
 import { qualityClass } from "./styles";
 import { TradeAnalysisPanel } from "./trade-analysis-panel";
 import type { CandidateAnalysisState } from "./types";
@@ -127,37 +130,6 @@ function SpreadMetrics({ candidate }: { candidate: VerticalSpreadCandidate }) {
   );
 }
 
-function LegDetails({ candidate }: { candidate: VerticalSpreadCandidate }) {
-  const legs: Array<readonly [string, SpreadLeg]> = [
-    ["Short leg", candidate.shortLeg],
-    ["Long leg", candidate.longLeg],
-  ];
-
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {legs.map(([label, leg]) => (
-        <div
-          className="rounded-lg border border-white/10 bg-white/[0.035] p-3"
-          key={label}
-        >
-          <div className="text-sm font-medium text-white">{label}</div>
-          <div className="mt-2 grid gap-1 font-mono text-xs text-zinc-300">
-            <span>Strike {formatCurrency(leg.strike)}</span>
-            <span>
-              Bid/Ask {formatCurrency(leg.bid)}/{formatCurrency(leg.ask)}
-            </span>
-            <span>Delta {leg.delta?.toFixed(2) ?? "-"}</span>
-            <span>
-              Vol/OI {formatCompactNumber(leg.volume)}/
-              {formatCompactNumber(leg.openInterest)}
-            </span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function SpreadDetailDrawer({
   analysis,
   candidate,
@@ -174,6 +146,21 @@ export function SpreadDetailDrawer({
   if (!candidate) {
     return null;
   }
+
+  const legSnapshots = [
+    legSnapshotFromSpreadLeg({
+      expirationDate: candidate.expirationDate,
+      leg: candidate.shortLeg,
+      optionType: candidate.optionType,
+      side: "short",
+    }),
+    legSnapshotFromSpreadLeg({
+      expirationDate: candidate.expirationDate,
+      leg: candidate.longLeg,
+      optionType: candidate.optionType,
+      side: "long",
+    }),
+  ];
 
   return (
     <div
@@ -206,7 +193,7 @@ export function SpreadDetailDrawer({
           <SpreadMetrics candidate={candidate} />
         </div>
         <div className="mt-5">
-          <LegDetails candidate={candidate} />
+          <PositionLegSnapshotList defaultOpen legs={legSnapshots} />
         </div>
         <div className="mt-5 rounded-lg border border-white/10 bg-black/20 p-3">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium text-white">
