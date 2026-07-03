@@ -1,4 +1,4 @@
-import { Brain } from "lucide-react";
+import { Brain, Plus } from "lucide-react";
 import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
 import {
   contractValue,
@@ -15,6 +15,7 @@ export function SpreadTable({
   analysisByKey,
   expandedWarnings,
   onAnalyzeCandidate,
+  onOpenPosition,
   onSelectCandidate,
   onToggleWarnings,
   rows,
@@ -22,13 +23,14 @@ export function SpreadTable({
   analysisByKey: Record<string, CandidateAnalysisState>;
   expandedWarnings: Set<string>;
   onAnalyzeCandidate: (candidate: VerticalSpreadCandidate) => void;
+  onOpenPosition: (candidate: VerticalSpreadCandidate) => void;
   onSelectCandidate: (candidate: VerticalSpreadCandidate) => void;
   onToggleWarnings: (id: string) => void;
   rows: VerticalSpreadCandidate[];
 }) {
   return (
-    <TableScrollFrame label="Spread candidates" minWidth={1430}>
-      <table className="w-full min-w-[1430px] border-collapse text-left text-sm whitespace-nowrap">
+    <TableScrollFrame label="Spread candidates" minWidth={1490}>
+      <table className="w-full min-w-[1490px] border-collapse text-left text-sm whitespace-nowrap">
         <thead className="bg-[#1b1d1e] text-xs uppercase text-zinc-400">
           <tr>
             <th className="sticky left-0 z-20 w-[72px] min-w-[72px] bg-[#1b1d1e] px-4 py-3 font-medium">
@@ -52,7 +54,7 @@ export function SpreadTable({
               "Vol/OI",
               "Quality",
               "Warnings",
-              "Analysis",
+              "Actions",
             ].map((heading) => (
               <th className="px-4 py-3 font-medium" key={heading}>
                 {heading}
@@ -118,19 +120,30 @@ export function SpreadTable({
                 />
               </td>
               <td className="px-4 py-3">
-                <button
-                  className="inline-flex h-8 items-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-2.5 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={analysisByKey[row.id]?.status === "loading"}
-                  onClick={() => onAnalyzeCandidate(row)}
-                  type="button"
-                >
-                  <Brain className="size-3.5" />
-                  {analysisByKey[row.id]?.status === "loading"
-                    ? "Analyzing"
-                    : analysisByKey[row.id]?.response
-                      ? "Review"
-                      : "Analyze"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    aria-label={`Open simulated position for ${row.shortLeg.contractSymbol} / ${row.longLeg.contractSymbol}`}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-emerald-300/25 bg-emerald-400/10 text-emerald-100 transition hover:bg-emerald-400/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                    onClick={() => onOpenPosition(row)}
+                    title="Open simulated position"
+                    type="button"
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                  <button
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-2.5 text-xs font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={analysisByKey[row.id]?.status === "loading"}
+                    onClick={() => onAnalyzeCandidate(row)}
+                    type="button"
+                  >
+                    <Brain className="size-3.5" />
+                    {analysisByKey[row.id]?.status === "loading"
+                      ? "Analyzing"
+                      : analysisByKey[row.id]?.response
+                        ? "Review"
+                        : "Analyze"}
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

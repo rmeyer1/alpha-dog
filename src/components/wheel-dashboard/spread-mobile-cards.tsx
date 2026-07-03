@@ -1,4 +1,4 @@
-import { AlertTriangle, Brain } from "lucide-react";
+import { AlertTriangle, Brain, Plus } from "lucide-react";
 import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
 import { contractValue, formatCurrency, formatPercent } from "./formatters";
 import { qualityClass, warningTone } from "./styles";
@@ -7,11 +7,13 @@ import type { CandidateAnalysisState } from "./types";
 export function SpreadMobileCards({
   analysisByKey,
   onAnalyzeCandidate,
+  onOpenPosition,
   onSelectCandidate,
   rows,
 }: {
   analysisByKey: Record<string, CandidateAnalysisState>;
   onAnalyzeCandidate: (candidate: VerticalSpreadCandidate) => void;
+  onOpenPosition: (candidate: VerticalSpreadCandidate) => void;
   onSelectCandidate: (candidate: VerticalSpreadCandidate) => void;
   rows: VerticalSpreadCandidate[];
 }) {
@@ -79,22 +81,35 @@ export function SpreadMobileCards({
               <span className="text-xs text-zinc-500">No warnings</span>
             )}
           </div>
-          <button
-            className="mt-4 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={analysisByKey[row.id]?.status === "loading"}
-            onClick={(event) => {
-              event.stopPropagation();
-              onAnalyzeCandidate(row);
-            }}
-            type="button"
-          >
-            <Brain className="size-4" />
-            {analysisByKey[row.id]?.status === "loading"
-              ? "Analyzing"
-              : analysisByKey[row.id]?.response
-                ? "Review analysis"
-                : "Analyze trade"}
-          </button>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md border border-emerald-300/25 bg-emerald-400/10 px-3 text-sm font-medium text-emerald-100 transition hover:bg-emerald-400/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenPosition(row);
+              }}
+              type="button"
+            >
+              <Plus className="size-4" />
+              Open position
+            </button>
+            <button
+              className="inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md border border-cyan-300/25 bg-cyan-400/10 px-3 text-sm font-medium text-cyan-100 transition hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={analysisByKey[row.id]?.status === "loading"}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAnalyzeCandidate(row);
+              }}
+              type="button"
+            >
+              <Brain className="size-4" />
+              {analysisByKey[row.id]?.status === "loading"
+                ? "Analyzing"
+                : analysisByKey[row.id]?.response
+                  ? "Review"
+                  : "Analyze"}
+            </button>
+          </div>
         </article>
       ))}
     </div>
