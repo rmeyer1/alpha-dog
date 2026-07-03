@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AccountShell } from "@/components/account/account-shell";
 import { GoogleSignInButton } from "@/components/account/google-sign-in-button";
+import { PaperAccountPanel } from "@/components/account/paper-account-panel";
 import { ProviderLinkingForm } from "@/components/account/provider-linking-form";
 import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
@@ -278,6 +279,8 @@ function ReadyState({
               </span>
             </div>
           </section>
+
+          <PaperAccountPanel />
 
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
