@@ -91,4 +91,24 @@ describe("PATCH /api/account/paper-account/settings", () => {
     });
     expect(json.account.currentCash).toBe(5_000);
   });
+
+  it("allows initializing an account with zero balances", async () => {
+    const supabase = {};
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase,
+      user: { id: "user-1" },
+    });
+
+    const response = await PATCH(settingsRequest({
+      currentCash: 0,
+      startingCash: 0,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(updatePaperAccountSettings).toHaveBeenCalledWith(supabase, "user-1", {
+      currentCash: 0,
+      startingCash: 0,
+    });
+  });
 });

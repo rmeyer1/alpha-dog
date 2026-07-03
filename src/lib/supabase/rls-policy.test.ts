@@ -45,4 +45,22 @@ describe("account-owned Supabase RLS policies", () => {
       "and owner_position.user_id = (select auth.uid())",
     );
   });
+
+  it("scopes assigned equity lots to an owned source position when present", () => {
+    expect(simulatedPositions).toContain(
+      "source_position_id is null or exists",
+    );
+    expect(simulatedPositions).toContain(
+      "from public.simulated_positions owner_position",
+    );
+    expect(simulatedPositions).toContain(
+      "where owner_position.id = source_position_id",
+    );
+    expect(simulatedPositions).toContain(
+      "and owner_position.user_id = (select auth.uid())",
+    );
+    expect(simulatedPositions).toContain(
+      "and owner_position.paper_account_id = paper_account_id",
+    );
+  });
 });
