@@ -24,6 +24,8 @@ describe("GET /api/account/paper-account", () => {
     vi.clearAllMocks();
     loadAccountPortfolio.mockResolvedValue({
       account: { id: "paper-account-1", startingCash: 1_000 },
+      historyPositions: [{ id: "position-2" }, { id: "position-3" }],
+      openPositions: [{ id: "position-1" }],
       summary: { cashBalance: 1_250, marginBalance: 0 },
     });
   });
@@ -53,6 +55,8 @@ describe("GET /api/account/paper-account", () => {
     expect(response.status).toBe(200);
     expect(loadAccountPortfolio).toHaveBeenCalledWith(supabase, "user-1");
     expect(json.account.id).toBe("paper-account-1");
+    expect(json.openPositionCount).toBe(1);
+    expect(json.historyPositionCount).toBe(2);
     expect(json.summary.cashBalance).toBe(1_250);
   });
 });

@@ -18,6 +18,8 @@ export async function GET(request: NextRequest) {
 
   return copyAuthCookies(auth.response, NextResponse.json({
     account: portfolio.account,
+    historyPositionCount: portfolio.historyPositions.length,
+    openPositionCount: portfolio.openPositions.length,
     summary: portfolio.summary,
   }));
 }
