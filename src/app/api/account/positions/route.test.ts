@@ -109,6 +109,7 @@ describe("POST /api/account/positions", () => {
         strike: 190,
       }],
       netCredit: 1.25,
+      openedAt: "2026-07-03",
       strategyType: "short_put",
       symbol: "aapl",
     }));
@@ -120,6 +121,7 @@ describe("POST /api/account/positions", () => {
       "user-1",
       expect.objectContaining({
         contracts: 2,
+        openedAt: "2026-07-03",
         strategyType: "short_put",
         symbol: "AAPL",
       }),

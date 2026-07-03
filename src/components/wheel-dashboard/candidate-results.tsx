@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CompanyInsightState } from "@/components/company-insights";
 import type {
   VerticalSpreadCandidate,
@@ -8,6 +8,7 @@ import type {
   WheelCompanyStrategy,
 } from "@/lib/wheel/types";
 import type { TradeAnalysisResponse } from "@/lib/trade-analysis/types";
+import { AddPositionModal } from "./add-position-modal";
 import { CandidateDetailDrawer } from "./candidate-detail-drawer";
 import { CandidateMobileCards } from "./candidate-mobile-cards";
 import { CandidateTable } from "./candidate-table";
@@ -392,8 +393,28 @@ export function CandidateResults({
   const isSpreadTab = activeTab === "putSpreads" || activeTab === "callSpreads";
   const rowCount = isSpreadTab ? spreadRows.length : rows.length;
   const activeStrategy = strategyForTab(activeTab);
-  const [, setOpenPositionRequest] =
+  const [openPositionRequest, setOpenPositionRequest] =
     useState<OpenPositionCandidateRequest | null>(null);
+  const openPositionTriggerRef = useRef<HTMLElement | null>(null);
+
+  function openPosition(request: OpenPositionCandidateRequest) {
+    openPositionTriggerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setOpenPositionRequest(request);
+  }
+
+  function closeOpenPosition() {
+    const trigger = openPositionTriggerRef.current;
+
+    setOpenPositionRequest(null);
+    openPositionTriggerRef.current = null;
+
+    window.requestAnimationFrame(() => {
+      trigger?.focus();
+    });
+  }
 
   return (
     <section className="min-w-0 rounded-lg border border-white/10 bg-[#151718]">
@@ -456,7 +477,7 @@ export function CandidateResults({
         <SpreadRows
           analysisContext={analysisContext}
           companyInsightState={companyInsightState}
-          onOpenPosition={setOpenPositionRequest}
+          onOpenPosition={openPosition}
           rows={spreadRows}
           strategy={activeStrategy}
         />
@@ -464,12 +485,17 @@ export function CandidateResults({
         <CandidateRows
           analysisContext={analysisContext}
           companyInsightState={companyInsightState}
-          onOpenPosition={setOpenPositionRequest}
+          onOpenPosition={openPosition}
           rows={rows}
           strategy={activeStrategy}
           underlyingPrice={underlyingPrice}
         />
       )}
+      <AddPositionModal
+        analysisContext={analysisContext}
+        onClose={closeOpenPosition}
+        request={openPositionRequest}
+      />
     </section>
   );
 }

@@ -194,6 +194,27 @@ describe("simulated position store", () => {
     expect(calls.paperInsert).toHaveBeenCalledWith({ user_id: userId });
   });
 
+  it("uses the provided open date when creating a position", async () => {
+    const { calls, client } = supabaseMock();
+
+    await createSimulatedPosition(client, userId, {
+      contracts: 1,
+      legs: [{
+        openPrice: 1,
+        optionType: "call",
+        side: "short",
+        strike: 210,
+      }],
+      openedAt: "2026-07-01",
+      strategyType: "covered_call",
+      symbol: "AAPL",
+    }, new Date("2026-07-03T20:15:00.000Z"));
+
+    expect(calls.positionInsert).toHaveBeenCalledWith(expect.objectContaining({
+      opened_at: "2026-07-01T12:00:00.000Z",
+    }));
+  });
+
   it("derives spread net credit from short and long leg open prices", async () => {
     const { calls, client } = supabaseMock();
 

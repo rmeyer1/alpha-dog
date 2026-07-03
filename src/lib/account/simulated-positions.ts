@@ -48,6 +48,7 @@ export const simulatedPositionInputSchema = z.object({
   legs: z.array(simulatedPositionLegInputSchema).min(1).max(4),
   netCredit: z.number().finite().positive().optional(),
   notes: z.string().trim().max(2000).optional(),
+  openedAt: dateSchema.optional(),
   strategyType: z.enum([
     "short_put",
     "covered_call",
@@ -303,6 +304,14 @@ function expirationDateFromTimestamp(timestamp: string) {
   return timestamp.slice(0, 10);
 }
 
+function openedAtTimestamp(input: SimulatedPositionInput, now: Date) {
+  if (!input.openedAt) {
+    return now.toISOString();
+  }
+
+  return `${input.openedAt}T12:00:00.000Z`;
+}
+
 function singleShortPutLeg(legs: SimulatedPositionLegRow[]): AssignableShortPutLeg | null {
   if (legs.length !== 1) {
     return null;
@@ -370,7 +379,7 @@ export async function createSimulatedPosition(
   now = new Date(),
 ) {
   const paperAccount = await getOrCreatePaperAccount(supabase, userId);
-  const openedAt = now.toISOString();
+  const openedAt = openedAtTimestamp(input, now);
   const netCredit = calculateNetCredit(input);
   const symbol = input.symbol.toUpperCase();
 
