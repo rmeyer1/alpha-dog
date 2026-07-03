@@ -84,6 +84,7 @@ describe("POST /api/account/positions/[positionId]/close", () => {
 
     const response = await POST(closeRequest({
       closePrice: 0.5,
+      closedAt: "2026-07-03T12:00:00.000Z",
       contractsToClose: 1,
       notes: "Taking half off",
     }), context);
@@ -96,6 +97,7 @@ describe("POST /api/account/positions/[positionId]/close", () => {
       "position-1",
       {
         closePrice: 0.5,
+        closedAt: "2026-07-03T12:00:00.000Z",
         contractsToClose: 1,
         notes: "Taking half off",
       },
