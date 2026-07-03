@@ -23,6 +23,18 @@ import type {
 
 const idleAnalysis: CandidateAnalysisState = { status: "idle" };
 
+export type OpenPositionCandidateRequest =
+  | {
+      candidate: WheelCandidate;
+      candidateType: "contract";
+      strategy: WheelCompanyStrategy;
+    }
+  | {
+      candidate: VerticalSpreadCandidate;
+      candidateType: "vertical_spread";
+      strategy: WheelCompanyStrategy;
+    };
+
 type ApiErrorPayload = {
   error: {
     message: string;
@@ -54,12 +66,14 @@ function strategyForTab(tab: StrategyTab): WheelCompanyStrategy {
 function CandidateRows({
   analysisContext,
   companyInsightState,
+  onOpenPosition,
   rows,
   strategy,
   underlyingPrice,
 }: {
   analysisContext: CandidateAnalysisContext;
   companyInsightState: CompanyInsightState;
+  onOpenPosition: (request: OpenPositionCandidateRequest) => void;
   rows: WheelCandidate[];
   strategy: WheelCompanyStrategy;
   underlyingPrice: number | null | undefined;
@@ -160,6 +174,13 @@ function CandidateRows({
         analysisByKey={analysisByKey}
         expandedWarnings={expandedWarnings}
         onAnalyzeCandidate={(candidate) => void analyzeCandidate(candidate)}
+        onOpenPosition={(candidate) =>
+          onOpenPosition({
+            candidate,
+            candidateType: "contract",
+            strategy,
+          })
+        }
         onSelectCandidate={setSelectedCandidate}
         onToggleWarnings={toggleWarnings}
         rows={rows}
@@ -167,6 +188,13 @@ function CandidateRows({
       <CandidateMobileCards
         analysisByKey={analysisByKey}
         onAnalyzeCandidate={(candidate) => void analyzeCandidate(candidate)}
+        onOpenPosition={(candidate) =>
+          onOpenPosition({
+            candidate,
+            candidateType: "contract",
+            strategy,
+          })
+        }
         onSelectCandidate={setSelectedCandidate}
         rows={rows}
       />
@@ -193,11 +221,13 @@ function CandidateRows({
 function SpreadRows({
   analysisContext,
   companyInsightState,
+  onOpenPosition,
   rows,
   strategy,
 }: {
   analysisContext: CandidateAnalysisContext;
   companyInsightState: CompanyInsightState;
+  onOpenPosition: (request: OpenPositionCandidateRequest) => void;
   rows: VerticalSpreadCandidate[];
   strategy: WheelCompanyStrategy;
 }) {
@@ -297,6 +327,13 @@ function SpreadRows({
         analysisByKey={analysisByKey}
         expandedWarnings={expandedWarnings}
         onAnalyzeCandidate={(candidate) => void analyzeCandidate(candidate)}
+        onOpenPosition={(candidate) =>
+          onOpenPosition({
+            candidate,
+            candidateType: "vertical_spread",
+            strategy,
+          })
+        }
         onSelectCandidate={setSelectedCandidate}
         onToggleWarnings={toggleWarnings}
         rows={rows}
@@ -304,6 +341,13 @@ function SpreadRows({
       <SpreadMobileCards
         analysisByKey={analysisByKey}
         onAnalyzeCandidate={(candidate) => void analyzeCandidate(candidate)}
+        onOpenPosition={(candidate) =>
+          onOpenPosition({
+            candidate,
+            candidateType: "vertical_spread",
+            strategy,
+          })
+        }
         onSelectCandidate={setSelectedCandidate}
         rows={rows}
       />
@@ -348,6 +392,8 @@ export function CandidateResults({
   const isSpreadTab = activeTab === "putSpreads" || activeTab === "callSpreads";
   const rowCount = isSpreadTab ? spreadRows.length : rows.length;
   const activeStrategy = strategyForTab(activeTab);
+  const [, setOpenPositionRequest] =
+    useState<OpenPositionCandidateRequest | null>(null);
 
   return (
     <section className="min-w-0 rounded-lg border border-white/10 bg-[#151718]">
@@ -410,6 +456,7 @@ export function CandidateResults({
         <SpreadRows
           analysisContext={analysisContext}
           companyInsightState={companyInsightState}
+          onOpenPosition={setOpenPositionRequest}
           rows={spreadRows}
           strategy={activeStrategy}
         />
@@ -417,6 +464,7 @@ export function CandidateResults({
         <CandidateRows
           analysisContext={analysisContext}
           companyInsightState={companyInsightState}
+          onOpenPosition={setOpenPositionRequest}
           rows={rows}
           strategy={activeStrategy}
           underlyingPrice={underlyingPrice}
