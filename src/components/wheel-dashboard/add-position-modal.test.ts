@@ -4,7 +4,10 @@ import type {
   WheelCandidate,
 } from "@/lib/wheel/types";
 import type { CandidateAnalysisContext } from "./types";
-import { buildSimulatedPositionInput } from "./add-position-modal";
+import {
+  buildSimulatedPositionInput,
+  submitErrorState,
+} from "./add-position-modal";
 
 const analysisContext: CandidateAnalysisContext = {
   dataFreshness: { status: "fresh" },
@@ -180,6 +183,36 @@ describe("buildSimulatedPositionInput", () => {
       openPrice: 0.75,
       side: "long",
       strike: 180,
+    });
+  });
+});
+
+describe("submitErrorState", () => {
+  it("maps unauthenticated saves to a sign-in action", () => {
+    expect(submitErrorState({
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Sign in to save positions.",
+      },
+    }, 401)).toEqual({
+      actionHref: "/account?next=%2Fscreeners",
+      actionLabel: "Sign in",
+      message: "Sign in to save positions.",
+      status: "error",
+    });
+  });
+
+  it("maps incomplete profiles to a complete-profile action", () => {
+    expect(submitErrorState({
+      error: {
+        code: "PROFILE_INCOMPLETE",
+        message: "Complete your profile first.",
+      },
+    }, 403)).toEqual({
+      actionHref: "/account?next=%2Fscreeners",
+      actionLabel: "Complete profile",
+      message: "Complete your profile first.",
+      status: "error",
     });
   });
 });

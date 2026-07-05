@@ -121,7 +121,7 @@ function accountActionHref() {
   return `/account?${params.toString()}`;
 }
 
-function submitErrorState(
+export function submitErrorState(
   payload: PositionApiErrorPayload | null,
   status: number,
 ): SubmitStatus {
