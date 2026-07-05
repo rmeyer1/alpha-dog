@@ -13,7 +13,12 @@ const simulatedPositions = readFileSync(
   "supabase/migrations/20260702200000_create_simulated_position_tracker.sql",
   "utf8",
 );
-const migrations = `${foundation}\n${hardening}\n${simulatedPositions}`;
+const statementImports = readFileSync(
+  "supabase/migrations/20260705212000_create_statement_import_model.sql",
+  "utf8",
+);
+const migrations =
+  `${foundation}\n${hardening}\n${simulatedPositions}\n${statementImports}`;
 
 describe("account-owned Supabase RLS policies", () => {
   it.each([
@@ -25,6 +30,9 @@ describe("account-owned Supabase RLS policies", () => {
     ["simulated_positions", "user_id"],
     ["simulated_position_events", "user_id"],
     ["simulated_equity_lots", "user_id"],
+    ["statement_imports", "user_id"],
+    ["statement_import_rows", "user_id"],
+    ["statement_reconciliation_groups", "user_id"],
   ])("enables RLS and owner policies for %s", (table, ownerColumn) => {
     expect(migrations).toContain(`alter table public.${table} enable row level security`);
     expect(migrations).toContain(`on public.${table}`);
@@ -61,6 +69,48 @@ describe("account-owned Supabase RLS policies", () => {
     );
     expect(simulatedPositions).toContain(
       "and owner_position.paper_account_id = paper_account_id",
+    );
+  });
+
+  it("scopes statement import child rows through their owner import", () => {
+    expect(statementImports).toContain(
+      "alter table public.statement_import_rows enable row level security",
+    );
+    expect(statementImports).toContain(
+      "alter table public.statement_reconciliation_groups enable row level security",
+    );
+    expect(statementImports).toContain(
+      "from public.statement_imports owner_import",
+    );
+    expect(statementImports).toContain(
+      "where owner_import.id = import_id",
+    );
+    expect(statementImports).toContain(
+      "and owner_import.user_id = (select auth.uid())",
+    );
+  });
+
+  it("scopes statement reconciliation group rows through owned groups and rows", () => {
+    expect(statementImports).toContain(
+      "alter table public.statement_reconciliation_group_rows enable row level security",
+    );
+    expect(statementImports).toContain(
+      "from public.statement_reconciliation_groups owner_group",
+    );
+    expect(statementImports).toContain(
+      "join public.statement_import_rows owner_row",
+    );
+    expect(statementImports).toContain(
+      "where owner_group.id = group_id",
+    );
+    expect(statementImports).toContain(
+      "and owner_group.user_id = (select auth.uid())",
+    );
+    expect(statementImports).toContain(
+      "and owner_row.user_id = (select auth.uid())",
+    );
+    expect(statementImports).toContain(
+      "and owner_group.import_id = owner_row.import_id",
     );
   });
 });
