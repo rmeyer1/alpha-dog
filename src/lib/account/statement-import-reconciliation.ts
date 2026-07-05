@@ -208,7 +208,7 @@ function confirmedGroup({
       idempotencyKey: `${groupKey}:open`,
       price: legs[0]?.openPrice ?? null,
       quantity: openedQuantity,
-      rowIndexes: sourceRowIndexes,
+      rowIndexes: [...sourceRowIndexes],
     }],
     explanation,
     groupKey,
