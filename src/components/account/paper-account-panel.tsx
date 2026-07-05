@@ -48,6 +48,7 @@ type SaveState =
   | { status: "saving" };
 
 const PAPER_ACCOUNT_REFRESH_EVENT = "paper-account:refresh";
+export const PAPER_STARTING_CASH_STEP = "0.01";
 
 function formatCurrency(value: number | null | undefined) {
   if (value == null) {
@@ -269,9 +270,10 @@ function SettingsForm({
             <input
               className="h-10 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
               id="paperStartingCash"
+              inputMode="decimal"
               min="0"
               onChange={(event) => setStartingCash(event.target.value)}
-              step="100"
+              step={PAPER_STARTING_CASH_STEP}
               type="number"
               value={startingCash}
             />
