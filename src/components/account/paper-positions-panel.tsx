@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
   Clock3,
   Loader2,
   RefreshCw,
@@ -72,7 +73,15 @@ type DetailState =
   | { message: string; status: "error" }
   | { data: PositionDetail; status: "ready" };
 
+type CloseSubmitState =
+  | { status: "idle" }
+  | { message: string; stale?: boolean; status: "error" }
+  | { message: string; status: "success" }
+  | { status: "submitting" };
+
 type PositionTab = "history" | "open";
+
+const PAPER_ACCOUNT_REFRESH_EVENT = "paper-account:refresh";
 
 function formatCurrency(value: number | null | undefined) {
   if (value == null) {
@@ -110,6 +119,19 @@ function formatCompactDate(value: string | null | undefined) {
 
 function formatCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
+}
+
+function todayInputDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function closeDateTimestamp(value: string) {
+  return `${value}T12:00:00.000Z`;
 }
 
 function labelize(value: string) {
@@ -408,11 +430,326 @@ function EventHistory({ events }: { events: PositionEvent[] }) {
   );
 }
 
+function defaultClosePrice(position: PositionDetail) {
+  if (
+    position.valuation.markToClose != null &&
+    position.contractsRemaining > 0
+  ) {
+    return String(Number(
+      (position.valuation.markToClose / position.contractsRemaining / 100)
+        .toFixed(2),
+    ));
+  }
+
+  return String(Number(position.netCredit.toFixed(2)));
+}
+
+function ClosePositionModal({
+  onClose,
+  onRefresh,
+  onSuccess,
+  position,
+}: {
+  onClose: () => void;
+  onRefresh: () => void;
+  onSuccess: (positionId: string) => void;
+  position: PositionDetail | null;
+}) {
+  if (!position) {
+    return null;
+  }
+
+  return (
+    <ClosePositionForm
+      key={position.id}
+      onClose={onClose}
+      onRefresh={onRefresh}
+      onSuccess={onSuccess}
+      position={position}
+    />
+  );
+}
+
+function ClosePositionForm({
+  onClose,
+  onRefresh,
+  onSuccess,
+  position,
+}: {
+  onClose: () => void;
+  onRefresh: () => void;
+  onSuccess: (positionId: string) => void;
+  position: PositionDetail;
+}) {
+  const contractsInputRef = useRef<HTMLInputElement>(null);
+  const [contracts, setContracts] = useState("1");
+  const [closePrice, setClosePrice] = useState(() => defaultClosePrice(position));
+  const [closedAt, setClosedAt] = useState(todayInputDate);
+  const [notes, setNotes] = useState("");
+  const [submitState, setSubmitState] =
+    useState<CloseSubmitState>({ status: "idle" });
+
+  useEffect(() => {
+    contractsInputRef.current?.focus();
+  }, []);
+
+  const isSubmitting = submitState.status === "submitting";
+  const isSuccess = submitState.status === "success";
+  const parsedContracts = Number(contracts);
+  const remainingAfter = Number.isInteger(parsedContracts)
+    ? Math.max(position.contractsRemaining - parsedContracts, 0)
+    : position.contractsRemaining;
+
+  async function submitClose(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (isSubmitting || isSuccess) {
+      return;
+    }
+
+    const contractsToClose = Number(contracts);
+    const parsedClosePrice = Number(closePrice);
+
+    if (!Number.isInteger(contractsToClose) || contractsToClose <= 0) {
+      setSubmitState({
+        message: "Contracts bought back must be a whole number above zero.",
+        status: "error",
+      });
+      return;
+    }
+
+    if (contractsToClose > position.contractsRemaining) {
+      setSubmitState({
+        message: "Contracts bought back cannot exceed the remaining quantity.",
+        stale: true,
+        status: "error",
+      });
+      return;
+    }
+
+    if (!Number.isFinite(parsedClosePrice) || parsedClosePrice < 0) {
+      setSubmitState({
+        message: "Buyback price must be zero or greater.",
+        status: "error",
+      });
+      return;
+    }
+
+    if (!closedAt) {
+      setSubmitState({
+        message: "Close date is required.",
+        status: "error",
+      });
+      return;
+    }
+
+    setSubmitState({ status: "submitting" });
+
+    try {
+      const response = await fetch(
+        `/api/account/positions/${position.id}/close`,
+        {
+          body: JSON.stringify({
+            closePrice: parsedClosePrice,
+            closedAt: closeDateTimestamp(closedAt),
+            contractsToClose,
+            notes: notes.trim() || undefined,
+          }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        },
+      );
+      const payload = await response.json().catch(() => null) as
+        | { error?: { code?: string; message?: string } }
+        | null;
+
+      if (!response.ok) {
+        const code = payload?.error?.code;
+
+        setSubmitState({
+          message: payload?.error?.message ?? "Unable to close this position.",
+          stale: code === "SIMULATED_POSITION_ALREADY_CLOSED" ||
+            code === "SIMULATED_POSITION_NOT_FOUND" ||
+            code === "SIMULATED_CLOSE_QUANTITY_EXCEEDS_REMAINING",
+          status: "error",
+        });
+        return;
+      }
+
+      setSubmitState({
+        message: contractsToClose === position.contractsRemaining
+          ? "Position fully closed."
+          : "Partial close saved.",
+        status: "success",
+      });
+      onSuccess(position.id);
+    } catch {
+      setSubmitState({
+        message: "Unable to reach the close-position service.",
+        status: "error",
+      });
+    }
+  }
+
+  return (
+    <div
+      aria-label="Close simulated position"
+      aria-modal="true"
+      className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm"
+      role="dialog"
+    >
+      <button
+        aria-label="Close buyback modal"
+        className="absolute inset-0 cursor-default"
+        onClick={onClose}
+        type="button"
+      />
+      <section className="absolute inset-x-0 bottom-0 max-h-[90vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[520px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-medium uppercase text-emerald-200">
+              Buyback
+            </p>
+            <h2 className="mt-1 text-xl font-semibold tracking-normal text-white">
+              Close {position.symbol} {strategyLabel(position.strategyType)}
+            </h2>
+            <p className="mt-1 text-sm text-zinc-400">
+              {formatCount(position.contractsRemaining)} contracts remaining
+            </p>
+          </div>
+          <button
+            aria-label="Close buyback modal"
+            className="flex size-9 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-200 transition hover:bg-white/[0.08]"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <form className="mt-5 grid gap-4" onSubmit={(event) => void submitClose(event)}>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="grid gap-1.5 text-sm" htmlFor="closeContracts">
+              <span className="font-medium text-zinc-200">Contracts</span>
+              <input
+                className="h-10 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                id="closeContracts"
+                max={position.contractsRemaining}
+                min="1"
+                onChange={(event) => setContracts(event.target.value)}
+                ref={contractsInputRef}
+                required
+                step="1"
+                type="number"
+                value={contracts}
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm" htmlFor="closePrice">
+              <span className="font-medium text-zinc-200">Buyback price</span>
+              <input
+                className="h-10 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                id="closePrice"
+                min="0"
+                onChange={(event) => setClosePrice(event.target.value)}
+                required
+                step="0.01"
+                type="number"
+                value={closePrice}
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm" htmlFor="closedAt">
+              <span className="font-medium text-zinc-200">Close date</span>
+              <input
+                className="h-10 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                id="closedAt"
+                onChange={(event) => setClosedAt(event.target.value)}
+                required
+                type="date"
+                value={closedAt}
+              />
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-zinc-300">
+            Remaining after close:{" "}
+            <span className="font-mono text-white">
+              {formatCount(remainingAfter)}
+            </span>
+          </div>
+
+          <label className="grid gap-1.5 text-sm" htmlFor="closeNotes">
+            <span className="font-medium text-zinc-200">Notes</span>
+            <textarea
+              className="min-h-20 resize-y rounded-md border border-white/10 bg-black/30 px-3 py-2 text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              id="closeNotes"
+              maxLength={2000}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Optional"
+              value={notes}
+            />
+          </label>
+
+          {submitState.status === "error" ? (
+            <div
+              aria-live="polite"
+              className="rounded-lg border border-red-300/25 bg-red-300/10 p-3 text-sm text-red-100"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span>{submitState.message}</span>
+                {submitState.stale ? (
+                  <button
+                    className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-red-200/30 bg-red-200/10 px-3 font-semibold transition hover:bg-red-200/15"
+                    onClick={onRefresh}
+                    type="button"
+                  >
+                    <RefreshCw className="size-4" />
+                    Refresh
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {submitState.status === "success" ? (
+            <p
+              aria-live="polite"
+              className="inline-flex items-center gap-2 text-sm text-emerald-100"
+            >
+              <CheckCircle2 className="size-4" />
+              {submitState.message}
+            </p>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              className="inline-flex min-h-10 items-center justify-center rounded-md border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-200 transition hover:bg-white/[0.08]"
+              onClick={onClose}
+              type="button"
+            >
+              Close
+            </button>
+            <button
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isSubmitting || isSuccess}
+              type="submit"
+            >
+              {isSubmitting ? <Loader2 className="size-4 animate-spin" /> : null}
+              {isSubmitting ? "Saving" : isSuccess ? "Saved" : "Save close"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function PositionDetailDrawer({
   detailState,
+  onRequestClose,
   onClose,
 }: {
   detailState: DetailState;
+  onRequestClose: (position: PositionDetail) => void;
   onClose: () => void;
 }) {
   if (detailState.status === "idle") {
@@ -465,23 +802,45 @@ function PositionDetailDrawer({
           </div>
         ) : null}
         {detailState.status === "ready" ? (
-          <PositionDetailContent position={detailState.data} />
+          <PositionDetailContent
+            onRequestClose={() => onRequestClose(detailState.data)}
+            position={detailState.data}
+          />
         ) : null}
       </section>
     </div>
   );
 }
 
-function PositionDetailContent({ position }: { position: PositionDetail }) {
+function PositionDetailContent({
+  onRequestClose,
+  position,
+}: {
+  onRequestClose: () => void;
+  position: PositionDetail;
+}) {
   const legSnapshots = position.legs.map(legSnapshotFromSavedLeg);
+  const canClose = ["open", "partially_closed"].includes(position.status) &&
+    position.contractsRemaining > 0;
 
   return (
     <div className="mt-5 grid gap-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusPill status={position.status} />
-        <span className="inline-flex rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs font-semibold text-zinc-200">
-          {positionKind(position.source)}
-        </span>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill status={position.status} />
+          <span className="inline-flex rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs font-semibold text-zinc-200">
+            {positionKind(position.source)}
+          </span>
+        </div>
+        {canClose ? (
+          <button
+            className="inline-flex min-h-10 items-center justify-center rounded-md bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200"
+            onClick={onRequestClose}
+            type="button"
+          >
+            Close position
+          </button>
+        ) : null}
       </div>
 
       <dl className="grid sm:grid-cols-3">
@@ -541,6 +900,8 @@ export function PaperPositionsPanel() {
   const [activeTab, setActiveTab] = useState<PositionTab>("open");
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
+  const [closePosition, setClosePosition] = useState<PositionDetail | null>(null);
+  const closeTriggerRef = useRef<HTMLElement | null>(null);
 
   async function fetchPositions(): Promise<LoadState> {
     try {
@@ -578,11 +939,9 @@ export function PaperPositionsPanel() {
     setLoadState(await fetchPositions());
   }
 
-  async function openDetail(position: PositionSummary) {
-    setDetailState({ id: position.id, status: "loading" });
-
+  async function fetchPositionDetail(positionId: string): Promise<DetailState> {
     try {
-      const response = await fetch(`/api/account/positions/${position.id}`, {
+      const response = await fetch(`/api/account/positions/${positionId}`, {
         cache: "no-store",
       });
       const payload = await response.json().catch(() => null) as
@@ -590,19 +949,64 @@ export function PaperPositionsPanel() {
         | null;
 
       if (!response.ok || !payload?.position) {
-        setDetailState({
+        return {
           message: payload?.error?.message ?? "Unable to load position detail.",
           status: "error",
-        });
-        return;
+        };
       }
 
-      setDetailState({ data: payload.position, status: "ready" });
+      return { data: payload.position, status: "ready" };
     } catch {
-      setDetailState({
+      return {
         message: "Unable to reach the position detail service.",
         status: "error",
-      });
+      };
+    }
+  }
+
+  async function openDetail(position: PositionSummary) {
+    setDetailState({ id: position.id, status: "loading" });
+    setDetailState(await fetchPositionDetail(position.id));
+  }
+
+  function closeDetail() {
+    setDetailState({ status: "idle" });
+    closeClosePositionModal();
+  }
+
+  function requestClosePosition(position: PositionDetail) {
+    const activeElement = document.activeElement;
+    closeTriggerRef.current = activeElement instanceof HTMLElement
+      ? activeElement
+      : null;
+    setClosePosition(position);
+  }
+
+  function closeClosePositionModal() {
+    setClosePosition(null);
+    window.requestAnimationFrame(() => {
+      closeTriggerRef.current?.focus();
+      closeTriggerRef.current = null;
+    });
+  }
+
+  async function refreshPositionContext(positionId: string) {
+    const [nextPositions, nextDetail] = await Promise.all([
+      fetchPositions(),
+      fetchPositionDetail(positionId),
+    ]);
+
+    setLoadState(nextPositions);
+    setDetailState(nextDetail);
+    window.dispatchEvent(new Event(PAPER_ACCOUNT_REFRESH_EVENT));
+  }
+
+  async function refreshClosePositionContext(positionId: string) {
+    await refreshPositionContext(positionId);
+
+    if (closePosition?.id === positionId && detailState.status === "ready") {
+      const nextDetail = await fetchPositionDetail(positionId);
+      setClosePosition(nextDetail.status === "ready" ? nextDetail.data : null);
     }
   }
 
@@ -706,7 +1110,19 @@ export function PaperPositionsPanel() {
 
       <PositionDetailDrawer
         detailState={detailState}
-        onClose={() => setDetailState({ status: "idle" })}
+        onClose={closeDetail}
+        onRequestClose={requestClosePosition}
+      />
+
+      <ClosePositionModal
+        onClose={closeClosePositionModal}
+        onRefresh={() => {
+          if (closePosition) {
+            void refreshClosePositionContext(closePosition.id);
+          }
+        }}
+        onSuccess={(positionId) => void refreshPositionContext(positionId)}
+        position={closePosition}
       />
     </section>
   );

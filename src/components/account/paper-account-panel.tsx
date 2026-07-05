@@ -47,6 +47,8 @@ type SaveState =
   | { message: string; status: "success" }
   | { status: "saving" };
 
+const PAPER_ACCOUNT_REFRESH_EVENT = "paper-account:refresh";
+
 function formatCurrency(value: number | null | undefined) {
   if (value == null) {
     return "Unavailable";
@@ -404,41 +406,41 @@ function SummaryContent({
   );
 }
 
-export function PaperAccountPanel() {
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+async function fetchPaperAccount(): Promise<LoadState> {
+  try {
+    const response = await fetch("/api/account/paper-account", {
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => null) as
+      | (Partial<PaperAccountPayload> & { error?: { message?: string } })
+      | null;
 
-  async function fetchPaperAccount(): Promise<LoadState> {
-    try {
-      const response = await fetch("/api/account/paper-account", {
-        cache: "no-store",
-      });
-      const payload = await response.json().catch(() => null) as
-        | (Partial<PaperAccountPayload> & { error?: { message?: string } })
-        | null;
-
-      if (!response.ok || !payload?.account || !payload.summary) {
-        return {
-          message: payload?.error?.message ?? "Unable to load paper account summary.",
-          status: "error",
-        };
-      }
-
+    if (!response.ok || !payload?.account || !payload.summary) {
       return {
-        data: {
-          account: payload.account,
-          historyPositionCount: payload.historyPositionCount ?? 0,
-          openPositionCount: payload.openPositionCount ?? 0,
-          summary: payload.summary,
-        },
-        status: "ready",
-      };
-    } catch {
-      return {
-        message: "Unable to reach the paper account service.",
+        message: payload?.error?.message ?? "Unable to load paper account summary.",
         status: "error",
       };
     }
+
+    return {
+      data: {
+        account: payload.account,
+        historyPositionCount: payload.historyPositionCount ?? 0,
+        openPositionCount: payload.openPositionCount ?? 0,
+        summary: payload.summary,
+      },
+      status: "ready",
+    };
+  } catch {
+    return {
+      message: "Unable to reach the paper account service.",
+      status: "error",
+    };
   }
+}
+
+export function PaperAccountPanel() {
+  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
 
   async function loadPaperAccount() {
     setLoadState({ status: "loading" });
@@ -460,6 +462,18 @@ export function PaperAccountPanel() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    function refreshPaperAccount() {
+      void loadPaperAccount();
+    }
+
+    window.addEventListener(PAPER_ACCOUNT_REFRESH_EVENT, refreshPaperAccount);
+
+    return () => {
+      window.removeEventListener(PAPER_ACCOUNT_REFRESH_EVENT, refreshPaperAccount);
     };
   }, []);
 
