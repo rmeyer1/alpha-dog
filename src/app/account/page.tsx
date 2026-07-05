@@ -14,6 +14,7 @@ import { PaperAccountPanel } from "@/components/account/paper-account-panel";
 import { PaperPositionsPanel } from "@/components/account/paper-positions-panel";
 import { ProviderLinkingForm } from "@/components/account/provider-linking-form";
 import { ProfileCompletionForm } from "@/components/account/profile-completion-form";
+import { StatementImportPanel } from "@/components/account/statement-import-panel";
 import { loadAccountHubState, type AccountHubState } from "@/lib/supabase/account-hub";
 import {
   accountAuthNoticeFromSearchParams,
@@ -282,6 +283,7 @@ function ReadyState({
           </section>
 
           <PaperAccountPanel />
+          <StatementImportPanel />
           <PaperPositionsPanel />
 
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
