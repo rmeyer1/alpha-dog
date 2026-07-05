@@ -16,6 +16,26 @@ export type StatementImportRowStatus =
   | "needs_review"
   | "staged";
 
+export type OptionActivityAction =
+  | "close_long"
+  | "close_short"
+  | "expire"
+  | "open_long"
+  | "open_short";
+
+export interface StatementImportOptionContract {
+  expirationDate: string;
+  optionType: "call" | "put";
+  strike: number;
+  underlying: string;
+}
+
+export interface StatementImportOptionActivity {
+  action: OptionActivityAction;
+  effect: "close" | "expire" | "open";
+  side: "long" | "short" | null;
+}
+
 export interface StatementImportRow {
   activityDate: string | null;
   amount: number | null;
@@ -24,6 +44,8 @@ export interface StatementImportRow {
   description: string | null;
   errors: string[];
   instrument: string | null;
+  optionActivity: StatementImportOptionActivity | null;
+  optionContract: StatementImportOptionContract | null;
   price: number | null;
   processDate: string | null;
   quantity: number | null;
@@ -93,6 +115,14 @@ const optionTransCodes = new Set(["BTO", "BTC", "STC", "STO", "OEXP"]);
 const equityTransCodes = new Set(["BUY", "SELL"]);
 const dividendTransCodes = new Set(["CDIV"]);
 const outOfScopeTransCodes = new Set(["ACH", "XENT", "INT", "FUTSWP"]);
+
+const optionActivityByTransCode = {
+  BTC: { action: "close_short", effect: "close", side: "short" },
+  BTO: { action: "open_long", effect: "open", side: "long" },
+  OEXP: { action: "expire", effect: "expire", side: null },
+  STC: { action: "close_long", effect: "close", side: "long" },
+  STO: { action: "open_short", effect: "open", side: "short" },
+} as const satisfies Record<string, StatementImportOptionActivity>;
 
 function normalizeHeader(header: string) {
   return header.replace(/^\uFEFF/, "").trim();
@@ -269,6 +299,39 @@ function parseNumber(value: string | null) {
   return isParenthesizedNegative ? -Math.abs(parsed) : parsed;
 }
 
+export function parseRobinhoodOptionDescription(
+  description: string | null,
+): StatementImportOptionContract | null {
+  if (!description) {
+    return null;
+  }
+
+  const match = /^\s*([A-Z][A-Z0-9.-]*)\s+(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})\s+(Put|Call)\s+\$?([0-9,]+(?:\.\d+)?)\s*$/i.exec(description);
+
+  if (!match) {
+    return null;
+  }
+
+  const expirationDate = parseDate(match[2]);
+  const strike = parseNumber(match[4]);
+
+  if (expirationDate == null || strike == null || strike <= 0) {
+    return null;
+  }
+
+  return {
+    expirationDate,
+    optionType: match[3].toLowerCase() as "call" | "put",
+    strike,
+    underlying: match[1].toUpperCase(),
+  };
+}
+
+function optionActivityForTransCode(transCode: string | null) {
+  const normalizedCode = normalizeTransCode(transCode);
+  return optionActivityByTransCode[normalizedCode as keyof typeof optionActivityByTransCode] ?? null;
+}
+
 function classifyRobinhoodRow(transCode: string | null): ClassificationResult {
   const normalizedCode = normalizeTransCode(transCode);
 
@@ -303,6 +366,13 @@ function parseRobinhoodRow(rawRow: Record<string, string>, rowIndex: number): St
   const transCode = nonEmpty(rawRow["Trans Code"]);
   const classification = classifyRobinhoodRow(transCode);
   const errors = [...(classification.errors ?? [])];
+  const description = nonEmpty(rawRow.Description);
+  const optionActivity = classification.classification === "option"
+    ? optionActivityForTransCode(transCode)
+    : null;
+  const optionContract = classification.classification === "option"
+    ? parseRobinhoodOptionDescription(description)
+    : null;
 
   if (nonEmpty(rawRow["Activity Date"]) && activityDate == null) {
     errors.push("Invalid activity date.");
@@ -316,6 +386,10 @@ function parseRobinhoodRow(rawRow: Record<string, string>, rowIndex: number): St
     errors.push("Invalid settle date.");
   }
 
+  if (classification.classification === "option" && optionContract == null) {
+    errors.push("Unsupported Robinhood option description.");
+  }
+
   const status = errors.length > 0 && classification.status === "staged"
     ? "needs_review"
     : classification.status;
@@ -325,9 +399,11 @@ function parseRobinhoodRow(rawRow: Record<string, string>, rowIndex: number): St
     amount: parseNumber(nonEmpty(rawRow.Amount)),
     classification: classification.classification,
     confidence: classification.confidence,
-    description: nonEmpty(rawRow.Description),
+    description,
     errors,
     instrument: nonEmpty(rawRow.Instrument),
+    optionActivity,
+    optionContract,
     price: parseNumber(nonEmpty(rawRow.Price)),
     processDate,
     quantity: parseNumber(nonEmpty(rawRow.Quantity)),
