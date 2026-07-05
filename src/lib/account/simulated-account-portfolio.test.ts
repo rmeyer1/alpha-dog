@@ -257,4 +257,105 @@ describe("simulated account portfolio loader", () => {
       status: "assigned",
     }));
   });
+
+  it("exposes called-away lifecycle event context for covered calls", async () => {
+    const account = maybeSingleChain({
+      created_at: "2026-07-02T20:00:00.000Z",
+      current_cash: "52000",
+      id: "paper-account-1",
+      margin_balance: "0",
+      margin_interest_rate: "0.05",
+      starting_cash: "10000",
+      updated_at: "2026-07-02T20:00:00.000Z",
+      user_id: "user-1",
+    });
+    const positions = eqOrderChain([{
+      closed_at: "2026-08-21T21:00:00.000Z",
+      contracts_opened: 2,
+      contracts_remaining: 0,
+      created_at: "2026-07-02T20:00:00.000Z",
+      expiration_date: "2026-08-21",
+      id: "position-1",
+      net_credit: "2.5",
+      notes: null,
+      opened_at: "2026-07-02T20:00:00.000Z",
+      paper_account_id: "paper-account-1",
+      source: "simulated",
+      status: "called_away",
+      strategy_type: "covered_call",
+      symbol: "AAPL",
+      underlying_price_at_open: "201.25",
+      updated_at: "2026-08-21T21:00:00.000Z",
+      user_id: "user-1",
+    }]);
+    const legs = inOrderChain([]);
+    const events = eqOrderChain([{
+      cash_delta: "42000",
+      created_at: "2026-08-21T21:00:00.000Z",
+      event_type: "called_away",
+      id: "event-1",
+      margin_delta: "0",
+      metadata: {
+        calledAwayAt: "2026-08-21T21:00:00.000Z",
+        calledAwayPrice: 210,
+        calledAwayProceeds: 42000,
+        costBasis: 180,
+        remainingLotShares: 100,
+        shares: 200,
+        sourceLotId: "lot-1",
+        sourcePositionId: "assigned-put-position-1",
+        stockRealizedPnl: 6000,
+        underlyingPriceAtExpiration: 220,
+      },
+      paper_account_id: "paper-account-1",
+      position_id: "position-1",
+      price: "210",
+      quantity: 2,
+      realized_pnl_delta: "6500",
+      user_id: "user-1",
+    }]);
+    const from = vi.fn((table: string) => {
+      if (table === "paper_accounts") {
+        return { select: account.select };
+      }
+
+      if (table === "simulated_positions") {
+        return { select: positions.select };
+      }
+
+      if (table === "simulated_position_legs") {
+        return { select: legs.select };
+      }
+
+      if (table === "simulated_position_events") {
+        return { select: events.select };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const portfolio = await loadAccountPortfolio(
+      { from } as unknown as SupabaseClient,
+      "user-1",
+    );
+
+    expect(portfolio.historyPositions[0]).toEqual(expect.objectContaining({
+      lifecycle: expect.objectContaining({
+        cashDelta: 42_000,
+        effectiveAt: "2026-08-21T21:00:00.000Z",
+        metadata: expect.objectContaining({
+          calledAwayPrice: 210,
+          shares: 200,
+          sourceLotId: "lot-1",
+          sourcePositionId: "assigned-put-position-1",
+          underlyingPriceAtExpiration: 220,
+        }),
+        outcome: "called_away",
+        price: 210,
+        quantity: 2,
+        realizedPnlDelta: 6_500,
+      }),
+      status: "called_away",
+    }));
+  });
 });
