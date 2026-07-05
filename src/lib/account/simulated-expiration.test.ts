@@ -48,12 +48,37 @@ const shortPutLeg = {
   vega: null,
   volume: null,
 };
+const coveredCallPosition = {
+  ...position,
+  id: "position-call-1",
+  net_credit: 2.5,
+  strategy_type: "covered_call",
+};
+const shortCallLeg = {
+  ...shortPutLeg,
+  contract_symbol: "AAPL260821C00210000",
+  id: "call-leg-1",
+  option_type: "call",
+  position_id: coveredCallPosition.id,
+  strike: 210,
+};
 const account = {
   current_cash: 10_000,
   id: position.paper_account_id,
   margin_balance: 0,
   user_id: userId,
 };
+const equityLot = {
+  acquired_at: "2026-07-01T20:00:00.000Z",
+  cost_basis: 180,
+  id: "lot-1",
+  paper_account_id: account.id,
+  shares: 300,
+  source_position_id: "assigned-put-position-1",
+  symbol: "AAPL",
+  user_id: userId,
+};
+type PositionFixture = typeof position;
 
 function singleResult(data: unknown, error: unknown = null) {
   return vi.fn(async () => ({ data, error }));
@@ -89,19 +114,33 @@ function selectOrderChain(data: unknown, error: unknown = null) {
   return chain;
 }
 
+function deleteChain(error: unknown = null) {
+  const chain = {
+    eq: vi.fn(() => chain),
+    then: (resolve: (value: { error: unknown }) => unknown) => {
+      return Promise.resolve({ error }).then(resolve);
+    },
+  };
+
+  return chain;
+}
+
 function supabaseMock({
+  equityLots = [equityLot],
   legs = [shortPutLeg],
   loadedPosition = position,
 }: {
+  equityLots?: unknown[];
   legs?: unknown[];
-  loadedPosition?: typeof position | null;
+  loadedPosition?: PositionFixture | null;
 } = {}) {
   const positionSelect = selectMaybeChain(loadedPosition);
   const legSelect = selectOrderChain(legs);
   const accountSelect = selectSingleChain(account);
+  const equityLotSelect = selectOrderChain(equityLots);
   const eventInsert = selectSingleChain({
     id: "event-1",
-    position_id: position.id,
+    position_id: loadedPosition?.id ?? position.id,
   });
   const equityInsert = selectSingleChain({
     acquired_at: "2026-08-21T21:00:00.000Z",
@@ -115,7 +154,9 @@ function supabaseMock({
   });
   const calls = {
     accountUpdatePayloads: [] as unknown[],
+    equityLotDelete: vi.fn(() => deleteChain()),
     equityInsert: vi.fn(() => ({ select: equityInsert.select })),
+    equityLotUpdatePayloads: [] as unknown[],
     eventInsert: vi.fn(() => ({ select: eventInsert.select })),
     positionUpdatePayloads: [] as unknown[],
   };
@@ -127,7 +168,7 @@ function supabaseMock({
         update: vi.fn((payload: unknown) => {
           calls.positionUpdatePayloads.push(payload);
           return selectSingleChain({
-            ...position,
+            ...(loadedPosition ?? position),
             ...(payload as object),
           });
         }),
@@ -161,8 +202,16 @@ function supabaseMock({
 
     if (table === "simulated_equity_lots") {
       return {
-        delete: vi.fn(() => selectSingleChain(null)),
+        delete: calls.equityLotDelete,
         insert: calls.equityInsert,
+        select: equityLotSelect.select,
+        update: vi.fn((payload: unknown) => {
+          calls.equityLotUpdatePayloads.push(payload);
+          return selectSingleChain({
+            ...equityLot,
+            ...(payload as object),
+          });
+        }),
       };
     }
 
@@ -264,6 +313,127 @@ describe("simulated position expiration processing", () => {
       price: 190,
       quantity: 2,
       realized_pnl_delta: 250,
+    }));
+  });
+
+  it("expires an OTM covered call at zero with premium retained", async () => {
+    const { calls, client } = supabaseMock({
+      legs: [shortCallLeg],
+      loadedPosition: coveredCallPosition,
+    });
+
+    const result = await expireSimulatedPosition(client, userId, coveredCallPosition.id, {
+      expiredAt: "2026-08-21T21:00:00.000Z",
+      underlyingPriceAtExpiration: 205,
+    });
+
+    expect(result.outcome).toBe("expired_otm");
+    expect(calls.positionUpdatePayloads[0]).toEqual({
+      closed_at: "2026-08-21T21:00:00.000Z",
+      contracts_remaining: 0,
+      status: "closed",
+    });
+    expect(calls.eventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      cash_delta: 0,
+      event_type: "expired",
+      price: 0,
+      quantity: 2,
+      realized_pnl_delta: 500,
+    }));
+  });
+
+  it("calls away an ITM covered call against a matching equity lot", async () => {
+    const { calls, client } = supabaseMock({
+      equityLots: [equityLot],
+      legs: [shortCallLeg],
+      loadedPosition: coveredCallPosition,
+    });
+
+    const result = await expireSimulatedPosition(client, userId, coveredCallPosition.id, {
+      expiredAt: "2026-08-21T21:00:00.000Z",
+      underlyingPriceAtExpiration: 220,
+    });
+
+    expect(result.outcome).toBe("called_away");
+    expect(calls.positionUpdatePayloads[0]).toEqual({
+      closed_at: "2026-08-21T21:00:00.000Z",
+      contracts_remaining: 0,
+      status: "called_away",
+    });
+    expect(calls.accountUpdatePayloads[0]).toEqual({
+      current_cash: 52_000,
+      margin_balance: 0,
+    });
+    expect(calls.equityLotUpdatePayloads[0]).toEqual({ shares: 100 });
+    expect(calls.eventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      cash_delta: 42_000,
+      event_type: "called_away",
+      margin_delta: 0,
+      price: 210,
+      quantity: 2,
+      realized_pnl_delta: 6_500,
+    }));
+    expect(calls.eventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        calledAwayPrice: 210,
+        calledAwayProceeds: 42_000,
+        costBasis: 180,
+        remainingLotShares: 100,
+        shares: 200,
+        sourceLotId: "lot-1",
+        sourcePositionId: "assigned-put-position-1",
+        stockRealizedPnl: 6_000,
+        underlyingPriceAtExpiration: 220,
+      }),
+    }));
+  });
+
+  it("marks ITM covered calls for manual review when no matching lot exists", async () => {
+    const { calls, client } = supabaseMock({
+      equityLots: [],
+      legs: [shortCallLeg],
+      loadedPosition: coveredCallPosition,
+    });
+
+    const result = await expireSimulatedPosition(client, userId, coveredCallPosition.id, {
+      expiredAt: "2026-08-21T21:00:00.000Z",
+      underlyingPriceAtExpiration: 220,
+    });
+
+    expect(result.outcome).toBe("manual_review");
+    expect(calls.positionUpdatePayloads[0]).toEqual({ status: "manual_review" });
+    expect(calls.equityLotUpdatePayloads).toEqual([]);
+    expect(calls.eventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "manual_adjustment",
+      metadata: expect.objectContaining({
+        reason: "missing_called_away_lot_context",
+      }),
+    }));
+  });
+
+  it("marks ITM covered calls for manual review when lot context is ambiguous", async () => {
+    const { calls, client } = supabaseMock({
+      equityLots: [
+        equityLot,
+        { ...equityLot, id: "lot-2", source_position_id: "assigned-put-position-2" },
+      ],
+      legs: [shortCallLeg],
+      loadedPosition: coveredCallPosition,
+    });
+
+    const result = await expireSimulatedPosition(client, userId, coveredCallPosition.id, {
+      expiredAt: "2026-08-21T21:00:00.000Z",
+      underlyingPriceAtExpiration: 220,
+    });
+
+    expect(result.outcome).toBe("manual_review");
+    expect(calls.positionUpdatePayloads[0]).toEqual({ status: "manual_review" });
+    expect(calls.equityLotUpdatePayloads).toEqual([]);
+    expect(calls.eventInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "manual_adjustment",
+      metadata: expect.objectContaining({
+        reason: "ambiguous_called_away_lot_context",
+      }),
     }));
   });
 

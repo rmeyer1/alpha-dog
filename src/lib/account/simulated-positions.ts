@@ -192,6 +192,12 @@ type AssignableShortPutLeg = SimulatedPositionLegRow & {
   strike: number;
 };
 
+type AssignableShortCallLeg = SimulatedPositionLegRow & {
+  option_type: "call";
+  side: "short";
+  strike: number;
+};
+
 const positionColumns = [
   "id",
   "user_id",
@@ -328,6 +334,24 @@ function singleShortPutLeg(legs: SimulatedPositionLegRow[]): AssignableShortPutL
   }
 
   return leg as AssignableShortPutLeg;
+}
+
+function singleShortCallLeg(legs: SimulatedPositionLegRow[]): AssignableShortCallLeg | null {
+  if (legs.length !== 1) {
+    return null;
+  }
+
+  const [leg] = legs;
+
+  if (
+    leg.side !== "short" ||
+    leg.option_type !== "call" ||
+    leg.strike == null
+  ) {
+    return null;
+  }
+
+  return leg as AssignableShortCallLeg;
 }
 
 export class SimulatedPositionValidationError extends Error {
@@ -716,7 +740,7 @@ export async function expireSimulatedPosition(
       account?: PaperAccountRow;
       equityLot?: SimulatedEquityLotRow;
       event: SimulatedPositionEventRow;
-      outcome: "assigned_put" | "expired_otm" | "manual_review";
+      outcome: "assigned_put" | "called_away" | "expired_otm" | "manual_review";
       position: SimulatedPositionRow;
     }>(
       supabase,
@@ -781,37 +805,291 @@ export async function expireSimulatedPosition(
   const legs = legsResult.data as unknown as SimulatedPositionLegRow[];
   const shortPut = singleShortPutLeg(legs);
 
-  if (!shortPut) {
-    return markSimulatedPositionManualReview(
-      supabase,
-      userId,
-      position,
-      expiredAt,
-      "ambiguous_expiration_outcome",
-      input.notes,
-    );
-  }
+  if (shortPut) {
+    if (input.underlyingPriceAtExpiration >= shortPut.strike) {
+      return expirePositionWorthless(
+        supabase,
+        userId,
+        position,
+        expiredAt,
+        input.underlyingPriceAtExpiration,
+        input.notes,
+      );
+    }
 
-  if (input.underlyingPriceAtExpiration >= shortPut.strike) {
-    return expireShortPutWorthless(
+    return assignShortPut(
       supabase,
       userId,
       position,
+      shortPut,
       expiredAt,
       input.underlyingPriceAtExpiration,
       input.notes,
     );
   }
 
-  return assignShortPut(
+  const shortCall = singleShortCallLeg(legs);
+
+  if (position.strategy_type === "covered_call" && shortCall) {
+    if (input.underlyingPriceAtExpiration <= shortCall.strike) {
+      return expirePositionWorthless(
+        supabase,
+        userId,
+        position,
+        expiredAt,
+        input.underlyingPriceAtExpiration,
+        input.notes,
+      );
+    }
+
+    return callAwayCoveredCall(
+      supabase,
+      userId,
+      position,
+      shortCall,
+      expiredAt,
+      input.underlyingPriceAtExpiration,
+      input.notes,
+    );
+  }
+
+  return markSimulatedPositionManualReview(
     supabase,
     userId,
     position,
-    shortPut,
     expiredAt,
-    input.underlyingPriceAtExpiration,
+    "ambiguous_expiration_outcome",
     input.notes,
   );
+}
+
+async function loadCallableEquityLot(
+  supabase: SupabaseClient,
+  userId: string,
+  position: SimulatedPositionRow,
+  sharesNeeded: number,
+) {
+  const lotsResult = await supabase
+    .from("simulated_equity_lots")
+    .select(equityLotColumns)
+    .eq("paper_account_id", position.paper_account_id)
+    .eq("user_id", userId)
+    .eq("symbol", position.symbol)
+    .order("acquired_at", { ascending: true });
+
+  if (lotsResult.error) {
+    throw new Error("Unable to load simulated equity lots for call-away.");
+  }
+
+  const lots = (lotsResult.data as unknown as SimulatedEquityLotRow[])
+    .filter((lot) => numberValue(lot.shares) >= sharesNeeded);
+
+  if (lots.length === 1) {
+    return { lot: lots[0], reason: null };
+  }
+
+  return {
+    lot: null,
+    reason: lots.length === 0
+      ? "missing_called_away_lot_context"
+      : "ambiguous_called_away_lot_context",
+  };
+}
+
+async function callAwayCoveredCall(
+  supabase: SupabaseClient,
+  userId: string,
+  position: SimulatedPositionRow,
+  shortCall: AssignableShortCallLeg,
+  expiredAt: string,
+  underlyingPriceAtExpiration: number,
+  notes: string | undefined,
+) {
+  const shares = position.contracts_remaining * OPTION_CONTRACT_MULTIPLIER;
+  const callableLot = await loadCallableEquityLot(
+    supabase,
+    userId,
+    position,
+    shares,
+  );
+
+  if (!callableLot.lot) {
+    return markSimulatedPositionManualReview(
+      supabase,
+      userId,
+      position,
+      expiredAt,
+      callableLot.reason,
+      notes,
+    );
+  }
+
+  const equityLot = callableLot.lot;
+  const accountResult = await supabase
+    .from("paper_accounts")
+    .select(paperAccountColumns)
+    .eq("id", position.paper_account_id)
+    .eq("user_id", userId)
+    .single();
+
+  if (accountResult.error) {
+    throw new Error("Unable to load paper account for call-away.");
+  }
+
+  const account = accountResult.data as unknown as PaperAccountRow;
+  const currentCash = numberValue(account.current_cash);
+  const currentMargin = numberValue(account.margin_balance);
+  const previousLotShares = numberValue(equityLot.shares);
+  const remainingLotShares = previousLotShares - shares;
+  const calledAwayProceeds = shortCall.strike * shares;
+  const lotCostBasis = numberValue(equityLot.cost_basis) * shares;
+  const stockRealizedPnl = calledAwayProceeds - lotCostBasis;
+  const realizedPnlDelta = premiumReceived(
+    position.net_credit,
+    position.contracts_remaining,
+  ) + stockRealizedPnl;
+
+  try {
+    const positionUpdate = await supabase
+      .from("simulated_positions")
+      .update({
+        closed_at: expiredAt,
+        contracts_remaining: 0,
+        status: "called_away",
+      })
+      .eq("id", position.id)
+      .eq("user_id", userId)
+      .select(positionColumns)
+      .single();
+
+    if (positionUpdate.error) {
+      throw new Error("Unable to mark covered call as called away.");
+    }
+
+    const accountUpdate = await supabase
+      .from("paper_accounts")
+      .update({
+        current_cash: currentCash + calledAwayProceeds,
+        margin_balance: currentMargin,
+      })
+      .eq("id", account.id)
+      .eq("user_id", userId)
+      .select(paperAccountColumns)
+      .single();
+
+    if (accountUpdate.error) {
+      throw new Error("Unable to update paper account for call-away.");
+    }
+
+    if (remainingLotShares > 0) {
+      const lotUpdate = await supabase
+        .from("simulated_equity_lots")
+        .update({ shares: remainingLotShares })
+        .eq("id", equityLot.id)
+        .eq("user_id", userId)
+        .select(equityLotColumns)
+        .single();
+
+      if (lotUpdate.error) {
+        throw new Error("Unable to update simulated equity lot for call-away.");
+      }
+    } else {
+      const lotDelete = await supabase
+        .from("simulated_equity_lots")
+        .delete()
+        .eq("id", equityLot.id)
+        .eq("user_id", userId);
+
+      if (lotDelete.error) {
+        throw new Error("Unable to remove simulated equity lot for call-away.");
+      }
+    }
+
+    const eventResult = await supabase
+      .from("simulated_position_events")
+      .insert({
+        cash_delta: calledAwayProceeds,
+        event_type: "called_away",
+        margin_delta: 0,
+        metadata: {
+          calledAwayAt: expiredAt,
+          calledAwayPrice: shortCall.strike,
+          calledAwayProceeds,
+          costBasis: numberValue(equityLot.cost_basis),
+          expiredAt,
+          lotCostBasis,
+          notes: notes ?? null,
+          remainingLotShares,
+          shares,
+          sourceLotId: equityLot.id,
+          sourcePositionId: equityLot.source_position_id,
+          stockRealizedPnl,
+          underlyingPriceAtExpiration,
+        },
+        paper_account_id: position.paper_account_id,
+        position_id: position.id,
+        price: shortCall.strike,
+        quantity: position.contracts_remaining,
+        realized_pnl_delta: realizedPnlDelta,
+        user_id: userId,
+      })
+      .select(eventColumns)
+      .single();
+
+    if (eventResult.error) {
+      throw new Error("Unable to create called-away event.");
+    }
+
+    return {
+      account: accountUpdate.data as unknown as PaperAccountRow,
+      equityLot,
+      event: eventResult.data as unknown as SimulatedPositionEventRow,
+      outcome: "called_away" as const,
+      position: positionUpdate.data as unknown as SimulatedPositionRow,
+    };
+  } catch (error) {
+    await supabase
+      .from("paper_accounts")
+      .update({
+        current_cash: currentCash,
+        margin_balance: currentMargin,
+      })
+      .eq("id", account.id)
+      .eq("user_id", userId);
+
+    await supabase
+      .from("simulated_positions")
+      .update({
+        closed_at: position.closed_at,
+        contracts_remaining: position.contracts_remaining,
+        status: position.status,
+      })
+      .eq("id", position.id)
+      .eq("user_id", userId);
+
+    if (remainingLotShares > 0) {
+      await supabase
+        .from("simulated_equity_lots")
+        .update({ shares: previousLotShares })
+        .eq("id", equityLot.id)
+        .eq("user_id", userId);
+    } else {
+      await supabase
+        .from("simulated_equity_lots")
+        .insert({
+          acquired_at: equityLot.acquired_at,
+          cost_basis: equityLot.cost_basis,
+          id: equityLot.id,
+          paper_account_id: equityLot.paper_account_id,
+          shares: previousLotShares,
+          source_position_id: equityLot.source_position_id,
+          symbol: equityLot.symbol,
+          user_id: equityLot.user_id,
+        });
+    }
+
+    throw error;
+  }
 }
 
 async function markSimulatedPositionManualReview(
@@ -866,7 +1144,7 @@ async function markSimulatedPositionManualReview(
   };
 }
 
-async function expireShortPutWorthless(
+async function expirePositionWorthless(
   supabase: SupabaseClient,
   userId: string,
   position: SimulatedPositionRow,

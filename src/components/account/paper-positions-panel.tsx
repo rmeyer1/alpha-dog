@@ -588,7 +588,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function lifecycleRows(lifecycle: PositionLifecycleSummary) {
+export function lifecycleRows(lifecycle: PositionLifecycleSummary) {
   const metadata = lifecycle.metadata;
 
   if (lifecycle.outcome === "assigned") {
@@ -611,8 +611,17 @@ function lifecycleRows(lifecycle: PositionLifecycleSummary) {
       ["Effective date", formatDate(lifecycle.effectiveAt)],
       ["Shares called away", formatNumber(numberMetadata(metadata, "shares"))],
       ["Call-away price", formatCurrency(numberMetadata(metadata, "calledAwayPrice") ?? lifecycle.price)],
+      ["Call-away proceeds", formatCurrency(numberMetadata(metadata, "calledAwayProceeds") ?? lifecycle.cashDelta)],
+      ["Cost basis", formatCurrency(numberMetadata(metadata, "costBasis"))],
       ["Cash impact", formatCurrency(lifecycle.cashDelta)],
       ["Realized P/L", formatCurrency(lifecycle.realizedPnlDelta)],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+      ["Source lot", stringMetadata(metadata, "sourceLotId") ?? "Unavailable"],
+      ["Source position", stringMetadata(metadata, "sourcePositionId") ?? "Unavailable"],
+      ["Remaining lot shares", formatNumber(numberMetadata(metadata, "remainingLotShares"))],
     ];
   }
 
@@ -768,6 +777,14 @@ function LifecycleEventDetails({ event }: { event: PositionEvent }) {
     rows.push(
       ["Shares", formatNumber(numberMetadata(metadata, "shares"))],
       ["Call-away price", formatCurrency(numberMetadata(metadata, "calledAwayPrice"))],
+      ["Call-away proceeds", formatCurrency(numberMetadata(metadata, "calledAwayProceeds"))],
+      ["Cost basis", formatCurrency(numberMetadata(metadata, "costBasis"))],
+      ["Stock P/L", formatCurrency(numberMetadata(metadata, "stockRealizedPnl"))],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+      ["Source lot", stringMetadata(metadata, "sourceLotId") ?? "Unavailable"],
     );
   }
 

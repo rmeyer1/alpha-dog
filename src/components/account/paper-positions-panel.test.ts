@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   lifecycleLabel,
+  lifecycleRows,
   validateClosePositionInput,
 } from "./paper-positions-panel";
 
@@ -29,6 +30,11 @@ describe("lifecycleLabel", () => {
       outcome: "expired_otm",
     })).toBe("Expired OTM");
     expect(lifecycleLabel("closed", assignedLifecycle)).toBe("Assigned");
+    expect(lifecycleLabel("called_away", {
+      ...assignedLifecycle,
+      eventType: "called_away",
+      outcome: "called_away",
+    })).toBe("Called away");
     expect(lifecycleLabel("manual_review", {
       ...assignedLifecycle,
       eventType: "manual_adjustment",
@@ -39,6 +45,59 @@ describe("lifecycleLabel", () => {
   it("falls back to readable status labels without lifecycle context", () => {
     expect(lifecycleLabel("partially_closed")).toBe("Partially Closed");
     expect(lifecycleLabel("closed")).toBe("Closed");
+  });
+});
+
+describe("lifecycleRows", () => {
+  it("exposes called-away backend metadata and fallbacks without local inference", () => {
+    expect(lifecycleRows({
+      cashDelta: 42_000,
+      effectiveAt: "2026-08-21T21:00:00.000Z",
+      eventId: "event-2",
+      eventType: "called_away",
+      marginDelta: 0,
+      metadata: {
+        calledAwayPrice: 210,
+        calledAwayProceeds: 42_000,
+        costBasis: 180,
+        remainingLotShares: 100,
+        shares: 200,
+        sourceLotId: "lot-1",
+        sourcePositionId: "assigned-put-position-1",
+        underlyingPriceAtExpiration: 220,
+      },
+      outcome: "called_away",
+      price: 210,
+      quantity: 2,
+      realizedPnlDelta: 6_500,
+    })).toEqual([
+      ["Effective date", "Aug 21, 2026"],
+      ["Shares called away", "200"],
+      ["Call-away price", "$210.00"],
+      ["Call-away proceeds", "$42,000.00"],
+      ["Cost basis", "$180.00"],
+      ["Cash impact", "$42,000.00"],
+      ["Realized P/L", "$6,500.00"],
+      ["Underlying at expiration", "$220.00"],
+      ["Source lot", "lot-1"],
+      ["Source position", "assigned-put-position-1"],
+      ["Remaining lot shares", "100"],
+    ]);
+  });
+
+  it("keeps called-away rows readable when optional metadata is missing", () => {
+    expect(lifecycleRows({
+      cashDelta: 42_000,
+      effectiveAt: "2026-08-21T21:00:00.000Z",
+      eventId: "event-2",
+      eventType: "called_away",
+      marginDelta: 0,
+      metadata: {},
+      outcome: "called_away",
+      price: 210,
+      quantity: 2,
+      realizedPnlDelta: 500,
+    })).toContainEqual(["Source lot", "Unavailable"]);
   });
 });
 
