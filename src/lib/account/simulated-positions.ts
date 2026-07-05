@@ -341,6 +341,60 @@ export class SimulatedPositionValidationError extends Error {
   }
 }
 
+type RpcResult<T> = {
+  data: T | null;
+  error: { message?: string } | null;
+};
+
+type RpcCapableClient = SupabaseClient & {
+  rpc?: <T = unknown>(
+    fn: string,
+    args?: Record<string, unknown>,
+  ) => Promise<RpcResult<T>>;
+};
+
+function hasRpc(supabase: SupabaseClient): supabase is RpcCapableClient {
+  return typeof (supabase as RpcCapableClient).rpc === "function";
+}
+
+function validationStatusForCode(code: string) {
+  return code === "SIMULATED_POSITION_NOT_FOUND" ? 404 : 400;
+}
+
+function throwRpcError(error: { message?: string }, fallbackMessage: string): never {
+  const message = error.message ?? fallbackMessage;
+  const match = /^([A-Z0-9_]+):\s*(.+)$/.exec(message);
+
+  if (match) {
+    throw new SimulatedPositionValidationError(
+      match[1],
+      match[2],
+      validationStatusForCode(match[1]),
+    );
+  }
+
+  throw new Error(fallbackMessage);
+}
+
+async function rpcOrThrow<T>(
+  supabase: RpcCapableClient,
+  fn: string,
+  args: Record<string, unknown>,
+  fallbackMessage: string,
+) {
+  const result = await supabase.rpc<T>(fn, args);
+
+  if (result.error) {
+    throwRpcError(result.error, fallbackMessage);
+  }
+
+  if (!result.data) {
+    throw new Error(fallbackMessage);
+  }
+
+  return result.data;
+}
+
 export async function getOrCreatePaperAccount(
   supabase: SupabaseClient,
   userId: string,
@@ -378,6 +432,30 @@ export async function createSimulatedPosition(
   input: SimulatedPositionInput,
   now = new Date(),
 ) {
+  if (hasRpc(supabase)) {
+    const netCredit = calculateNetCredit(input);
+
+    assertPositiveNetCredit(netCredit);
+
+    return await rpcOrThrow<{
+      event: SimulatedPositionEventRow;
+      legs: SimulatedPositionLegRow[];
+      paperAccount: PaperAccountRow;
+      position: SimulatedPositionRow;
+    }>(
+      supabase,
+      "open_simulated_position_atomic",
+      {
+        p_input: {
+          ...input,
+          netCredit,
+          symbol: input.symbol.toUpperCase(),
+        },
+      },
+      "Unable to create simulated position.",
+    );
+  }
+
   const paperAccount = await getOrCreatePaperAccount(supabase, userId);
   const openedAt = openedAtTimestamp(input, now);
   const netCredit = calculateNetCredit(input);
@@ -498,6 +576,24 @@ export async function closeSimulatedPosition(
   input: CloseSimulatedPositionInput,
   now = new Date(),
 ) {
+  if (hasRpc(supabase)) {
+    return await rpcOrThrow<{
+      event: SimulatedPositionEventRow;
+      position: SimulatedPositionRow;
+    }>(
+      supabase,
+      "close_simulated_position_atomic",
+      {
+        p_close_price: input.closePrice,
+        p_closed_at: input.closedAt ?? now.toISOString(),
+        p_contracts_to_close: input.contractsToClose,
+        p_notes: input.notes ?? null,
+        p_position_id: positionId,
+      },
+      "Unable to close simulated position.",
+    );
+  }
+
   const positionResult = await supabase
     .from("simulated_positions")
     .select(positionColumns)
@@ -615,6 +711,26 @@ export async function expireSimulatedPosition(
   input: ExpireSimulatedPositionInput,
   now = new Date(),
 ) {
+  if (hasRpc(supabase)) {
+    return await rpcOrThrow<{
+      account?: PaperAccountRow;
+      equityLot?: SimulatedEquityLotRow;
+      event: SimulatedPositionEventRow;
+      outcome: "assigned_put" | "expired_otm" | "manual_review";
+      position: SimulatedPositionRow;
+    }>(
+      supabase,
+      "expire_simulated_position_atomic",
+      {
+        p_expired_at: input.expiredAt ?? now.toISOString(),
+        p_notes: input.notes ?? null,
+        p_position_id: positionId,
+        p_underlying_price_at_expiration: input.underlyingPriceAtExpiration,
+      },
+      "Unable to process simulated position expiration.",
+    );
+  }
+
   const expiredAt = input.expiredAt ?? now.toISOString();
   const expirationDate = expirationDateFromTimestamp(expiredAt);
   const positionResult = await supabase

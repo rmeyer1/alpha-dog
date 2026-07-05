@@ -115,6 +115,63 @@ function supabaseMock({
 }
 
 describe("simulated position close store", () => {
+  it("uses the atomic close RPC when available", async () => {
+    const rpc = vi.fn(async () => ({
+      data: {
+        event: { id: "event-1" },
+        position: {
+          ...openPosition,
+          contracts_remaining: 1,
+          status: "partially_closed",
+        },
+      },
+      error: null,
+    }));
+
+    const result = await closeSimulatedPosition(
+      { rpc } as unknown as SupabaseClient,
+      userId,
+      openPosition.id,
+      {
+        closePrice: 0.5,
+        contractsToClose: 1,
+        notes: "Taking half off",
+      },
+      new Date("2026-07-02T21:00:00.000Z"),
+    );
+
+    expect(rpc).toHaveBeenCalledWith("close_simulated_position_atomic", {
+      p_close_price: 0.5,
+      p_closed_at: "2026-07-02T21:00:00.000Z",
+      p_contracts_to_close: 1,
+      p_notes: "Taking half off",
+      p_position_id: openPosition.id,
+    });
+    expect(result.position.status).toBe("partially_closed");
+  });
+
+  it("maps atomic close RPC domain errors to validation errors", async () => {
+    const rpc = vi.fn(async () => ({
+      data: null,
+      error: {
+        message: "SIMULATED_CLOSE_QUANTITY_EXCEEDS_REMAINING: Contracts to close cannot exceed contracts remaining.",
+      },
+    }));
+
+    await expect(closeSimulatedPosition(
+      { rpc } as unknown as SupabaseClient,
+      userId,
+      openPosition.id,
+      {
+        closePrice: 0.5,
+        contractsToClose: 3,
+      },
+    )).rejects.toMatchObject({
+      code: "SIMULATED_CLOSE_QUANTITY_EXCEEDS_REMAINING",
+      status: 400,
+    });
+  });
+
   it("partially closes an open position and records realized P/L", async () => {
     const { calls, client } = supabaseMock();
 

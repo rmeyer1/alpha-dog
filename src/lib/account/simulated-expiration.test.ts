@@ -177,6 +177,40 @@ function supabaseMock({
 }
 
 describe("simulated position expiration processing", () => {
+  it("uses the atomic expiration RPC when available", async () => {
+    const rpc = vi.fn(async () => ({
+      data: {
+        event: { id: "event-1" },
+        outcome: "expired_otm",
+        position: {
+          ...position,
+          contracts_remaining: 0,
+          status: "closed",
+        },
+      },
+      error: null,
+    }));
+
+    const result = await expireSimulatedPosition(
+      { rpc } as unknown as SupabaseClient,
+      userId,
+      position.id,
+      {
+        expiredAt: "2026-08-21T21:00:00.000Z",
+        notes: "Expired worthless",
+        underlyingPriceAtExpiration: 200,
+      },
+    );
+
+    expect(rpc).toHaveBeenCalledWith("expire_simulated_position_atomic", {
+      p_expired_at: "2026-08-21T21:00:00.000Z",
+      p_notes: "Expired worthless",
+      p_position_id: position.id,
+      p_underlying_price_at_expiration: 200,
+    });
+    expect(result.outcome).toBe("expired_otm");
+  });
+
   it("expires an OTM short put at zero and closes remaining contracts", async () => {
     const { calls, client } = supabaseMock();
 
