@@ -274,9 +274,85 @@ function toAccountingEvent(event: ReturnType<typeof toEvent>): SimulatedAccounti
   };
 }
 
+function stringMetadataValue(
+  metadata: Record<string, unknown>,
+  key: string,
+) {
+  const value = metadata[key];
+
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function lifecycleEffectiveAt(event: ReturnType<typeof toEvent>) {
+  return stringMetadataValue(event.metadata, "expiredAt") ??
+    stringMetadataValue(event.metadata, "assignedAt") ??
+    stringMetadataValue(event.metadata, "calledAwayAt") ??
+    event.createdAt;
+}
+
+function lifecycleOutcome(
+  position: PositionRow,
+  event: ReturnType<typeof toEvent>,
+) {
+  if (event.eventType === "expired" && event.metadata.outcome === "expired_otm") {
+    return "expired_otm";
+  }
+
+  if (event.eventType === "assigned") {
+    return "assigned";
+  }
+
+  if (event.eventType === "called_away") {
+    return "called_away";
+  }
+
+  if (
+    event.eventType === "manual_adjustment" &&
+    position.status === "manual_review"
+  ) {
+    return "manual_review";
+  }
+
+  return null;
+}
+
+function lifecycleSummary(
+  position: PositionRow,
+  events: ReturnType<typeof toEvent>[],
+) {
+  const lifecycleEvents = events
+    .map((event) => ({
+      event,
+      outcome: lifecycleOutcome(position, event),
+    }))
+    .filter((entry): entry is {
+      event: ReturnType<typeof toEvent>;
+      outcome: "assigned" | "called_away" | "expired_otm" | "manual_review";
+    } => entry.outcome != null);
+  const latest = lifecycleEvents.at(-1);
+
+  if (!latest) {
+    return null;
+  }
+
+  return {
+    cashDelta: latest.event.cashDelta,
+    effectiveAt: lifecycleEffectiveAt(latest.event),
+    eventId: latest.event.id,
+    eventType: latest.event.eventType,
+    marginDelta: latest.event.marginDelta,
+    metadata: latest.event.metadata,
+    outcome: latest.outcome,
+    price: latest.event.price,
+    quantity: latest.event.quantity,
+    realizedPnlDelta: latest.event.realizedPnlDelta,
+  };
+}
+
 function toPositionSummary(
   row: PositionRow,
   legs: ReturnType<typeof toLeg>[],
+  events: ReturnType<typeof toEvent>[] = [],
 ) {
   const accountingPosition = toAccountingPosition(row, legs);
 
@@ -287,6 +363,7 @@ function toPositionSummary(
     createdAt: row.created_at,
     expirationDate: row.expiration_date,
     id: row.id,
+    lifecycle: lifecycleSummary(row, events),
     netCredit: requiredNumber(row.net_credit),
     notes: row.notes,
     openedAt: row.opened_at,
@@ -438,8 +515,13 @@ export async function loadAccountPortfolio(
   ]);
   const legsByPosition = groupByPositionId(legRows);
   const events = eventRows.map(toEvent);
+  const eventsByPosition = groupByPositionId(events);
   const summaries = positions.map((position) =>
-    toPositionSummary(position, (legsByPosition.get(position.id) ?? []).map(toLeg))
+    toPositionSummary(
+      position,
+      (legsByPosition.get(position.id) ?? []).map(toLeg),
+      eventsByPosition.get(position.id) ?? [],
+    )
   );
   const accountingPositions = positions.map((position) =>
     toAccountingPosition(position, (legsByPosition.get(position.id) ?? []).map(toLeg))
@@ -508,10 +590,11 @@ export async function loadAccountPositionDetail(
   }
 
   const normalizedLegs = legs.map(toLeg);
+  const normalizedEvents = (events.data as unknown as EventRow[]).map(toEvent);
 
   return {
-    ...toPositionSummary(row, normalizedLegs),
-    events: (events.data as unknown as EventRow[]).map(toEvent),
+    ...toPositionSummary(row, normalizedLegs, normalizedEvents),
+    events: normalizedEvents,
     legs: normalizedLegs,
   };
 }
