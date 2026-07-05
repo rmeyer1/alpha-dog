@@ -119,6 +119,53 @@ function supabaseMock({
 }
 
 describe("simulated position store", () => {
+  it("uses the atomic open RPC when available", async () => {
+    const rpc = vi.fn(async () => ({
+      data: {
+        event,
+        legs,
+        paperAccount: account,
+        position,
+      },
+      error: null,
+    }));
+
+    const result = await createSimulatedPosition(
+      { rpc } as unknown as SupabaseClient,
+      userId,
+      {
+        candidateSnapshot: { score: 82 },
+        contracts: 2,
+        expirationDate: "2026-08-21",
+        legs: [{
+          askPrice: 1.3,
+          bidPrice: 1.2,
+          contractSymbol: "AAPL260821P00190000",
+          delta: -0.28,
+          expirationDate: "2026-08-21",
+          openPrice: 1.25,
+          optionType: "put",
+          side: "short",
+          strike: 190,
+        }],
+        notes: "Watch assignment risk",
+        strategyType: "short_put",
+        symbol: "aapl",
+        underlyingPriceAtOpen: 201.25,
+      },
+    );
+
+    expect(rpc).toHaveBeenCalledWith("open_simulated_position_atomic", {
+      p_input: expect.objectContaining({
+        contracts: 2,
+        netCredit: 1.25,
+        strategyType: "short_put",
+        symbol: "AAPL",
+      }),
+    });
+    expect(result.position).toBe(position);
+  });
+
   it("creates a single-leg premium-selling position for the authenticated user", async () => {
     const { calls, client } = supabaseMock();
 
