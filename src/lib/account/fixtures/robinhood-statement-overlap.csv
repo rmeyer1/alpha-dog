@@ -1,0 +1,4 @@
+Activity Date,Process Date,Settle Date,Instrument,Description,Trans Code,Quantity,Price,Amount
+6/1/2026,6/1/2026,6/2/2026,NVDA,NVDA 6/26/2026 Put $200.00,STO,1,$2.00,$200.00
+6/22/2026,6/22/2026,6/23/2026,AMD,AMD 7/17/2026 Call $180.00,STO,1,$1.10,$110.00
+6/22/2026,6/22/2026,6/23/2026,AMD,AMD 7/17/2026 Call $190.00,BTO,1,$0.30,($30.00)
