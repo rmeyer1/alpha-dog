@@ -24,12 +24,32 @@ type PositionValuation = {
   unrealizedPnl: number | null;
 };
 
+type PositionLifecycleOutcome =
+  | "assigned"
+  | "called_away"
+  | "expired_otm"
+  | "manual_review";
+
+type PositionLifecycleSummary = {
+  cashDelta: number;
+  effectiveAt: string;
+  eventId: string;
+  eventType: string;
+  marginDelta: number;
+  metadata: Record<string, unknown>;
+  outcome: PositionLifecycleOutcome;
+  price: number | null;
+  quantity: number | null;
+  realizedPnlDelta: number;
+};
+
 type PositionSummary = {
   closedAt: string | null;
   contractsOpened: number;
   contractsRemaining: number;
   expirationDate: string | null;
   id: string;
+  lifecycle: PositionLifecycleSummary | null;
   netCredit: number;
   notes: string | null;
   openedAt: string;
@@ -47,6 +67,7 @@ type PositionEvent = {
   eventType: string;
   id: string;
   marginDelta: number;
+  metadata: Record<string, unknown>;
   price: number | null;
   quantity: number | null;
   realizedPnlDelta: number;
@@ -121,6 +142,16 @@ function formatCount(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
+function formatNumber(value: number | null | undefined) {
+  if (value == null) {
+    return "Unavailable";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function todayInputDate() {
   const now = new Date();
   const year = now.getFullYear();
@@ -140,22 +171,80 @@ function labelize(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function statusTone(status: string) {
-  if (["open", "partially_closed"].includes(status)) {
-    return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
+function numberMetadata(
+  metadata: Record<string, unknown>,
+  key: string,
+) {
+  const value = metadata[key];
+  const parsed = typeof value === "number" ? value : Number(value);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function stringMetadata(
+  metadata: Record<string, unknown>,
+  key: string,
+) {
+  const value = metadata[key];
+
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function lifecycleLabel(
+  status: string,
+  lifecycle?: PositionLifecycleSummary | null,
+) {
+  switch (lifecycle?.outcome) {
+    case "assigned":
+      return "Assigned";
+    case "called_away":
+      return "Called away";
+    case "expired_otm":
+      return "Expired OTM";
+    case "manual_review":
+      return "Manual review";
+    default:
+      return status === "closed" ? "Closed" : labelize(status);
+  }
+}
+
+function statusTone(
+  status: string,
+  lifecycle?: PositionLifecycleSummary | null,
+) {
+  if (lifecycle?.outcome === "expired_otm") {
+    return "border-sky-300/25 bg-sky-300/10 text-sky-100";
   }
 
-  if (["assigned", "called_away", "manual_review"].includes(status)) {
+  if (lifecycle?.outcome === "manual_review" || status === "manual_review") {
+    return "border-red-300/25 bg-red-300/10 text-red-100";
+  }
+
+  if (
+    lifecycle?.outcome === "assigned" ||
+    lifecycle?.outcome === "called_away" ||
+    ["assigned", "called_away"].includes(status)
+  ) {
     return "border-amber-300/25 bg-amber-300/10 text-amber-100";
+  }
+
+  if (["open", "partially_closed"].includes(status)) {
+    return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
   }
 
   return "border-white/10 bg-white/[0.04] text-zinc-200";
 }
 
-function StatusPill({ status }: { status: string }) {
+function StatusPill({
+  lifecycle,
+  status,
+}: {
+  lifecycle?: PositionLifecycleSummary | null;
+  status: string;
+}) {
   return (
-    <span className={`inline-flex w-fit items-center rounded-md border px-2 py-1 text-xs font-semibold ${statusTone(status)}`}>
-      {labelize(status)}
+    <span className={`inline-flex w-fit items-center rounded-md border px-2 py-1 text-xs font-semibold ${statusTone(status, lifecycle)}`}>
+      {lifecycleLabel(status, lifecycle)}
     </span>
   );
 }
@@ -288,7 +377,10 @@ function DesktopPositionTable({
                 </button>
               </td>
               <td className="px-3 py-3">
-                <StatusPill status={position.status} />
+                <StatusPill
+                  lifecycle={position.lifecycle}
+                  status={position.status}
+                />
               </td>
               <td className="px-3 py-3 font-mono text-xs">
                 {formatCompactDate(position.openedAt)}
@@ -343,7 +435,10 @@ function MobilePositionCards({
                 {strategyLabel(position.strategyType)} · {positionKind(position.source)}
               </div>
             </div>
-            <StatusPill status={position.status} />
+            <StatusPill
+              lifecycle={position.lifecycle}
+              status={position.status}
+            />
           </div>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <PositionMetric label="Opened" value={formatDate(position.openedAt)} />
@@ -419,12 +514,221 @@ function EventHistory({ events }: { events: PositionEvent[] }) {
             />
             <PositionMetric label="Price" value={formatCurrency(event.price)} />
             <PositionMetric label="Cash" value={formatCurrency(event.cashDelta)} />
+            <PositionMetric label="Margin" value={formatCurrency(event.marginDelta)} />
             <PositionMetric
               label="Realized"
               value={formatCurrency(event.realizedPnlDelta)}
             />
           </div>
+          <LifecycleEventDetails event={event} />
         </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+      <div className="text-xs font-medium uppercase text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-1 font-mono text-sm text-zinc-100">{value}</div>
+    </div>
+  );
+}
+
+function lifecycleRows(lifecycle: PositionLifecycleSummary) {
+  const metadata = lifecycle.metadata;
+
+  if (lifecycle.outcome === "assigned") {
+    return [
+      ["Effective date", formatDate(lifecycle.effectiveAt)],
+      ["Shares assigned", formatNumber(numberMetadata(metadata, "shares"))],
+      ["Cost basis", formatCurrency(numberMetadata(metadata, "costBasis") ?? lifecycle.price)],
+      ["Assignment cost", formatCurrency(numberMetadata(metadata, "assignmentCost"))],
+      ["Cash impact", formatCurrency(lifecycle.cashDelta)],
+      ["Margin used", formatCurrency(lifecycle.marginDelta)],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+    ];
+  }
+
+  if (lifecycle.outcome === "called_away") {
+    return [
+      ["Effective date", formatDate(lifecycle.effectiveAt)],
+      ["Shares called away", formatNumber(numberMetadata(metadata, "shares"))],
+      ["Call-away price", formatCurrency(numberMetadata(metadata, "calledAwayPrice") ?? lifecycle.price)],
+      ["Cash impact", formatCurrency(lifecycle.cashDelta)],
+      ["Realized P/L", formatCurrency(lifecycle.realizedPnlDelta)],
+    ];
+  }
+
+  if (lifecycle.outcome === "expired_otm") {
+    return [
+      ["Effective date", formatDate(lifecycle.effectiveAt)],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+      ["Contracts expired", lifecycle.quantity == null ? "Unavailable" : formatCount(lifecycle.quantity)],
+      ["Premium retained", formatCurrency(lifecycle.realizedPnlDelta)],
+    ];
+  }
+
+  return [
+    ["Effective date", formatDate(lifecycle.effectiveAt)],
+    ["Reason", labelize(stringMetadata(metadata, "reason") ?? "manual_review")],
+    ["Contracts needing review", lifecycle.quantity == null ? "Unavailable" : formatCount(lifecycle.quantity)],
+    ["Notes", stringMetadata(metadata, "notes") ?? "Unavailable"],
+  ];
+}
+
+function lifecycleCopy(lifecycle: PositionLifecycleSummary) {
+  switch (lifecycle.outcome) {
+    case "assigned":
+      return {
+        description: "Backend expiration processing assigned this short put into simulated shares. Review the cash and margin impact before taking the next paper-account action.",
+        title: "Assigned",
+      };
+    case "called_away":
+      return {
+        description: "Backend lifecycle processing marked this covered call as called away. Review the related share and cash impact details below.",
+        title: "Called away",
+      };
+    case "expired_otm":
+      return {
+        description: "Backend expiration processing closed this position as out of the money with premium retained.",
+        title: "Expired OTM",
+      };
+    case "manual_review":
+      return {
+        description: "This outcome needs manual review. The position was not automatically resolved, so confirm the final result before relying on the account totals.",
+        title: "Manual review required",
+      };
+  }
+}
+
+function LifecycleNotice({ position }: { position: PositionDetail }) {
+  const lifecycle = position.lifecycle;
+
+  if (!lifecycle) {
+    if (!["assigned", "called_away", "manual_review"].includes(position.status)) {
+      return null;
+    }
+
+    const fallbackTitle = position.status === "assigned"
+      ? "Assigned"
+      : position.status === "called_away"
+        ? "Called away"
+        : "Manual review required";
+    const fallbackDescription = position.status === "assigned"
+      ? "This position is marked assigned, but lifecycle event details are unavailable."
+      : position.status === "called_away"
+        ? "This position is marked called away, but lifecycle event details are unavailable."
+        : "This position is flagged for manual review, but no lifecycle event details are available yet.";
+
+    return (
+      <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-4">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-100" />
+          <div>
+            <div className="text-sm font-semibold text-red-50">
+              {fallbackTitle}
+            </div>
+            <p className="mt-1 text-sm leading-6 text-red-100/85">
+              {fallbackDescription}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const copy = lifecycleCopy(lifecycle);
+  const isManualReview = lifecycle.outcome === "manual_review";
+  const isWarning = lifecycle.outcome === "assigned" ||
+    lifecycle.outcome === "called_away";
+  const tone = isManualReview
+    ? "border-red-300/25 bg-red-300/10 text-red-100"
+    : isWarning
+      ? "border-amber-300/25 bg-amber-300/10 text-amber-100"
+      : "border-sky-300/25 bg-sky-300/10 text-sky-100";
+
+  return (
+    <div className={`rounded-lg border p-4 ${tone}`}>
+      <div className="flex items-start gap-2">
+        {lifecycle.outcome === "expired_otm" ? (
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+        ) : (
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+        )}
+        <div>
+          <div className="text-sm font-semibold">{copy.title}</div>
+          <p className="mt-1 text-sm leading-6 opacity-85">
+            {copy.description}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        {lifecycleRows(lifecycle).map(([label, value]) => (
+          <DetailRow key={label} label={label} value={value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LifecycleEventDetails({ event }: { event: PositionEvent }) {
+  const metadata = event.metadata;
+  const rows: [string, string][] = [];
+
+  if (event.eventType === "assigned") {
+    rows.push(
+      ["Shares", formatNumber(numberMetadata(metadata, "shares"))],
+      ["Cost basis", formatCurrency(numberMetadata(metadata, "costBasis"))],
+      ["Assignment cost", formatCurrency(numberMetadata(metadata, "assignmentCost"))],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+    );
+  }
+
+  if (event.eventType === "expired") {
+    rows.push(
+      ["Outcome", labelize(stringMetadata(metadata, "outcome") ?? "expired")],
+      [
+        "Underlying at expiration",
+        formatCurrency(numberMetadata(metadata, "underlyingPriceAtExpiration")),
+      ],
+    );
+  }
+
+  if (event.eventType === "manual_adjustment") {
+    rows.push(
+      ["Reason", labelize(stringMetadata(metadata, "reason") ?? "manual_review")],
+      ["Notes", stringMetadata(metadata, "notes") ?? "Unavailable"],
+    );
+  }
+
+  if (event.eventType === "called_away") {
+    rows.push(
+      ["Shares", formatNumber(numberMetadata(metadata, "shares"))],
+      ["Call-away price", formatCurrency(numberMetadata(metadata, "calledAwayPrice"))],
+    );
+  }
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+      {rows.map(([label, value]) => (
+        <DetailRow key={label} label={label} value={value} />
       ))}
     </div>
   );
@@ -827,7 +1131,10 @@ function PositionDetailContent({
     <div className="mt-5 grid gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill status={position.status} />
+          <StatusPill
+            lifecycle={position.lifecycle}
+            status={position.status}
+          />
           <span className="inline-flex rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs font-semibold text-zinc-200">
             {positionKind(position.source)}
           </span>
@@ -842,6 +1149,8 @@ function PositionDetailContent({
           </button>
         ) : null}
       </div>
+
+      <LifecycleNotice position={position} />
 
       <dl className="grid sm:grid-cols-3">
         <PositionMetric label="Opened" value={formatDate(position.openedAt)} />

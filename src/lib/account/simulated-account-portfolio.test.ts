@@ -160,4 +160,101 @@ describe("simulated account portfolio loader", () => {
       unrealizedPnlStatus: "unavailable",
     }));
   });
+
+  it("exposes lifecycle event context for historical positions", async () => {
+    const account = maybeSingleChain({
+      created_at: "2026-07-02T20:00:00.000Z",
+      current_cash: "0",
+      id: "paper-account-1",
+      margin_balance: "28000",
+      margin_interest_rate: "0.05",
+      starting_cash: "10000",
+      updated_at: "2026-07-02T20:00:00.000Z",
+      user_id: "user-1",
+    });
+    const positions = eqOrderChain([{
+      closed_at: "2026-08-21T21:00:00.000Z",
+      contracts_opened: 2,
+      contracts_remaining: 0,
+      created_at: "2026-07-02T20:00:00.000Z",
+      expiration_date: "2026-08-21",
+      id: "position-1",
+      net_credit: "1.5",
+      notes: null,
+      opened_at: "2026-07-02T20:00:00.000Z",
+      paper_account_id: "paper-account-1",
+      source: "simulated",
+      status: "assigned",
+      strategy_type: "short_put",
+      symbol: "AAPL",
+      underlying_price_at_open: "201.25",
+      updated_at: "2026-08-21T21:00:00.000Z",
+      user_id: "user-1",
+    }]);
+    const legs = inOrderChain([]);
+    const events = eqOrderChain([{
+      cash_delta: "-38000",
+      created_at: "2026-08-21T21:00:00.000Z",
+      event_type: "assigned",
+      id: "event-1",
+      margin_delta: "28000",
+      metadata: {
+        assignmentCost: 38000,
+        costBasis: 190,
+        expiredAt: "2026-08-21T21:00:00.000Z",
+        shares: 200,
+        underlyingPriceAtExpiration: 180,
+      },
+      paper_account_id: "paper-account-1",
+      position_id: "position-1",
+      price: "190",
+      quantity: 2,
+      realized_pnl_delta: "300",
+      user_id: "user-1",
+    }]);
+    const from = vi.fn((table: string) => {
+      if (table === "paper_accounts") {
+        return { select: account.select };
+      }
+
+      if (table === "simulated_positions") {
+        return { select: positions.select };
+      }
+
+      if (table === "simulated_position_legs") {
+        return { select: legs.select };
+      }
+
+      if (table === "simulated_position_events") {
+        return { select: events.select };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const portfolio = await loadAccountPortfolio(
+      { from } as unknown as SupabaseClient,
+      "user-1",
+    );
+
+    expect(portfolio.openPositions).toHaveLength(0);
+    expect(portfolio.historyPositions[0]).toEqual(expect.objectContaining({
+      lifecycle: expect.objectContaining({
+        cashDelta: -38_000,
+        effectiveAt: "2026-08-21T21:00:00.000Z",
+        marginDelta: 28_000,
+        metadata: expect.objectContaining({
+          assignmentCost: 38_000,
+          costBasis: 190,
+          shares: 200,
+          underlyingPriceAtExpiration: 180,
+        }),
+        outcome: "assigned",
+        price: 190,
+        quantity: 2,
+        realizedPnlDelta: 300,
+      }),
+      status: "assigned",
+    }));
+  });
 });
