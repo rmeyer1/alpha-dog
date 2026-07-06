@@ -18,7 +18,8 @@ interface ReconciliationCandidate {
   price: number | null;
   quantity: number;
   row: StatementImportRow;
-  side: OptionSide;
+  rowIndexes: number[];
+  side: OptionSide | null;
 }
 
 export interface OptionReconciliationLeg {
@@ -55,10 +56,34 @@ export interface OptionReconciliationGroup {
   pendingQuantity: number;
   reviewReason: string | null;
   sourceRowIndexes: number[];
-  status: "confirmed" | "needs_review";
+  status: "confirmed" | "ignored" | "needs_review";
   strategyType: OptionStrategyType | "unknown";
   symbol: string | null;
   events: OptionReconciliationEvent[];
+}
+
+function ignoredGroup(
+  candidates: ReconciliationCandidate[],
+  reason: string,
+): OptionReconciliationGroup {
+  const sourceRowIndexes = candidates.flatMap((candidate) => candidate.rowIndexes)
+    .sort((left, right) => left - right);
+
+  return {
+    confidence: 0.8,
+    events: [],
+    explanation: [reason],
+    groupKey: groupKeyForRows("ignored", sourceRowIndexes),
+    legs: [],
+    lifecycle: "open",
+    paperPositionKey: null,
+    pendingQuantity: 0,
+    reviewReason: null,
+    sourceRowIndexes,
+    status: "ignored",
+    strategyType: "unknown",
+    symbol: candidates[0]?.contract.underlying ?? candidates[0]?.row.instrument ?? null,
+  };
 }
 
 function dateValue(row: StatementImportRow) {
@@ -73,25 +98,27 @@ function candidateSortKey(candidate: ReconciliationCandidate) {
 }
 
 function optionCandidate(row: StatementImportRow): ReconciliationCandidate | null {
+  const isExpiration = row.optionActivity?.effect === "expire";
+
   if (
     row.classification !== "option" ||
     row.optionContract == null ||
     row.optionActivity == null ||
-    row.optionActivity.side == null ||
     row.quantity == null ||
     row.quantity <= 0 ||
-    row.amount == null
+    (!isExpiration && (row.optionActivity.side == null || row.amount == null))
   ) {
     return null;
   }
 
   return {
     activity: row.optionActivity,
-    amount: row.amount,
+    amount: row.amount ?? 0,
     contract: row.optionContract,
     price: row.price,
     quantity: row.quantity,
     row,
+    rowIndexes: [row.rowIndex],
     side: row.optionActivity.side,
   };
 }
@@ -141,7 +168,7 @@ function groupKeyForRows(prefix: string, rowIndexes: number[]) {
   return `${prefix}:${[...rowIndexes].sort((a, b) => a - b).join("-")}`;
 }
 
-function openLeg(candidate: ReconciliationCandidate): OptionReconciliationLeg {
+function openLeg(candidate: ReconciliationCandidate & { side: OptionSide }): OptionReconciliationLeg {
   return {
     closeAmount: 0,
     closePrice: null,
@@ -151,7 +178,7 @@ function openLeg(candidate: ReconciliationCandidate): OptionReconciliationLeg {
     openAmount: candidate.amount,
     openedAt: dateValue(candidate.row),
     openPrice: candidate.price,
-    openRowIndexes: [candidate.row.rowIndex],
+    openRowIndexes: [...candidate.rowIndexes],
     openedQuantity: candidate.quantity,
     remainingQuantity: candidate.quantity,
     side: candidate.side,
@@ -181,6 +208,68 @@ function isCreditSpreadPair(shortLeg: ReconciliationCandidate, longLeg: Reconcil
   }
 
   return shortLeg.contract.strike < longLeg.contract.strike;
+}
+
+function isDebitSpreadPair(shortLeg: ReconciliationCandidate, longLeg: ReconciliationCandidate) {
+  if (
+    shortLeg.contract.underlying !== longLeg.contract.underlying ||
+    shortLeg.contract.expirationDate !== longLeg.contract.expirationDate ||
+    shortLeg.contract.optionType !== longLeg.contract.optionType ||
+    shortLeg.quantity !== longLeg.quantity
+  ) {
+    return false;
+  }
+
+  if (shortLeg.contract.optionType === "put") {
+    return shortLeg.contract.strike < longLeg.contract.strike;
+  }
+
+  return shortLeg.contract.strike > longLeg.contract.strike;
+}
+
+function openCandidateKey(candidate: ReconciliationCandidate & { side: OptionSide }) {
+  return [
+    candidate.activity.action,
+    contractKey(candidate.contract, candidate.side),
+  ].join("|");
+}
+
+function weightedAveragePrice(left: ReconciliationCandidate, right: ReconciliationCandidate) {
+  if (left.price == null || right.price == null) {
+    return null;
+  }
+
+  return ((left.price * left.quantity) + (right.price * right.quantity)) /
+    (left.quantity + right.quantity);
+}
+
+function aggregateOpenCandidates(candidates: ReconciliationCandidate[]) {
+  const aggregated = new Map<string, ReconciliationCandidate & { side: OptionSide }>();
+
+  for (const candidate of candidates) {
+    if (candidate.side == null) {
+      continue;
+    }
+
+    const candidateWithSide = candidate as ReconciliationCandidate & { side: OptionSide };
+    const key = openCandidateKey(candidateWithSide);
+    const existing = aggregated.get(key);
+
+    if (!existing) {
+      aggregated.set(key, { ...candidateWithSide, rowIndexes: [...candidate.rowIndexes] });
+      continue;
+    }
+
+    existing.price = weightedAveragePrice(existing, candidate);
+    existing.amount += candidate.amount;
+    existing.quantity += candidate.quantity;
+    existing.rowIndexes.push(...candidate.rowIndexes);
+    existing.rowIndexes.sort((left, right) => left - right);
+  }
+
+  return [...aggregated.values()].sort((left, right) =>
+    candidateSortKey(left).localeCompare(candidateSortKey(right))
+  );
 }
 
 function confirmedGroup({
@@ -237,10 +326,10 @@ function reconcileOpenBucket(candidates: ReconciliationCandidate[]) {
   const used = new Set<number>();
   const shorts = candidates.filter((candidate) =>
     candidate.activity.action === "open_short" && candidate.side === "short"
-  );
+  ) as Array<ReconciliationCandidate & { side: OptionSide }>;
   const longs = candidates.filter((candidate) =>
     candidate.activity.action === "open_long" && candidate.side === "long"
-  );
+  ) as Array<ReconciliationCandidate & { side: OptionSide }>;
 
   for (const shortLeg of shorts) {
     const matchingLongs = longs.filter((longLeg) =>
@@ -273,6 +362,32 @@ function reconcileOpenBucket(candidates: ReconciliationCandidate[]) {
       continue;
     }
 
+    const matchingLongs = longs.filter((longLeg) =>
+      !used.has(longLeg.row.rowIndex) && isDebitSpreadPair(shortLeg, longLeg)
+    );
+
+    if (matchingLongs.length === 1) {
+      const longLeg = matchingLongs[0];
+      used.add(shortLeg.row.rowIndex);
+      used.add(longLeg.row.rowIndex);
+      groups.push(ignoredGroup(
+        [shortLeg, longLeg],
+        "Standalone long/debit option spreads are outside the paper-account import scope.",
+      ));
+    } else if (matchingLongs.length > 1) {
+      used.add(shortLeg.row.rowIndex);
+      groups.push(reviewGroup(
+        shortLeg.row,
+        "Multiple possible long debit spread legs matched this short option open.",
+      ));
+    }
+  }
+
+  for (const shortLeg of shorts) {
+    if (used.has(shortLeg.row.rowIndex)) {
+      continue;
+    }
+
     used.add(shortLeg.row.rowIndex);
     groups.push(confirmedGroup({
       confidence: 0.85,
@@ -289,9 +404,9 @@ function reconcileOpenBucket(candidates: ReconciliationCandidate[]) {
       continue;
     }
 
-    groups.push(reviewGroup(
-      longLeg.row,
-      "Standalone long option opens are out of MVP unless paired with a credit spread.",
+    groups.push(ignoredGroup(
+      [longLeg],
+      "Standalone long option opens are outside the paper-account import scope.",
     ));
   }
 
@@ -305,9 +420,9 @@ function applyCloseOrExpiration(
   const leg = group.legs.find((candidateLeg) =>
     candidateLeg.remainingQuantity > 0 &&
     candidateLeg.openedAt <= dateValue(candidate.row) &&
-    candidateLeg.side === candidate.side &&
+    (candidate.side == null || candidateLeg.side === candidate.side) &&
     contractKey(candidateLeg.contract, candidateLeg.side) ===
-      contractKey(candidate.contract, candidate.side)
+      contractKey(candidate.contract, candidate.side ?? candidateLeg.side)
   );
 
   if (!leg) {
@@ -324,20 +439,20 @@ function applyCloseOrExpiration(
 
   leg.closeAmount += candidate.amount;
   leg.closePrice = candidate.price;
-  leg.closeRowIndexes.push(candidate.row.rowIndex);
+  leg.closeRowIndexes.push(...candidate.rowIndexes);
   leg.closedQuantity += candidate.quantity;
   leg.remainingQuantity -= candidate.quantity;
-  group.sourceRowIndexes.push(candidate.row.rowIndex);
+  group.sourceRowIndexes.push(...candidate.rowIndexes);
   group.sourceRowIndexes.sort((left, right) => left - right);
 
   const eventType = candidate.activity.effect === "expire" ? "expire" : "close";
   group.events.push({
     amount: candidate.amount,
     eventType,
-    idempotencyKey: `${group.groupKey}:${eventType}:${candidate.row.rowIndex}`,
+    idempotencyKey: `${group.groupKey}:${eventType}:${candidate.rowIndexes.join("-")}`,
     price: candidate.price,
     quantity: candidate.quantity,
-    rowIndexes: [candidate.row.rowIndex],
+    rowIndexes: [...candidate.rowIndexes],
   });
 
   const remainingQuantity = Math.max(...group.legs.map((groupLeg) => groupLeg.remainingQuantity));
@@ -390,7 +505,7 @@ export function reconcileImportedOptionRows(
 
   for (const candidates of openBuckets.values()) {
     groups.push(...reconcileOpenBucket(
-      [...candidates].sort((left, right) => candidateSortKey(left).localeCompare(candidateSortKey(right))),
+      aggregateOpenCandidates(candidates),
     ));
   }
 
@@ -406,6 +521,14 @@ export function reconcileImportedOptionRows(
     const matched = confirmedGroups.some((group) => applyCloseOrExpiration(group, candidate));
 
     if (!matched) {
+      if (candidate.activity.action === "close_long") {
+        reviewRows.push(ignoredGroup(
+          [candidate],
+          "Standalone long option closes are outside the paper-account import scope.",
+        ));
+        continue;
+      }
+
       reviewRows.push(reviewGroup(
         candidate.row,
         "Could not match option close or expiration row to an open position.",

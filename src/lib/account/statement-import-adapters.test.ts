@@ -140,6 +140,7 @@ describe("broker statement import adapters", () => {
     ["XENT", "out_of_scope", "ignored"],
     ["INT", "out_of_scope", "ignored"],
     ["FUTSWP", "out_of_scope", "ignored"],
+    ["GDBP", "out_of_scope", "ignored"],
   ] as const)("classifies Robinhood trans code %s", (
     transCode,
     classification,
@@ -178,6 +179,33 @@ describe("broker statement import adapters", () => {
       strike: 1000.5,
       underlying: "SPY",
     });
+
+    expect(parseRobinhoodOptionDescription("Option Expiration for CIFR 4/10/2026 Put $13.50")).toEqual({
+      expirationDate: "2026-04-10",
+      optionType: "put",
+      strike: 13.5,
+      underlying: "CIFR",
+    });
+  });
+
+  it("skips Robinhood disclaimer rows with data only beyond known headers", () => {
+    const result = parseRobinhoodStatementCsv([
+      header,
+      csvRow([
+        "6/1/2026",
+        "6/1/2026",
+        "6/2/2026",
+        "AAPL",
+        "AAPL 6/26/2026 Put $200.00",
+        "STO",
+        "1",
+        "$1.00",
+        "$100.00",
+      ]),
+      `"","","","","","","","","","The data provided is for informational purposes only."`,
+    ].join("\n"));
+
+    expect(result.rows).toHaveLength(1);
   });
 
   it.each([
