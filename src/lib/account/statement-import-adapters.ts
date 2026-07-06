@@ -114,7 +114,7 @@ const ROBINHOOD_SIGNATURE_COLUMNS = [
 const optionTransCodes = new Set(["BTO", "BTC", "STC", "STO", "OEXP"]);
 const equityTransCodes = new Set(["BUY", "SELL"]);
 const dividendTransCodes = new Set(["CDIV"]);
-const outOfScopeTransCodes = new Set(["ACH", "XENT", "INT", "FUTSWP"]);
+const outOfScopeTransCodes = new Set(["ACH", "XENT", "INT", "FUTSWP", "GDBP"]);
 
 const optionActivityByTransCode = {
   BTC: { action: "close_short", effect: "close", side: "short" },
@@ -207,14 +207,14 @@ function parseCsv(csv: string): CsvParseResult {
     throw new StatementImportAdapterError("EMPTY_HEADER", "CSV header row is empty.");
   }
 
-  const rows = records.slice(1).map((record) => {
+  const rows = records.slice(1).flatMap((record) => {
     const rawRow: Record<string, string> = {};
 
     headers.forEach((header, index) => {
       rawRow[header] = record[index]?.trim() ?? "";
     });
 
-    return rawRow;
+    return Object.values(rawRow).some((value) => value.length > 0) ? [rawRow] : [];
   });
 
   return { headers, rows };
@@ -306,7 +306,7 @@ export function parseRobinhoodOptionDescription(
     return null;
   }
 
-  const match = /^\s*([A-Z][A-Z0-9.-]*)\s+(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})\s+(Put|Call)\s+\$?([0-9,]+(?:\.\d+)?)\s*$/i.exec(description);
+  const match = /^\s*(?:Option Expiration for\s+)?([A-Z][A-Z0-9.-]*)\s+(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2})\s+(Put|Call)\s+\$?([0-9,]+(?:\.\d+)?)\s*$/i.exec(description);
 
   if (!match) {
     return null;
