@@ -1,7 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { OPTION_CONTRACT_MULTIPLIER } from "./simulated-accounting";
-import { getOrCreatePaperAccount } from "./simulated-positions";
-import type { StatementImportRow } from "./statement-import-adapters";
+import type { StatementImportBroker, StatementImportRow } from "./statement-import-adapters";
+import {
+  statementImportEquityLotFingerprint,
+  statementImportPositionFingerprint,
+} from "./statement-import-fingerprints";
 import {
   reconcileImportedOptionRows,
   type OptionReconciliationGroup,
@@ -20,6 +23,7 @@ interface PlannedPosition {
   externalSourceId: string;
   legs: Record<string, unknown>[];
   position: Record<string, unknown>;
+  sourceRowIndexes: number[];
 }
 
 interface PlannedEquityLot {
@@ -52,6 +56,16 @@ export interface StatementImportWriteResult {
   skippedEquityLots: number;
   skippedPositions: number;
   summary: StatementImportWritePlan["summary"];
+}
+
+export class StatementImportFinalizeError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "StatementImportFinalizeError";
+  }
 }
 
 function roundCurrency(value: number) {
@@ -231,6 +245,7 @@ function optionPositionForGroup(
     externalSourceId: group.paperPositionKey,
     legs,
     position,
+    sourceRowIndexes: group.sourceRowIndexes,
   };
 }
 
@@ -291,49 +306,95 @@ export function buildStatementImportWritePlan(
   };
 }
 
-async function existingPosition(
-  supabase: SupabaseClient,
-  userId: string,
-  externalSourceId: string,
-) {
-  const result = await supabase
-    .from("simulated_positions")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("source", "statement_import")
-    .eq("external_source_id", externalSourceId)
-    .maybeSingle();
-
-  if (result.error) {
-    throw new Error("Unable to check existing imported position.");
-  }
-
-  return result.data as { id: string } | null;
+interface StatementImportRpcResult {
+  insertedEquityLots?: number;
+  insertedEvents?: number;
+  insertedPositions?: number;
+  skippedEquityLots?: number;
+  skippedPositions?: number;
 }
 
-async function existingEquityLot(
-  supabase: SupabaseClient,
-  userId: string,
-  paperAccountId: string,
-  lot: PlannedEquityLot,
+function numberResult(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sourceScopedEventId(positionFingerprint: string, event: Record<string, unknown>) {
+  const metadata = event.metadata;
+  const idempotencyKey = metadata &&
+    typeof metadata === "object" &&
+    "idempotencyKey" in metadata &&
+    typeof metadata.idempotencyKey === "string"
+    ? metadata.idempotencyKey
+    : "event";
+
+  return `${positionFingerprint}:${idempotencyKey}`;
+}
+
+function eventMetadata(event: Record<string, unknown>) {
+  return event.metadata && typeof event.metadata === "object"
+    ? event.metadata as Record<string, unknown>
+    : {};
+}
+
+function rpcPositionsForPlan(
+  broker: StatementImportBroker,
+  rows: StatementImportRow[],
+  plan: StatementImportWritePlan,
 ) {
-  const result = await supabase
-    .from("simulated_equity_lots")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("paper_account_id", paperAccountId)
-    .eq("symbol", lot.symbol)
-    .eq("shares", lot.shares)
-    .eq("cost_basis", lot.costBasis)
-    .eq("acquired_at", lot.acquiredAt)
-    .is("source_position_id", null)
-    .maybeSingle();
+  return plan.optionPositions.map((planned) => {
+    const sourceFingerprint = statementImportPositionFingerprint(
+      broker,
+      rows,
+      planned.sourceRowIndexes,
+    );
 
-  if (result.error) {
-    throw new Error("Unable to check existing imported equity lot.");
-  }
+    return {
+      events: planned.events.map((event) => ({
+        ...event,
+        metadata: {
+          ...eventMetadata(event),
+          idempotencyKey: sourceScopedEventId(sourceFingerprint, event),
+          sourceFingerprint,
+        },
+      })),
+      externalSourceId: sourceFingerprint,
+      legs: planned.legs,
+      position: {
+        ...planned.position,
+        external_source_id: sourceFingerprint,
+      },
+      sourceFingerprint,
+      sourceRowIndexes: planned.sourceRowIndexes,
+    };
+  });
+}
 
-  return result.data as { id: string } | null;
+function rpcEquityLotsForPlan(
+  broker: StatementImportBroker,
+  rows: StatementImportRow[],
+  plan: StatementImportWritePlan,
+) {
+  const rowsByIndex = new Map(rows.map((row) => [row.rowIndex, row]));
+
+  return plan.equityLots.map((lot) => {
+    const row = rowsByIndex.get(lot.rowIndex);
+
+    if (!row) {
+      throw new StatementImportFinalizeError(
+        "STATEMENT_IMPORT_ROW_NOT_FOUND",
+        "Unable to finalize statement import because an equity source row was not found.",
+      );
+    }
+
+    return {
+      acquiredAt: lot.acquiredAt,
+      costBasis: lot.costBasis,
+      rowIndex: lot.rowIndex,
+      shares: lot.shares,
+      sourceFingerprint: statementImportEquityLotFingerprint(broker, row),
+      symbol: lot.symbol,
+    };
+  });
 }
 
 export async function writeStatementImportToPaperAccount(
@@ -341,97 +402,31 @@ export async function writeStatementImportToPaperAccount(
   userId: string,
   rows: StatementImportRow[],
   groups = reconcileImportedOptionRows(rows),
+  broker: StatementImportBroker = "robinhood",
 ): Promise<StatementImportWriteResult> {
-  const paperAccount = await getOrCreatePaperAccount(supabase, userId);
   const plan = buildStatementImportWritePlan(rows, groups);
-  let insertedPositions = 0;
-  let insertedEvents = 0;
-  let skippedPositions = 0;
-  let insertedEquityLots = 0;
-  let skippedEquityLots = 0;
+  const result = await supabase.rpc("finalize_statement_import_atomic", {
+    p_equity_lots: rpcEquityLotsForPlan(broker, rows, plan),
+    p_positions: rpcPositionsForPlan(broker, rows, plan),
+    p_summary: plan.summary,
+    p_user_id: userId,
+  });
 
-  for (const planned of plan.optionPositions) {
-    if (await existingPosition(supabase, userId, planned.externalSourceId)) {
-      skippedPositions += 1;
-      continue;
-    }
-
-    const positionResult = await supabase
-      .from("simulated_positions")
-      .insert({
-        ...planned.position,
-        paper_account_id: paperAccount.id,
-        user_id: userId,
-      })
-      .select("id,paper_account_id")
-      .single();
-
-    if (positionResult.error || !positionResult.data) {
-      throw new Error("Unable to create imported simulated position.");
-    }
-
-    const position = positionResult.data as { id: string; paper_account_id: string };
-
-    const legsResult = await supabase
-      .from("simulated_position_legs")
-      .insert(planned.legs.map((leg) => ({
-        ...leg,
-        position_id: position.id,
-      })));
-
-    if (legsResult.error) {
-      throw new Error("Unable to create imported simulated position legs.");
-    }
-
-    const eventsResult = await supabase
-      .from("simulated_position_events")
-      .insert(planned.events.map((event) => ({
-        ...event,
-        paper_account_id: paperAccount.id,
-        position_id: position.id,
-        user_id: userId,
-      })));
-
-    if (eventsResult.error) {
-      throw new Error("Unable to create imported simulated position events.");
-    }
-
-    insertedPositions += 1;
-    insertedEvents += planned.events.length;
+  if (result.error) {
+    throw new StatementImportFinalizeError(
+      "STATEMENT_IMPORT_FINALIZE_FAILED",
+      "Unable to finalize statement import.",
+    );
   }
 
-  for (const lot of plan.equityLots) {
-    if (await existingEquityLot(supabase, userId, paperAccount.id, lot)) {
-      skippedEquityLots += 1;
-      continue;
-    }
-
-    const lotResult = await supabase
-      .from("simulated_equity_lots")
-      .insert({
-        acquired_at: lot.acquiredAt,
-        cost_basis: lot.costBasis,
-        paper_account_id: paperAccount.id,
-        shares: lot.shares,
-        source_position_id: null,
-        symbol: lot.symbol,
-        user_id: userId,
-      });
-
-    if (lotResult.error) {
-      throw new Error("Unable to create imported simulated equity lot.");
-    }
-
-    insertedEquityLots += 1;
-  }
+  const data = (result.data ?? {}) as StatementImportRpcResult;
 
   return {
-    insertedEquityLots,
-    insertedEvents,
-    insertedPositions,
-    skippedEquityLots,
-    skippedPositions,
+    insertedEquityLots: numberResult(data.insertedEquityLots),
+    insertedEvents: numberResult(data.insertedEvents),
+    insertedPositions: numberResult(data.insertedPositions),
+    skippedEquityLots: numberResult(data.skippedEquityLots),
+    skippedPositions: numberResult(data.skippedPositions),
     summary: plan.summary,
   };
 }
-

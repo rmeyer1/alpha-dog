@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseRobinhoodStatementCsv } from "./statement-import-adapters";
 import { reconcileImportedOptionRows } from "./statement-import-reconciliation";
-import { buildStatementImportWritePlan } from "./statement-import-write";
+import {
+  buildStatementImportWritePlan,
+  StatementImportFinalizeError,
+  writeStatementImportToPaperAccount,
+} from "./statement-import-write";
 
 const header = [
   "Activity Date",
@@ -236,5 +241,114 @@ describe("statement import paper-account write plan", () => {
       reviewGroups: 1,
     });
   });
-});
 
+  it("finalizes planned ledger records through one atomic RPC with source fingerprints", async () => {
+    const rows = parseRows([
+      [
+        "6/1/2026",
+        "6/1/2026",
+        "6/2/2026",
+        "NVDA",
+        "NVDA 6/26/2026 Put $200.00",
+        "STO",
+        "1",
+        "$2.00",
+        "$200.00",
+      ],
+      [
+        "6/3/2026",
+        "6/3/2026",
+        "6/4/2026",
+        "AAPL",
+        "Market buy",
+        "Buy",
+        "10",
+        "$200.00",
+        "($2,000.00)",
+      ],
+    ]);
+    const calls: Array<{ args: Record<string, unknown>; name: string }> = [];
+    const supabase = {
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        calls.push({ args, name });
+
+        return {
+          data: {
+            insertedEquityLots: 1,
+            insertedEvents: 1,
+            insertedPositions: 1,
+            skippedEquityLots: 0,
+            skippedPositions: 0,
+          },
+          error: null,
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    const result = await writeStatementImportToPaperAccount(
+      supabase,
+      "00000000-0000-0000-0000-000000000001",
+      rows,
+      reconcileImportedOptionRows(rows),
+      "robinhood",
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("finalize_statement_import_atomic");
+    expect(calls[0].args.p_user_id).toBe("00000000-0000-0000-0000-000000000001");
+
+    const positions = calls[0].args.p_positions as Array<{
+      events: Array<{ metadata: { idempotencyKey: string; sourceFingerprint: string } }>;
+      externalSourceId: string;
+      position: { external_source_id: string };
+    }>;
+    const lots = calls[0].args.p_equity_lots as Array<{ sourceFingerprint: string }>;
+
+    expect(positions).toHaveLength(1);
+    expect(positions[0].externalSourceId).toMatch(/^[a-f0-9]{64}$/);
+    expect(positions[0].position.external_source_id).toBe(positions[0].externalSourceId);
+    expect(positions[0].events[0].metadata.sourceFingerprint).toBe(positions[0].externalSourceId);
+    expect(positions[0].events[0].metadata.idempotencyKey).toContain(positions[0].externalSourceId);
+    expect(lots[0].sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result).toMatchObject({
+      insertedEquityLots: 1,
+      insertedEvents: 1,
+      insertedPositions: 1,
+      skippedEquityLots: 0,
+      skippedPositions: 0,
+    });
+  });
+
+  it("surfaces RPC failures as safe finalization errors", async () => {
+    const rows = parseRows([
+      [
+        "6/1/2026",
+        "6/1/2026",
+        "6/2/2026",
+        "NVDA",
+        "NVDA 6/26/2026 Put $200.00",
+        "STO",
+        "1",
+        "$2.00",
+        "$200.00",
+      ],
+    ]);
+    const supabase = {
+      rpc: async () => ({
+        data: null,
+        error: { message: "duplicate key value includes sensitive raw row" },
+      }),
+    } as unknown as SupabaseClient;
+
+    await expect(writeStatementImportToPaperAccount(
+      supabase,
+      "00000000-0000-0000-0000-000000000001",
+      rows,
+      reconcileImportedOptionRows(rows),
+      "robinhood",
+    )).rejects.toMatchObject({
+      code: "STATEMENT_IMPORT_FINALIZE_FAILED",
+      message: "Unable to finalize statement import.",
+    } satisfies Partial<StatementImportFinalizeError>);
+  });
+});
