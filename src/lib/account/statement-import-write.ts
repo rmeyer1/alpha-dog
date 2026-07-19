@@ -4,6 +4,7 @@ import type { StatementImportBroker, StatementImportRow } from "./statement-impo
 import {
   statementImportEquityLotFingerprint,
   statementImportPositionFingerprint,
+  statementImportRowHash,
 } from "./statement-import-fingerprints";
 import {
   reconcileImportedOptionRows,
@@ -23,7 +24,7 @@ interface PlannedPosition {
   externalSourceId: string;
   legs: Record<string, unknown>[];
   position: Record<string, unknown>;
-  sourceRowIndexes: number[];
+  sourceOpenRowIndexes: number[];
 }
 
 interface PlannedEquityLot {
@@ -245,7 +246,7 @@ function optionPositionForGroup(
     externalSourceId: group.paperPositionKey,
     legs,
     position,
-    sourceRowIndexes: group.sourceRowIndexes,
+    sourceOpenRowIndexes: group.legs.flatMap((leg) => leg.openRowIndexes),
   };
 }
 
@@ -307,15 +308,35 @@ export function buildStatementImportWritePlan(
 }
 
 interface StatementImportRpcResult {
-  insertedEquityLots?: number;
-  insertedEvents?: number;
-  insertedPositions?: number;
-  skippedEquityLots?: number;
-  skippedPositions?: number;
+  insertedEquityLots: number;
+  insertedEvents: number;
+  insertedPositions: number;
+  skippedEquityLots: number;
+  skippedPositions: number;
 }
 
-function numberResult(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+const STATEMENT_IMPORT_RPC_COUNT_KEYS = [
+  "insertedEquityLots",
+  "insertedEvents",
+  "insertedPositions",
+  "skippedEquityLots",
+  "skippedPositions",
+] as const;
+
+function statementImportRpcResult(value: unknown): StatementImportRpcResult | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const result = value as Record<string, unknown>;
+
+  for (const key of STATEMENT_IMPORT_RPC_COUNT_KEYS) {
+    if (!Number.isSafeInteger(result[key]) || (result[key] as number) < 0) {
+      return null;
+    }
+  }
+
+  return result as unknown as StatementImportRpcResult;
 }
 
 function sourceScopedEventId(positionFingerprint: string, event: Record<string, unknown>) {
@@ -342,11 +363,20 @@ function rpcPositionsForPlan(
   plan: StatementImportWritePlan,
 ) {
   return plan.optionPositions.map((planned) => {
-    const sourceFingerprint = statementImportPositionFingerprint(
-      broker,
-      rows,
-      planned.sourceRowIndexes,
-    );
+    let sourceFingerprint: string;
+
+    try {
+      sourceFingerprint = statementImportPositionFingerprint(
+        broker,
+        rows,
+        planned.sourceOpenRowIndexes,
+      );
+    } catch {
+      throw new StatementImportFinalizeError(
+        "STATEMENT_IMPORT_ROW_NOT_FOUND",
+        "Unable to finalize statement import because a position source row was not found.",
+      );
+    }
 
     return {
       events: planned.events.map((event) => ({
@@ -364,7 +394,6 @@ function rpcPositionsForPlan(
         external_source_id: sourceFingerprint,
       },
       sourceFingerprint,
-      sourceRowIndexes: planned.sourceRowIndexes,
     };
   });
 }
@@ -375,6 +404,7 @@ function rpcEquityLotsForPlan(
   plan: StatementImportWritePlan,
 ) {
   const rowsByIndex = new Map(rows.map((row) => [row.rowIndex, row]));
+  const fingerprintOccurrences = new Map<string, number>();
 
   return plan.equityLots.map((lot) => {
     const row = rowsByIndex.get(lot.rowIndex);
@@ -386,12 +416,16 @@ function rpcEquityLotsForPlan(
       );
     }
 
+    const rowHash = statementImportRowHash(broker, row);
+    const occurrence = fingerprintOccurrences.get(rowHash) ?? 0;
+    fingerprintOccurrences.set(rowHash, occurrence + 1);
+
     return {
       acquiredAt: lot.acquiredAt,
       costBasis: lot.costBasis,
       rowIndex: lot.rowIndex,
       shares: lot.shares,
-      sourceFingerprint: statementImportEquityLotFingerprint(broker, row),
+      sourceFingerprint: statementImportEquityLotFingerprint(broker, row, occurrence),
       symbol: lot.symbol,
     };
   });
@@ -419,14 +453,21 @@ export async function writeStatementImportToPaperAccount(
     );
   }
 
-  const data = (result.data ?? {}) as StatementImportRpcResult;
+  const data = statementImportRpcResult(result.data);
+
+  if (!data) {
+    throw new StatementImportFinalizeError(
+      "STATEMENT_IMPORT_FINALIZE_FAILED",
+      "Unable to finalize statement import.",
+    );
+  }
 
   return {
-    insertedEquityLots: numberResult(data.insertedEquityLots),
-    insertedEvents: numberResult(data.insertedEvents),
-    insertedPositions: numberResult(data.insertedPositions),
-    skippedEquityLots: numberResult(data.skippedEquityLots),
-    skippedPositions: numberResult(data.skippedPositions),
+    insertedEquityLots: data.insertedEquityLots,
+    insertedEvents: data.insertedEvents,
+    insertedPositions: data.insertedPositions,
+    skippedEquityLots: data.skippedEquityLots,
+    skippedPositions: data.skippedPositions,
     summary: plan.summary,
   };
 }

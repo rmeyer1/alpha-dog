@@ -1,16 +1,59 @@
 alter table public.simulated_equity_lots
   add column if not exists source_fingerprint text;
 
-alter table public.simulated_equity_lots
-  add constraint simulated_equity_lots_source_fingerprint_not_blank
-  check (source_fingerprint is null or btrim(source_fingerprint) <> '');
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'simulated_equity_lots_source_fingerprint_not_blank'
+      and conrelid = 'public.simulated_equity_lots'::regclass
+  ) then
+    alter table public.simulated_equity_lots
+      add constraint simulated_equity_lots_source_fingerprint_not_blank
+      check (source_fingerprint is null or btrim(source_fingerprint) <> '');
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'simulated_positions_statement_import_source_required'
+      and conrelid = 'public.simulated_positions'::regclass
+  ) then
+    alter table public.simulated_positions
+      add constraint simulated_positions_statement_import_source_required
+      check (
+        source <> 'statement_import' or
+        nullif(btrim(external_source_id), '') is not null
+      );
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'simulated_position_events_statement_import_key_required'
+      and conrelid = 'public.simulated_position_events'::regclass
+  ) then
+    alter table public.simulated_position_events
+      add constraint simulated_position_events_statement_import_key_required
+      check (
+        metadata->>'source' is distinct from 'statement_import' or
+        nullif(btrim(metadata->>'idempotencyKey'), '') is not null
+      );
+  end if;
+end;
+$$;
 
 create unique index if not exists simulated_positions_statement_import_source_unique
   on public.simulated_positions (user_id, external_source_id)
   where source = 'statement_import' and external_source_id is not null;
 
 create unique index if not exists simulated_position_events_statement_import_key_unique
-  on public.simulated_position_events (user_id, (metadata->>'idempotencyKey'))
+  on public.simulated_position_events (
+    user_id,
+    position_id,
+    (metadata->>'idempotencyKey')
+  )
   where metadata->>'source' = 'statement_import'
     and metadata->>'idempotencyKey' is not null;
 
@@ -27,7 +70,7 @@ create or replace function public.finalize_statement_import_atomic(
 returns jsonb
 language plpgsql
 security invoker
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_user_id uuid := auth.uid();
@@ -48,21 +91,30 @@ begin
     raise exception 'UNAUTHENTICATED: Sign in to import broker statements.';
   end if;
 
-  if p_user_id <> v_user_id then
+  if p_user_id is distinct from v_user_id then
     raise exception 'STATEMENT_IMPORT_OWNER_MISMATCH: Statement import owner mismatch.';
   end if;
 
   insert into public.paper_accounts (user_id)
   values (v_user_id)
-  on conflict (user_id) do update
-    set user_id = excluded.user_id
-  returning * into v_account;
+  on conflict (user_id) do nothing;
+
+  select *
+  into strict v_account
+  from public.paper_accounts
+  where user_id = v_user_id;
 
   for v_position_input in
     select value
     from jsonb_array_elements(coalesce(p_positions, '[]'::jsonb)) as positions(value)
   loop
     v_position_body := coalesce(v_position_input->'position', '{}'::jsonb);
+
+    if nullif(btrim(v_position_input->>'externalSourceId'), '') is null then
+      raise exception 'STATEMENT_IMPORT_POSITION_FINGERPRINT_REQUIRED: Position fingerprint is required.';
+    end if;
+
+    v_position := null;
 
     insert into public.simulated_positions (
       user_id,
@@ -85,7 +137,7 @@ begin
       v_user_id,
       v_account.id,
       'statement_import',
-      nullif(v_position_input->>'externalSourceId', ''),
+      nullif(btrim(v_position_input->>'externalSourceId'), ''),
       v_position_body->>'status',
       v_position_body->>'strategy_type',
       upper(v_position_body->>'symbol'),
@@ -144,6 +196,10 @@ begin
       select value
       from jsonb_array_elements(coalesce(v_position_input->'events', '[]'::jsonb)) as events(value)
     loop
+      if nullif(btrim(v_event->'metadata'->>'idempotencyKey'), '') is null then
+        raise exception 'STATEMENT_IMPORT_EVENT_KEY_REQUIRED: Event idempotency key is required.';
+      end if;
+
       insert into public.simulated_position_events (
         user_id,
         paper_account_id,
@@ -181,6 +237,10 @@ begin
     select value
     from jsonb_array_elements(coalesce(p_equity_lots, '[]'::jsonb)) as lots(value)
   loop
+    if nullif(btrim(v_lot->>'sourceFingerprint'), '') is null then
+      raise exception 'STATEMENT_IMPORT_EQUITY_FINGERPRINT_REQUIRED: Equity fingerprint is required.';
+    end if;
+
     insert into public.simulated_equity_lots (
       user_id,
       paper_account_id,
@@ -198,7 +258,7 @@ begin
       (v_lot->>'shares')::numeric,
       (v_lot->>'costBasis')::numeric,
       null,
-      nullif(v_lot->>'sourceFingerprint', ''),
+      nullif(btrim(v_lot->>'sourceFingerprint'), ''),
       (v_lot->>'acquiredAt')::timestamptz
     )
     on conflict (user_id, source_fingerprint)
@@ -225,6 +285,12 @@ $$;
 
 revoke all on function public.finalize_statement_import_atomic(uuid, jsonb, jsonb, jsonb)
   from public, anon;
+
+grant select, insert on table public.paper_accounts to authenticated;
+grant select, insert on table public.simulated_positions to authenticated;
+grant insert on table public.simulated_position_legs to authenticated;
+grant insert on table public.simulated_position_events to authenticated;
+grant select, insert on table public.simulated_equity_lots to authenticated;
 
 grant execute on function public.finalize_statement_import_atomic(uuid, jsonb, jsonb, jsonb)
   to authenticated;

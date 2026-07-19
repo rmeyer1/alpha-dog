@@ -319,6 +319,97 @@ describe("statement import paper-account write plan", () => {
     });
   });
 
+  it("keeps a position fingerprint stable when later lifecycle rows are present", async () => {
+    const openRow = [
+      "6/1/2026",
+      "6/1/2026",
+      "6/2/2026",
+      "NVDA",
+      "NVDA 6/26/2026 Put $200.00",
+      "STO",
+      "1",
+      "$2.00",
+      "$200.00",
+    ];
+    const closeRow = [
+      "6/10/2026",
+      "6/10/2026",
+      "6/11/2026",
+      "NVDA",
+      "NVDA 6/26/2026 Put $200.00",
+      "BTC",
+      "1",
+      "$0.50",
+      "($50.00)",
+    ];
+    const fingerprints: string[] = [];
+    const supabase = {
+      rpc: async (_name: string, args: Record<string, unknown>) => {
+        const positions = args.p_positions as Array<{ externalSourceId: string }>;
+        fingerprints.push(positions[0].externalSourceId);
+
+        return {
+          data: {
+            insertedEquityLots: 0,
+            insertedEvents: positions.length,
+            insertedPositions: positions.length,
+            skippedEquityLots: 0,
+            skippedPositions: 0,
+          },
+          error: null,
+        };
+      },
+    } as unknown as SupabaseClient;
+
+    const openRows = parseRows([openRow]);
+    const closedRows = parseRows([openRow, closeRow]);
+
+    await writeStatementImportToPaperAccount(supabase, "user-1", openRows);
+    await writeStatementImportToPaperAccount(supabase, "user-1", closedRows);
+
+    expect(fingerprints).toHaveLength(2);
+    expect(fingerprints[1]).toBe(fingerprints[0]);
+  });
+
+  it("assigns distinct stable fingerprints to identical equity transactions", async () => {
+    const equityRow = [
+      "6/3/2026",
+      "6/3/2026",
+      "6/4/2026",
+      "AAPL",
+      "Market buy",
+      "Buy",
+      "10",
+      "$200.00",
+      "($2,000.00)",
+    ];
+    const fingerprintSets: string[][] = [];
+    const supabase = {
+      rpc: async (_name: string, args: Record<string, unknown>) => {
+        const lots = args.p_equity_lots as Array<{ sourceFingerprint: string }>;
+        fingerprintSets.push(lots.map((lot) => lot.sourceFingerprint));
+
+        return {
+          data: {
+            insertedEquityLots: lots.length,
+            insertedEvents: 0,
+            insertedPositions: 0,
+            skippedEquityLots: 0,
+            skippedPositions: 0,
+          },
+          error: null,
+        };
+      },
+    } as unknown as SupabaseClient;
+    const rows = parseRows([equityRow, equityRow]);
+
+    await writeStatementImportToPaperAccount(supabase, "user-1", rows);
+    await writeStatementImportToPaperAccount(supabase, "user-1", rows);
+
+    expect(new Set(fingerprintSets[0]).size).toBe(2);
+    expect(fingerprintSets[1]).toEqual(fingerprintSets[0]);
+  });
+
   it("surfaces RPC failures as safe finalization errors", async () => {
     const rows = parseRows([
       [
@@ -346,6 +437,34 @@ describe("statement import paper-account write plan", () => {
       rows,
       reconcileImportedOptionRows(rows),
       "robinhood",
+    )).rejects.toMatchObject({
+      code: "STATEMENT_IMPORT_FINALIZE_FAILED",
+      message: "Unable to finalize statement import.",
+    } satisfies Partial<StatementImportFinalizeError>);
+  });
+
+  it("rejects malformed RPC success payloads instead of reporting zero inserts", async () => {
+    const rows = parseRows([
+      [
+        "6/1/2026",
+        "6/1/2026",
+        "6/2/2026",
+        "NVDA",
+        "NVDA 6/26/2026 Put $200.00",
+        "STO",
+        "1",
+        "$2.00",
+        "$200.00",
+      ],
+    ]);
+    const supabase = {
+      rpc: async () => ({ data: {}, error: null }),
+    } as unknown as SupabaseClient;
+
+    await expect(writeStatementImportToPaperAccount(
+      supabase,
+      "00000000-0000-0000-0000-000000000001",
+      rows,
     )).rejects.toMatchObject({
       code: "STATEMENT_IMPORT_FINALIZE_FAILED",
       message: "Unable to finalize statement import.",

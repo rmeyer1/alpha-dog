@@ -35,11 +35,16 @@ export function statementImportPositionFingerprint(
   rows: StatementImportRow[],
   rowIndexes: number[],
 ) {
-  const rowHashes = rowIndexes
-    .map((rowIndex) => rows.find((row) => row.rowIndex === rowIndex))
-    .filter((row) => row != null)
-    .map((row) => statementImportRowHash(broker, row))
-    .sort();
+  const rowsByIndex = new Map(rows.map((row) => [row.rowIndex, row]));
+  const rowHashes = rowIndexes.map((rowIndex) => {
+    const row = rowsByIndex.get(rowIndex);
+
+    if (!row) {
+      throw new Error(`Statement import row ${rowIndex} was not found.`);
+    }
+
+    return statementImportRowHash(broker, row);
+  }).sort();
 
   return sha256(`${broker}:position:${rowHashes.join("|")}`);
 }
@@ -47,8 +52,11 @@ export function statementImportPositionFingerprint(
 export function statementImportEquityLotFingerprint(
   broker: StatementImportBroker,
   row: StatementImportRow,
+  occurrence: number,
 ) {
-  return sha256(`${broker}:equity-lot:${statementImportRowHash(broker, row)}`);
+  return sha256(
+    `${broker}:equity-lot:${statementImportRowHash(broker, row)}:${occurrence}`,
+  );
 }
 
 export function duplicateStatementRowHashes(
