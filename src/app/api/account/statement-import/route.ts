@@ -3,6 +3,7 @@ import { parseBrokerStatementCsv, StatementImportAdapterError } from "@/lib/acco
 import { reconcileImportedOptionRows } from "@/lib/account/statement-import-reconciliation";
 import {
   buildStatementImportWritePlan,
+  StatementImportFinalizeError,
   writeStatementImportToPaperAccount,
 } from "@/lib/account/statement-import-write";
 import {
@@ -10,6 +11,10 @@ import {
   copyAuthCookies,
   getRequiredAccountSession,
 } from "@/lib/supabase/account-session";
+import {
+  authCorrelationIdFromRequest,
+  logAuthAccountFailure,
+} from "@/lib/supabase/auth-observability";
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 
@@ -30,6 +35,7 @@ function reviewGroupsForResponse(
 }
 
 export async function POST(request: NextRequest) {
+  const correlationId = authCorrelationIdFromRequest(request);
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -75,6 +81,7 @@ export async function POST(request: NextRequest) {
       auth.user.id,
       parsed.rows,
       groups,
+      parsed.broker,
     );
 
     return copyAuthCookies(auth.response, NextResponse.json({
@@ -109,7 +116,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (error instanceof StatementImportFinalizeError) {
+      logAuthAccountFailure({
+        code: error.code,
+        correlationId,
+        operation: "statement_import_finalize",
+      });
+
+      return NextResponse.json(
+        {
+          error: {
+            code: error.code,
+            correlationId,
+            message: error.message,
+          },
+        },
+        { status: 500 },
+      );
+    }
+
     throw error;
   }
 }
-

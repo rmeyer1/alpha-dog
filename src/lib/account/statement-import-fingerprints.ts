@@ -30,6 +30,35 @@ export function statementImportRowHash(
   return sha256(`${broker}:${stableJson(row.rawRow)}`);
 }
 
+export function statementImportPositionFingerprint(
+  broker: StatementImportBroker,
+  rows: StatementImportRow[],
+  rowIndexes: number[],
+) {
+  const rowsByIndex = new Map(rows.map((row) => [row.rowIndex, row]));
+  const rowHashes = rowIndexes.map((rowIndex) => {
+    const row = rowsByIndex.get(rowIndex);
+
+    if (!row) {
+      throw new Error(`Statement import row ${rowIndex} was not found.`);
+    }
+
+    return statementImportRowHash(broker, row);
+  }).sort();
+
+  return sha256(`${broker}:position:${rowHashes.join("|")}`);
+}
+
+export function statementImportEquityLotFingerprint(
+  broker: StatementImportBroker,
+  row: StatementImportRow,
+  occurrence: number,
+) {
+  return sha256(
+    `${broker}:equity-lot:${statementImportRowHash(broker, row)}:${occurrence}`,
+  );
+}
+
 export function duplicateStatementRowHashes(
   broker: StatementImportBroker,
   rows: StatementImportRow[],
@@ -50,4 +79,3 @@ export function duplicateStatementRowHashes(
 
   return duplicates;
 }
-

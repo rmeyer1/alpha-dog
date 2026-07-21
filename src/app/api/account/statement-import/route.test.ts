@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { StatementImportFinalizeError } from "@/lib/account/statement-import-write";
 import { UNAUTHENTICATED } from "@/lib/supabase/account-session";
 import { POST } from "./route";
 
@@ -40,12 +41,13 @@ function csvRow(values: string[]) {
   return values.map((value) => `"${value.replaceAll("\"", "\"\"")}"`).join(",");
 }
 
-function importRequest(csv: string) {
+function importRequest(csv: string, headers?: HeadersInit) {
   const formData = new FormData();
   formData.set("file", new File([csv], "robinhood.csv", { type: "text/csv" }));
 
   return new Request("https://alpha-dog.test/api/account/statement-import", {
     body: formData,
+    headers,
     method: "POST",
   });
 }
@@ -138,6 +140,7 @@ describe("POST /api/account/statement-import", () => {
       expect.arrayContaining([
         expect.objectContaining({ status: "confirmed" }),
       ]),
+      "robinhood",
     );
     expect(json.summary).toMatchObject({
       importedRecords: 1,
@@ -192,5 +195,45 @@ describe("POST /api/account/statement-import", () => {
       }),
     ]);
   });
-});
 
+  it("returns a safe correlation id when finalization fails", async () => {
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "user-1" },
+    });
+    writeStatementImportToPaperAccount.mockRejectedValue(
+      new StatementImportFinalizeError(
+        "STATEMENT_IMPORT_FINALIZE_FAILED",
+        "Unable to finalize statement import.",
+      ),
+    );
+
+    const csv = [
+      header,
+      csvRow([
+        "6/1/2026",
+        "6/1/2026",
+        "6/2/2026",
+        "NVDA",
+        "NVDA 6/26/2026 Put $200.00",
+        "STO",
+        "1",
+        "$2.00",
+        "$200.00",
+      ]),
+    ].join("\n");
+
+    const response = await POST(importRequest(csv, {
+      "x-alpha-dog-correlation-id": "statement-import-test",
+    }));
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.error).toEqual({
+      code: "STATEMENT_IMPORT_FINALIZE_FAILED",
+      correlationId: "statement-import-test",
+      message: "Unable to finalize statement import.",
+    });
+  });
+});
