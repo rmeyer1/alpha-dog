@@ -5,14 +5,22 @@ import {
   createStatementImport,
 } from "@/lib/account/statement-import-staging";
 import {
+  StatementImportFinalizeError,
+} from "@/lib/account/statement-import-write";
+import {
   accountSessionErrorResponse,
   copyAuthCookies,
   getRequiredAccountSession,
 } from "@/lib/supabase/account-session";
+import {
+  authCorrelationIdFromRequest,
+  logAuthAccountFailure,
+} from "@/lib/supabase/auth-observability";
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
+  const correlationId = authCorrelationIdFromRequest(request);
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -74,6 +82,25 @@ export async function POST(request: NextRequest) {
           },
         },
         { status: 400 },
+      );
+    }
+
+    if (error instanceof StatementImportFinalizeError) {
+      logAuthAccountFailure({
+        code: error.code,
+        correlationId,
+        operation: "statement_import_finalize",
+      });
+
+      return NextResponse.json(
+        {
+          error: {
+            code: error.code,
+            correlationId,
+            message: error.message,
+          },
+        },
+        { status: 500 },
       );
     }
 

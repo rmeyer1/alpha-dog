@@ -658,7 +658,13 @@ export async function finalizeStatementImport(
       ? "confirmed"
       : "ignored",
   } satisfies OptionReconciliationGroup));
-  const result = await writeStatementImportToPaperAccount(supabase, userId, rows, groups);
+  const result = await writeStatementImportToPaperAccount(
+    supabase,
+    userId,
+    rows,
+    groups,
+    records.import.broker,
+  );
   const summary = summaryDefaults({
     ...records.import.summary,
     importedRecords: result.insertedPositions + result.insertedEquityLots,
