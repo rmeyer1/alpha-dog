@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 type ImportReviewGroup = {
+  canConfirm: boolean;
   confidence: number;
   decision: "confirmed" | "rejected" | null;
   explanation: string[];
@@ -146,7 +147,7 @@ function ReviewGroups({
               <div className="flex shrink-0 gap-2">
                 <button
                   className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 disabled:opacity-60"
-                  disabled={isPending || decision === "confirmed"}
+                  disabled={!group.canConfirm || isPending || decision === "confirmed"}
                   onClick={() => onDecision(group, "confirmed")}
                   type="button"
                 >
@@ -167,6 +168,11 @@ function ReviewGroups({
             {decision ? (
               <p className="mt-3 text-sm text-emerald-100">
                 Marked {decision}.
+              </p>
+            ) : null}
+            {!group.canConfirm && !decision ? (
+              <p className="mt-3 text-sm text-amber-100">
+                This group is missing normalized option details and must be rejected.
               </p>
             ) : null}
           </div>

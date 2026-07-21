@@ -5,10 +5,14 @@ import type {
   StatementImportRowStatus,
 } from "./statement-import-adapters";
 import {
+  duplicateStatementRowIndexes,
   statementImportFileHash,
   statementImportRowHash,
 } from "./statement-import-fingerprints";
-import type { OptionReconciliationGroup } from "./statement-import-reconciliation";
+import {
+  reconcileImportedOptionRows,
+  type OptionReconciliationGroup,
+} from "./statement-import-reconciliation";
 import {
   buildStatementImportWritePlan,
   writeStatementImportToPaperAccount,
@@ -57,6 +61,7 @@ interface PersistedGroup {
 }
 
 export interface StatementImportReviewGroupResponse {
+  canConfirm: boolean;
   confidence: number;
   decision: ReviewDecision | null;
   explanation: string[];
@@ -67,6 +72,10 @@ export interface StatementImportReviewGroupResponse {
   status: PersistedGroup["status"];
   strategyType: string;
   symbol: string | null;
+}
+
+export class StatementImportReviewDecisionError extends Error {
+  readonly code = "STATEMENT_IMPORT_GROUP_NOT_CONFIRMABLE";
 }
 
 export interface StatementImportSummary {
@@ -123,7 +132,7 @@ function rowForDatabase(
   userId: string,
   broker: StatementImportBroker,
   row: StatementImportRow,
-  duplicateHashes: Set<string>,
+  duplicateRowIndexes: Set<number>,
 ) {
   const rowHash = statementImportRowHash(broker, row);
 
@@ -142,9 +151,27 @@ function rowForDatabase(
     row_hash: rowHash,
     row_index: row.rowIndex,
     settle_date: row.settleDate,
-    status: rowStatus(row, duplicateHashes.has(rowHash)),
+    status: rowStatus(row, duplicateRowIndexes.has(row.rowIndex)),
     trans_code: row.transCode,
     user_id: userId,
+  };
+}
+
+function canConfirmGroup(metadata: OptionReconciliationGroup) {
+  return metadata.legs.length > 0 && metadata.events.length > 0 && metadata.groupKey.length > 0;
+}
+
+function confirmedGroupMetadata(metadata: PersistedGroup["metadata"]) {
+  if (!canConfirmGroup(metadata)) {
+    throw new StatementImportReviewDecisionError(
+      "This review group does not contain enough normalized option data to confirm. Reject it instead.",
+    );
+  }
+
+  return {
+    ...metadata,
+    paperPositionKey: metadata.paperPositionKey ?? `${metadata.groupKey}:position`,
+    status: "confirmed" as const,
   };
 }
 
@@ -205,6 +232,7 @@ function responseGroup(group: PersistedGroup): StatementImportReviewGroupRespons
     : null;
 
   return {
+    canConfirm: canConfirmGroup(metadata),
     confidence: Number(group.confidence ?? metadata.confidence ?? 0),
     decision,
     explanation: metadata.explanation ?? [],
@@ -215,6 +243,26 @@ function responseGroup(group: PersistedGroup): StatementImportReviewGroupRespons
     status: group.status,
     strategyType: metadata.strategyType,
     symbol: metadata.symbol,
+  };
+}
+
+export function buildStatementImportStagingPlan(
+  broker: StatementImportBroker,
+  rows: StatementImportRow[],
+  groups: OptionReconciliationGroup[],
+  existingHashes: Set<string>,
+) {
+  const duplicateRowIndexes = duplicateStatementRowIndexes(broker, rows, existingHashes);
+  const stageableRows = rows.filter((row) => !duplicateRowIndexes.has(row.rowIndex));
+  const stageableGroups = duplicateRowIndexes.size > 0
+    ? reconcileImportedOptionRows(stageableRows)
+    : groups;
+
+  return {
+    duplicateRowIndexes,
+    groups: stageableGroups,
+    plan: buildStatementImportWritePlan(stageableRows, stageableGroups),
+    rows: stageableRows,
   };
 }
 
@@ -343,7 +391,6 @@ export async function createStatementImport(
     return responseFromRecords(existing.import, existing.rows, existing.groups, true);
   }
 
-  const plan = buildStatementImportWritePlan(rows, groups);
   const rowHashes = rows.map((row) => statementImportRowHash(broker, row));
   const duplicateHashResult = rowHashes.length === 0
     ? { data: [], error: null }
@@ -357,19 +404,21 @@ export async function createStatementImport(
     throw new Error("Unable to check duplicate statement rows.");
   }
 
-  const duplicateHashes = new Set(
+  const existingHashes = new Set(
     (duplicateHashResult.data ?? []).map((row: { row_hash: string }) => row.row_hash),
   );
+  const stagingPlan = buildStatementImportStagingPlan(broker, rows, groups, existingHashes);
+  const plan = stagingPlan.plan;
   const status: ImportStatus = plan.summary.reviewGroups > 0 ? "needs_review" : "parsed";
   const baseSummary = summaryDefaults({
     dividendsTracked: plan.summary.dividendsTracked,
-    duplicateRows: duplicateHashes.size,
+    duplicateRows: stagingPlan.duplicateRowIndexes.size,
     equityLots: plan.summary.equityLots,
     excludedRows: plan.summary.excludedRows,
     ignoredRows: plan.summary.excludedRows,
     optionPositions: plan.summary.optionPositions,
     reviewGroups: plan.summary.reviewGroups,
-    stagedRows: rows.length,
+    stagedRows: stagingPlan.rows.length,
   });
   const importResult = await supabase
     .from("statement_imports")
@@ -390,57 +439,73 @@ export async function createStatementImport(
 
   const statementImport = importResult.data as PersistedImport;
   const rowsForInsert = rows.map((row) =>
-    rowForDatabase(statementImport.id, userId, broker, row, duplicateHashes)
+    rowForDatabase(statementImport.id, userId, broker, row, stagingPlan.duplicateRowIndexes)
+  );
+  const groupsForInsert = stagingPlan.groups.map((group) =>
+    groupForDatabase(statementImport.id, userId, group)
   );
 
-  let insertedRows: { id: string; row_index: number }[] = [];
+  try {
+    let insertedRows: { id: string; row_index: number }[] = [];
 
-  if (rowsForInsert.length > 0) {
-    const rowsResult = await supabase
-      .from("statement_import_rows")
-      .insert(rowsForInsert)
-      .select("id,row_index");
+    if (rowsForInsert.length > 0) {
+      const rowsResult = await supabase
+        .from("statement_import_rows")
+        .insert(rowsForInsert)
+        .select("id,row_index");
 
-    if (rowsResult.error) {
-      throw new Error("Unable to stage statement import rows.");
+      if (rowsResult.error) {
+        throw new Error("Unable to stage statement import rows.");
+      }
+
+      insertedRows = (rowsResult.data ?? []) as { id: string; row_index: number }[];
     }
 
-    insertedRows = (rowsResult.data ?? []) as { id: string; row_index: number }[];
-  }
+    let insertedGroups: { id: string; metadata: OptionReconciliationGroup }[] = [];
 
-  const groupsForInsert = groups.map((group) => groupForDatabase(statementImport.id, userId, group));
-  let insertedGroups: { id: string; metadata: OptionReconciliationGroup }[] = [];
+    if (groupsForInsert.length > 0) {
+      const groupsResult = await supabase
+        .from("statement_reconciliation_groups")
+        .insert(groupsForInsert)
+        .select("id,metadata");
 
-  if (groupsForInsert.length > 0) {
-    const groupsResult = await supabase
-      .from("statement_reconciliation_groups")
-      .insert(groupsForInsert)
-      .select("id,metadata");
+      if (groupsResult.error) {
+        throw new Error("Unable to stage statement import review groups.");
+      }
 
-    if (groupsResult.error) {
-      throw new Error("Unable to stage statement import review groups.");
+      insertedGroups = (groupsResult.data ?? []) as { id: string; metadata: OptionReconciliationGroup }[];
     }
 
-    insertedGroups = (groupsResult.data ?? []) as { id: string; metadata: OptionReconciliationGroup }[];
-  }
+    const rowIdsByIndex = new Map(insertedRows.map((row) => [row.row_index, row.id]));
+    const groupRows = insertedGroups.flatMap((group) =>
+      (group.metadata.sourceRowIndexes ?? []).flatMap((rowIndex) => {
+        const rowId = rowIdsByIndex.get(rowIndex);
 
-  const rowIdsByIndex = new Map(insertedRows.map((row) => [row.row_index, row.id]));
-  const groupRows = insertedGroups.flatMap((group) =>
-    (group.metadata.sourceRowIndexes ?? []).flatMap((rowIndex) => {
-      const rowId = rowIdsByIndex.get(rowIndex);
+        return rowId ? [{ group_id: group.id, role: "source", row_id: rowId }] : [];
+      })
+    );
 
-      return rowId ? [{ group_id: group.id, role: "source", row_id: rowId }] : [];
-    })
-  );
+    if (groupRows.length > 0) {
+      const membershipResult = await supabase
+        .from("statement_reconciliation_group_rows")
+        .insert(groupRows);
 
-  if (groupRows.length > 0) {
-    const membershipResult = await supabase
-      .from("statement_reconciliation_group_rows")
-      .insert(groupRows);
-
-    if (membershipResult.error) {
-      throw new Error("Unable to link statement import rows to review groups.");
+      if (membershipResult.error) {
+        throw new Error("Unable to link statement import rows to review groups.");
+      }
     }
+  } catch (error) {
+    const cleanupResult = await supabase
+      .from("statement_imports")
+      .delete()
+      .eq("user_id", userId)
+      .eq("id", statementImport.id);
+
+    if (cleanupResult.error) {
+      throw new Error("Unable to clean up an incomplete statement import.", { cause: error });
+    }
+
+    throw error;
   }
 
   if (plan.summary.reviewGroups === 0) {
@@ -482,13 +547,15 @@ export async function decideStatementImportGroup(
 
   const existing = existingResult.data as { metadata: PersistedGroup["metadata"]; status?: string };
   const metadata = existing.metadata;
+  const decidedMetadata = decision === "confirmed"
+    ? confirmedGroupMetadata(metadata)
+    : { ...metadata, status: "ignored" as const };
   const nextMetadata = {
-    ...metadata,
+    ...decidedMetadata,
     audit: [
       ...(metadata.audit ?? []),
       { at: new Date().toISOString(), decision, userId },
     ],
-    status: decision === "confirmed" ? "confirmed" : "ignored",
   };
   const updateResult = await supabase
     .from("statement_reconciliation_groups")
@@ -520,17 +587,19 @@ export async function decideStatementImportGroup(
     throw new Error("Unable to record statement import review audit.");
   }
 
-  if (decision === "rejected") {
-    const rowIndexes = metadata.sourceRowIndexes ?? [];
+  const rowIndexes = metadata.sourceRowIndexes ?? [];
+
+  if (rowIndexes.length > 0) {
     const rowUpdate = await supabase
       .from("statement_import_rows")
-      .update({ status: "rejected" })
+      .update({ status: decision === "confirmed" ? "staged" : "rejected" })
       .eq("user_id", userId)
       .eq("import_id", importId)
-      .in("row_index", rowIndexes);
+      .in("row_index", rowIndexes)
+      .neq("status", "duplicate");
 
     if (rowUpdate.error) {
-      throw new Error("Unable to mark rejected statement import rows.");
+      throw new Error("Unable to update statement import row decisions.");
     }
   }
 

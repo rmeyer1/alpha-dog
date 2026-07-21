@@ -51,3 +51,23 @@ export function duplicateStatementRowHashes(
   return duplicates;
 }
 
+export function duplicateStatementRowIndexes(
+  broker: StatementImportBroker,
+  rows: StatementImportRow[],
+  existingHashes = new Set<string>(),
+) {
+  const seen = new Set(existingHashes);
+  const duplicateIndexes = new Set<number>();
+
+  for (const row of rows) {
+    const hash = statementImportRowHash(broker, row);
+
+    if (seen.has(hash)) {
+      duplicateIndexes.add(row.rowIndex);
+    }
+
+    seen.add(hash);
+  }
+
+  return duplicateIndexes;
+}

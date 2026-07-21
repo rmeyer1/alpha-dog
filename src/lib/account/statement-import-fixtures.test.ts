@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parseBrokerStatementCsv } from "./statement-import-adapters";
 import {
+  duplicateStatementRowIndexes,
   duplicateStatementRowHashes,
   statementImportFileHash,
   statementImportRowHash,
 } from "./statement-import-fingerprints";
 import { reconcileImportedOptionRows } from "./statement-import-reconciliation";
+import { buildStatementImportStagingPlan } from "./statement-import-staging";
 import { buildStatementImportWritePlan } from "./statement-import-write";
 
 const primaryCsv = readFileSync(
@@ -117,6 +119,49 @@ describe("broker statement import fixture QA", () => {
 
     expect(duplicateHashes.size).toBe(1);
     expect(duplicateHashes).toContain(statementImportRowHash(overlap.broker, overlap.rows[0]));
+  });
+
+  it("excludes cross-file duplicate option rows before reconciliation", () => {
+    const primary = parseBrokerStatementCsv(primaryCsv);
+    const overlap = parseBrokerStatementCsv(overlapCsv);
+    const existingRowHashes = new Set(
+      primary.rows.map((row) => statementImportRowHash(primary.broker, row)),
+    );
+    const stagingPlan = buildStatementImportStagingPlan(
+      overlap.broker,
+      overlap.rows,
+      reconcileImportedOptionRows(overlap.rows),
+      existingRowHashes,
+    );
+
+    expect([...stagingPlan.duplicateRowIndexes]).toEqual([0]);
+    expect(stagingPlan.plan.optionPositions).toHaveLength(1);
+    expect(stagingPlan.plan.optionPositions[0]?.position).toEqual(
+      expect.objectContaining({ symbol: "AMD" }),
+    );
+    expect(stagingPlan.groups.every((group) => !group.sourceRowIndexes.includes(0))).toBe(true);
+  });
+
+  it("keeps only the first identical option row within one upload", () => {
+    const primary = parseBrokerStatementCsv(primaryCsv);
+    const firstRow = primary.rows[0];
+    const repeatedRows = [
+      firstRow,
+      { ...firstRow, rowIndex: firstRow.rowIndex + 100 },
+    ];
+    const duplicateIndexes = duplicateStatementRowIndexes(primary.broker, repeatedRows);
+    const stagingPlan = buildStatementImportStagingPlan(
+      primary.broker,
+      repeatedRows,
+      reconcileImportedOptionRows(repeatedRows),
+      new Set(),
+    );
+
+    expect([...duplicateIndexes]).toEqual([firstRow.rowIndex + 100]);
+    expect(stagingPlan.plan.optionPositions).toHaveLength(1);
+    expect(stagingPlan.plan.optionPositions[0]?.position).toEqual(
+      expect.objectContaining({ contracts_opened: 1 }),
+    );
   });
 
   it("keeps unsupported rows from failing the full import", () => {

@@ -5,6 +5,11 @@ import { PATCH } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
 const decideStatementImportGroup = vi.hoisted(() => vi.fn());
+const StatementImportReviewDecisionError = vi.hoisted(() =>
+  class StatementImportReviewDecisionError extends Error {
+    readonly code = "STATEMENT_IMPORT_GROUP_NOT_CONFIRMABLE";
+  }
+);
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -17,6 +22,7 @@ vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
 
 vi.mock("@/lib/account/statement-import-staging", () => ({
   decideStatementImportGroup,
+  StatementImportReviewDecisionError,
 }));
 
 function request(body: unknown) {
@@ -88,5 +94,22 @@ describe("PATCH /api/account/statement-import/:importId/groups/:groupId", () => 
       "confirmed",
     );
     expect(json.reviewGroups[0].decision).toBe("confirmed");
+  });
+
+  it("returns a conflict when a review group cannot be confirmed", async () => {
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "user-1" },
+    });
+    decideStatementImportGroup.mockRejectedValue(
+      new StatementImportReviewDecisionError("Reject this incomplete group instead."),
+    );
+
+    const response = await PATCH(request({ decision: "confirmed" }), context);
+    const json = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(json.error.code).toBe("STATEMENT_IMPORT_GROUP_NOT_CONFIRMABLE");
   });
 });

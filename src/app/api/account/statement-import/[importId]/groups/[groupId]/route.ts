@@ -1,5 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { decideStatementImportGroup } from "@/lib/account/statement-import-staging";
+import {
+  decideStatementImportGroup,
+  StatementImportReviewDecisionError,
+} from "@/lib/account/statement-import-staging";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -37,13 +40,29 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   const { groupId, importId } = await context.params;
-  const statementImport = await decideStatementImportGroup(
-    auth.supabase,
-    auth.user.id,
-    importId,
-    groupId,
-    body.decision,
-  );
+  try {
+    const statementImport = await decideStatementImportGroup(
+      auth.supabase,
+      auth.user.id,
+      importId,
+      groupId,
+      body.decision,
+    );
 
-  return copyAuthCookies(auth.response, NextResponse.json(statementImport));
+    return copyAuthCookies(auth.response, NextResponse.json(statementImport));
+  } catch (error) {
+    if (error instanceof StatementImportReviewDecisionError) {
+      return copyAuthCookies(auth.response, NextResponse.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+          },
+        },
+        { status: 409 },
+      ));
+    }
+
+    throw error;
+  }
 }
