@@ -101,7 +101,7 @@ begin
     and window_started_at < v_now - interval '90 days';
 
   v_window_started_at := pg_catalog.to_timestamp(
-    pg_catalog.floor(pg_catalog.extract(epoch from v_now) / p_window_seconds) *
+    pg_catalog.floor(extract(epoch from v_now) / p_window_seconds) *
     p_window_seconds
   );
   v_metric_window := pg_catalog.date_trunc('minute', v_now);
@@ -127,7 +127,7 @@ begin
     v_retry_after := pg_catalog.greatest(
       1,
       pg_catalog.ceil(
-        pg_catalog.extract(
+        extract(
           epoch from (v_window_started_at + pg_catalog.make_interval(secs => p_window_seconds) - v_now)
         )
       )::integer
@@ -156,7 +156,7 @@ begin
   if v_active_count >= p_concurrency_limit then
     select pg_catalog.greatest(
       1,
-      pg_catalog.ceil(pg_catalog.extract(epoch from (min(expires_at) - v_now)))::integer
+      pg_catalog.ceil(extract(epoch from (min(expires_at) - v_now)))::integer
     ) into v_retry_after
     from public.api_abuse_leases
     where route_key = p_route_key and expires_at > v_now;
