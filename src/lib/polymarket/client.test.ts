@@ -10,6 +10,15 @@ function jsonResponse(body: unknown) {
   };
 }
 
+function errorResponse(status: number, body: unknown) {
+  return {
+    headers: new Headers(),
+    json: async () => body,
+    ok: false,
+    status,
+  };
+}
+
 beforeEach(() => {
   vi.resetModules();
   fetchMock.mockReset();
@@ -84,6 +93,126 @@ describe("polymarket client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(profile.totalValue).toBe(42);
     expect(profile.openPositions).toEqual([]);
+  });
+
+  it("surfaces no-loss momentum traders from recent closed samples", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            pnl: "1000",
+            profileImage: "",
+            proxyWallet: "0x56687BF447DB6Ffa42FfE2204a05Edaa20F55839",
+            rank: "12",
+            userName: "HotHand",
+            verifiedBadge: false,
+            vol: "12000",
+            xUsername: "",
+          },
+          {
+            pnl: "900",
+            profileImage: "",
+            proxyWallet: "0x1111111111111111111111111111111111111111",
+            rank: "13",
+            userName: "Choppy",
+            verifiedBadge: false,
+            vol: "11000",
+            xUsername: "",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { realizedPnl: "500", timestamp: "1780000000", title: "Win 1" },
+          { realizedPnl: "0", timestamp: "1779900000", title: "Push" },
+          { realizedPnl: "250", timestamp: "1779800000", title: "Win 2" },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { realizedPnl: "600", timestamp: "1780000000", title: "Win" },
+          { realizedPnl: "-200", timestamp: "1779900000", title: "Loss" },
+          { realizedPnl: "100", timestamp: "1779800000", title: "Win" },
+        ]),
+      );
+
+    const { fetchPolymarketMomentum } = await import("./client");
+    const response = await fetchPolymarketMomentum({
+      category: "OVERALL",
+      forceRefresh: false,
+      limit: 10,
+      minSampleSize: 3,
+      minWinRate: 0.75,
+      orderBy: "PNL",
+      sampleSize: 3,
+      scanDepth: 50,
+      timePeriod: "WEEK",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(response.traders).toHaveLength(1);
+    expect(response.traders[0]).toMatchObject({
+      lossCount: 0,
+      samplePnl: 750,
+      sampleSize: 3,
+      userName: "HotHand",
+      winCount: 2,
+    });
+    expect(response.traders[0].labels).toContain("No-loss sample");
+  });
+
+  it("skips momentum candidates when an individual sample request fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            pnl: "1000",
+            profileImage: "",
+            proxyWallet: "0x56687BF447DB6Ffa42FfE2204a05Edaa20F55839",
+            rank: "12",
+            userName: "HotHand",
+            verifiedBadge: false,
+            vol: "12000",
+            xUsername: "",
+          },
+          {
+            pnl: "900",
+            profileImage: "",
+            proxyWallet: "0x1111111111111111111111111111111111111111",
+            rank: "13",
+            userName: "RateLimited",
+            verifiedBadge: false,
+            vol: "11000",
+            xUsername: "",
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { realizedPnl: "500", timestamp: "1780000000", title: "Win 1" },
+          { realizedPnl: "250", timestamp: "1779900000", title: "Win 2" },
+          { realizedPnl: "100", timestamp: "1779800000", title: "Win 3" },
+        ]),
+      )
+      .mockResolvedValueOnce(errorResponse(500, { message: "upstream failed" }));
+
+    const { fetchPolymarketMomentum } = await import("./client");
+    const response = await fetchPolymarketMomentum({
+      category: "OVERALL",
+      forceRefresh: false,
+      limit: 10,
+      minSampleSize: 3,
+      minWinRate: 0.75,
+      orderBy: "PNL",
+      sampleSize: 3,
+      scanDepth: 50,
+      timePeriod: "WEEK",
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(response.traders.map((trader) => trader.userName)).toEqual([
+      "HotHand",
+    ]);
   });
 
   it("aggregates sharp plays in demo mode", async () => {

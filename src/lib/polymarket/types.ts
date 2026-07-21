@@ -25,7 +25,10 @@ export type PolymarketEvidenceLabel =
   | "Capital with edge"
   | "Concentrated exposure"
   | "Thin evidence"
-  | "Recent momentum";
+  | "Recent momentum"
+  | "No-loss sample"
+  | "High win rate"
+  | "Hot streak";
 
 export interface PolymarketDataFreshness {
   asOf: string;
@@ -55,6 +58,18 @@ export interface PolymarketWhalesRequest extends PolymarketLeaderboardRequest {
 export interface PolymarketSharpPlaysRequest
   extends PolymarketLeaderboardRequest {
   minTraders: number;
+}
+
+export interface PolymarketMomentumRequest {
+  category: PolymarketCategory;
+  forceRefresh: boolean;
+  limit: number;
+  minSampleSize: number;
+  minWinRate: number;
+  orderBy: PolymarketOrderBy;
+  sampleSize: number;
+  scanDepth: number;
+  timePeriod: PolymarketTimePeriod;
 }
 
 export interface PolymarketLeaderboardRow {
@@ -273,4 +288,32 @@ export interface PolymarketSharpPlaysResponse {
   };
   dataFreshness: PolymarketDataFreshness;
   plays: SharpPlay[];
+}
+
+export interface MomentumTrader extends TraderSummary {
+  breakEvenCount: number;
+  category: PolymarketCategory;
+  lastClosedAt: string | null;
+  lossCount: number;
+  momentumScore: number;
+  samplePnl: number;
+  sampleSize: number;
+  scanRank: number;
+  winCount: number;
+  winRate: number;
+}
+
+export interface PolymarketMomentumResponse {
+  criteria: {
+    category: PolymarketCategory;
+    limit: number;
+    minSampleSize: number;
+    minWinRate: number;
+    orderBy: PolymarketOrderBy;
+    sampleSize: number;
+    scanDepth: number;
+    timePeriod: PolymarketTimePeriod;
+  };
+  dataFreshness: PolymarketDataFreshness;
+  traders: MomentumTrader[];
 }

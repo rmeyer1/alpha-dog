@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   leaderboardQuerySchema,
+  momentumQuerySchema,
   sharpPlaysQuerySchema,
   walletAddressSchema,
   whaleQuerySchema,
@@ -46,5 +47,21 @@ describe("polymarket validation", () => {
 
     expect(parsed.minTraders).toBe(3);
     expect(() => sharpPlaysQuerySchema.parse({ minTraders: "1" })).toThrow();
+  });
+
+  it("defaults momentum scan criteria", () => {
+    const parsed = momentumQuerySchema.parse({});
+
+    expect(parsed).toMatchObject({
+      category: "OVERALL",
+      limit: 25,
+      minSampleSize: 8,
+      minWinRate: 0.75,
+      sampleSize: 20,
+      scanDepth: 300,
+      timePeriod: "WEEK",
+    });
+    expect(() => momentumQuerySchema.parse({ scanDepth: "25" })).toThrow();
+    expect(() => momentumQuerySchema.parse({ minWinRate: "0.25" })).toThrow();
   });
 });

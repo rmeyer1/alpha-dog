@@ -73,6 +73,18 @@ export const sharpPlaysQuerySchema = leaderboardQuerySchema.extend({
   minTraders: queryIntegerSchema(3, 2, 10),
 });
 
+export const momentumQuerySchema = z.object({
+  category: z.enum(polymarketCategories).default("OVERALL"),
+  forceRefresh: optionalBooleanSchema.default(false),
+  limit: queryIntegerSchema(25, 1, 50),
+  minSampleSize: queryIntegerSchema(8, 3, 50),
+  minWinRate: queryNumberSchema(0.75, 0.5, 1),
+  orderBy: z.enum(polymarketOrderByValues).default("PNL"),
+  sampleSize: queryIntegerSchema(20, 3, 50),
+  scanDepth: queryIntegerSchema(300, 50, 500),
+  timePeriod: z.enum(polymarketTimePeriods).default("WEEK"),
+});
+
 export const walletQuerySchema = z.object({
   forceRefresh: optionalBooleanSchema.default(false),
 });
