@@ -5,7 +5,7 @@ import { UNAUTHENTICATED } from "@/lib/supabase/account-session";
 import { POST } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
-const writeStatementImportToPaperAccount = vi.hoisted(() => vi.fn());
+const createStatementImport = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -16,14 +16,9 @@ vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/account/statement-import-write", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/account/statement-import-write")>();
-
-  return {
-    ...actual,
-    writeStatementImportToPaperAccount,
-  };
-});
+vi.mock("@/lib/account/statement-import-staging", () => ({
+  createStatementImport,
+}));
 
 const header = [
   "Activity Date",
@@ -52,17 +47,41 @@ function importRequest(csv: string, headers?: HeadersInit) {
   });
 }
 
-describe("POST /api/account/statement-import", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    writeStatementImportToPaperAccount.mockResolvedValue({
+function importPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    broker: "robinhood",
+    fileHash: "file-hash",
+    fileName: "robinhood.csv",
+    importId: "import-1",
+    isDuplicate: false,
+    reviewGroups: [],
+    status: "imported",
+    summary: {
+      dividendsTracked: 0,
+      duplicateRows: 0,
+      equityLots: 0,
+      excludedRows: 0,
+      failedRecords: 0,
+      ignoredRows: 0,
+      importedRecords: 1,
       insertedEquityLots: 0,
       insertedEvents: 2,
       insertedPositions: 1,
-      skippedEquityLots: 0,
-      skippedPositions: 0,
-      summary: {},
-    });
+      optionPositions: 1,
+      rejectedGroups: 0,
+      reviewGroups: 0,
+      skippedDuplicates: 0,
+      stagedRows: 0,
+      ...((overrides.summary as Record<string, unknown> | undefined) ?? {}),
+    },
+    ...overrides,
+  };
+}
+
+describe("POST /api/account/statement-import", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createStatementImport.mockResolvedValue(importPayload());
   });
 
   it("requires an authenticated account session", async () => {
@@ -73,7 +92,7 @@ describe("POST /api/account/statement-import", () => {
 
     expect(response.status).toBe(401);
     expect(json.error.code).toBe(UNAUTHENTICATED);
-    expect(writeStatementImportToPaperAccount).not.toHaveBeenCalled();
+    expect(createStatementImport).not.toHaveBeenCalled();
   });
 
   it("rejects missing CSV uploads", async () => {
@@ -131,16 +150,18 @@ describe("POST /api/account/statement-import", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(writeStatementImportToPaperAccount).toHaveBeenCalledWith(
+    expect(createStatementImport).toHaveBeenCalledWith(
       supabase,
       "user-1",
+      "robinhood.csv",
+      expect.stringContaining("Activity Date"),
+      "robinhood",
       expect.arrayContaining([
         expect.objectContaining({ classification: "option" }),
       ]),
       expect.arrayContaining([
         expect.objectContaining({ status: "confirmed" }),
       ]),
-      "robinhood",
     );
     expect(json.summary).toMatchObject({
       importedRecords: 1,
@@ -159,14 +180,24 @@ describe("POST /api/account/statement-import", () => {
       supabase,
       user: { id: "user-1" },
     });
-    writeStatementImportToPaperAccount.mockResolvedValue({
-      insertedEquityLots: 0,
-      insertedEvents: 0,
-      insertedPositions: 0,
-      skippedEquityLots: 0,
-      skippedPositions: 0,
-      summary: {},
-    });
+    createStatementImport.mockResolvedValue(importPayload({
+      reviewGroups: [
+        {
+          confidence: 0.2,
+          decision: null,
+          explanation: ["Option row is missing normalized contract, activity, quantity, or cash movement."],
+          groupId: "group-1",
+          groupKey: "review:0",
+          reviewReason: "Option row is missing normalized contract, activity, quantity, or cash movement.",
+          sourceRowIndexes: [0],
+          status: "needs_review",
+          strategyType: "unknown",
+          symbol: "NVDA",
+        },
+      ],
+      status: "needs_review",
+      summary: { importedRecords: 0, insertedEvents: 0, insertedPositions: 0, optionPositions: 0, reviewGroups: 1, stagedRows: 1 },
+    }));
 
     const csv = [
       header,
@@ -195,14 +226,13 @@ describe("POST /api/account/statement-import", () => {
       }),
     ]);
   });
-
   it("returns a safe correlation id when finalization fails", async () => {
     getRequiredAccountSession.mockResolvedValue({
       response: NextResponse.next(),
       supabase: {},
       user: { id: "user-1" },
     });
-    writeStatementImportToPaperAccount.mockRejectedValue(
+    createStatementImport.mockRejectedValue(
       new StatementImportFinalizeError(
         "STATEMENT_IMPORT_FINALIZE_FAILED",
         "Unable to finalize statement import.",
