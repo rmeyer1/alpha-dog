@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,16 +12,20 @@ import {
 
 type ImportReviewGroup = {
   confidence: number;
+  decision: "confirmed" | "rejected" | null;
   explanation: string[];
+  groupId: string;
   groupKey: string;
   reviewReason: string | null;
   sourceRowIndexes: number[];
+  status: string;
   strategyType: string;
   symbol: string | null;
 };
 
 type ImportSummary = {
   dividendsTracked: number;
+  duplicateRows: number;
   equityLots: number;
   excludedRows: number;
   ignoredRows: number;
@@ -30,14 +34,19 @@ type ImportSummary = {
   insertedEvents: number;
   insertedPositions: number;
   optionPositions: number;
+  rejectedGroups: number;
   reviewGroups: number;
   skippedDuplicates: number;
+  stagedRows: number;
 };
 
 type ImportPayload = {
   broker: string;
   fileName: string;
+  importId: string;
+  isDuplicate: boolean;
   reviewGroups: ImportReviewGroup[];
+  status: "failed" | "imported" | "needs_review" | "parsed" | "uploaded";
   summary: ImportSummary;
 };
 
@@ -45,9 +54,17 @@ type ImportState =
   | { status: "idle" }
   | { status: "importing" }
   | { message: string; status: "error" }
-  | { data: ImportPayload; decisions: Record<string, "confirmed" | "rejected">; status: "success" };
+  | {
+    data: ImportPayload;
+    decisions: Record<string, "confirmed" | "rejected">;
+    error: string | null;
+    pendingGroups: Record<string, boolean>;
+    status: "success";
+    submittingFinalize: boolean;
+  };
 
 const PAPER_ACCOUNT_REFRESH_EVENT = "paper-account:refresh";
+const LAST_STATEMENT_IMPORT_KEY = "alpha-dog:last-statement-import";
 
 function formatBroker(value: string) {
   return value
@@ -85,10 +102,12 @@ function ReviewGroups({
   decisions,
   groups,
   onDecision,
+  pendingGroups,
 }: {
   decisions: Record<string, "confirmed" | "rejected">;
   groups: ImportReviewGroup[];
-  onDecision: (groupKey: string, decision: "confirmed" | "rejected") => void;
+  onDecision: (group: ImportReviewGroup, decision: "confirmed" | "rejected") => void;
+  pendingGroups: Record<string, boolean>;
 }) {
   if (groups.length === 0) {
     return null;
@@ -102,6 +121,7 @@ function ReviewGroups({
       </div>
       {groups.map((group) => {
         const decision = decisions[group.groupKey];
+        const isPending = pendingGroups[group.groupId] ?? false;
 
         return (
           <div
@@ -126,17 +146,17 @@ function ReviewGroups({
               <div className="flex shrink-0 gap-2">
                 <button
                   className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-emerald-300 px-3 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 disabled:opacity-60"
-                  disabled={decision === "confirmed"}
-                  onClick={() => onDecision(group.groupKey, "confirmed")}
+                  disabled={isPending || decision === "confirmed"}
+                  onClick={() => onDecision(group, "confirmed")}
                   type="button"
                 >
-                  <CheckCircle2 className="size-4" />
+                  {isPending ? <Loader2 className="size-4 animate-spin" /> : <CheckCircle2 className="size-4" />}
                   Confirm
                 </button>
                 <button
                   className="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-3 text-sm font-semibold text-zinc-100 transition hover:bg-white/[0.08] disabled:opacity-60"
-                  disabled={decision === "rejected"}
-                  onClick={() => onDecision(group.groupKey, "rejected")}
+                  disabled={isPending || decision === "rejected"}
+                  onClick={() => onDecision(group, "rejected")}
                   type="button"
                 >
                   <X className="size-4" />
@@ -161,7 +181,53 @@ export function StatementImportPanel() {
   const [state, setState] = useState<ImportState>({ status: "idle" });
   const isImporting = state.status === "importing";
 
-  function setDecision(groupKey: string, decision: "confirmed" | "rejected") {
+  function successState(data: ImportPayload): Extract<ImportState, { status: "success" }> {
+    return {
+      data,
+      decisions: Object.fromEntries(
+        data.reviewGroups.flatMap((group) =>
+          group.decision ? [[group.groupKey, group.decision]] : []
+        ),
+      ),
+      error: null,
+      pendingGroups: {},
+      status: "success",
+      submittingFinalize: false,
+    };
+  }
+
+  useEffect(() => {
+    const importId = window.localStorage.getItem(LAST_STATEMENT_IMPORT_KEY);
+
+    if (!importId) {
+      return;
+    }
+
+    let ignore = false;
+
+    async function loadImport() {
+      const response = await fetch(`/api/account/statement-import/${importId}`);
+      const payload = await response.json().catch(() => null) as ImportPayload | null;
+
+      if (!ignore && response.ok && payload?.summary) {
+        setState(successState(payload));
+      }
+    }
+
+    void loadImport();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  async function setDecision(group: ImportReviewGroup, decision: "confirmed" | "rejected") {
+    const importId = state.status === "success" ? state.data.importId : null;
+
+    if (!importId) {
+      return;
+    }
+
     setState((current) => {
       if (current.status !== "success") {
         return current;
@@ -169,12 +235,103 @@ export function StatementImportPanel() {
 
       return {
         ...current,
+        error: null,
         decisions: {
           ...current.decisions,
-          [groupKey]: decision,
+          [group.groupKey]: decision,
+        },
+        pendingGroups: {
+          ...current.pendingGroups,
+          [group.groupId]: true,
         },
       };
     });
+
+    try {
+      const response = await fetch(
+        `/api/account/statement-import/${importId}/groups/${group.groupId}`,
+        {
+          body: JSON.stringify({ decision }),
+          headers: { "content-type": "application/json" },
+          method: "PATCH",
+        },
+      );
+      const payload = await response.json().catch(() => null) as
+        | (ImportPayload & { error?: { message?: string } })
+        | null;
+
+      if (!response.ok || !payload?.summary) {
+        setState((current) =>
+          current.status === "success"
+            ? {
+              ...current,
+              error: payload?.error?.message ?? "Unable to save review decision.",
+              pendingGroups: { ...current.pendingGroups, [group.groupId]: false },
+            }
+            : current
+        );
+        return;
+      }
+
+      setState(successState(payload));
+    } catch {
+      setState((current) =>
+        current.status === "success"
+          ? {
+            ...current,
+            error: "Unable to reach the statement import service.",
+            pendingGroups: { ...current.pendingGroups, [group.groupId]: false },
+          }
+          : current
+      );
+    }
+  }
+
+  async function finalizeImport() {
+    if (state.status !== "success") {
+      return;
+    }
+
+    setState({
+      ...state,
+      error: null,
+      submittingFinalize: true,
+    });
+
+    try {
+      const response = await fetch(`/api/account/statement-import/${state.data.importId}/finalize`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => null) as
+        | (ImportPayload & { error?: { message?: string } })
+        | null;
+
+      if (!response.ok || !payload?.summary) {
+        setState((current) =>
+          current.status === "success"
+            ? {
+              ...current,
+              error: payload?.error?.message ?? "Unable to finalize statement import.",
+              submittingFinalize: false,
+            }
+            : current
+        );
+        return;
+      }
+
+      setState(successState(payload));
+      window.dispatchEvent(new Event(PAPER_ACCOUNT_REFRESH_EVENT));
+    } catch {
+      setState((current) =>
+        current.status === "success"
+          ? {
+            ...current,
+            error: "Unable to reach the statement import service.",
+            submittingFinalize: false,
+          }
+          : current
+      );
+    }
   }
 
   async function submitImport(event: FormEvent<HTMLFormElement>) {
@@ -212,11 +369,12 @@ export function StatementImportPanel() {
       }
 
       setState({
-        data: payload,
-        decisions: {},
-        status: "success",
+        ...successState(payload),
       });
-      window.dispatchEvent(new Event(PAPER_ACCOUNT_REFRESH_EVENT));
+      window.localStorage.setItem(LAST_STATEMENT_IMPORT_KEY, payload.importId);
+      if (payload.status === "imported") {
+        window.dispatchEvent(new Event(PAPER_ACCOUNT_REFRESH_EVENT));
+      }
     } catch {
       setState({
         message: "Unable to reach the statement import service.",
@@ -299,7 +457,7 @@ export function StatementImportPanel() {
               <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
               <div>
                 <p className="font-medium text-white">
-                  {formatBroker(state.data.broker)} import complete
+                  {formatBroker(state.data.broker)} import {state.data.status === "imported" ? "complete" : "staged"}
                 </p>
                 <p className="mt-1 text-sm text-zinc-300">
                   {state.data.fileName}
@@ -315,11 +473,11 @@ export function StatementImportPanel() {
             />
             <SummaryTile
               label="Duplicates"
-              value={state.data.summary.skippedDuplicates}
+              value={state.data.summary.skippedDuplicates + state.data.summary.duplicateRows}
             />
             <SummaryTile
-              label="Ignored"
-              value={state.data.summary.ignoredRows}
+              label="Rejected"
+              value={state.data.summary.rejectedGroups}
             />
             <SummaryTile
               label="Needs review"
@@ -345,10 +503,34 @@ export function StatementImportPanel() {
             decisions={state.decisions}
             groups={state.data.reviewGroups}
             onDecision={setDecision}
+            pendingGroups={state.pendingGroups}
           />
+
+          {state.error ? (
+            <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-4 text-sm text-red-100">
+              {state.error}
+            </div>
+          ) : null}
+
+          {state.data.status !== "imported" ? (
+            <div className="flex justify-end">
+              <button
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-emerald-300 px-4 text-sm font-semibold text-[#051626] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={state.submittingFinalize || state.data.summary.reviewGroups > 0}
+                onClick={() => void finalizeImport()}
+                type="button"
+              >
+                {state.submittingFinalize ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="size-4" />
+                )}
+                Finalize import
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>
   );
 }
-

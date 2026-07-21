@@ -10,10 +10,12 @@ export type StatementImportClassification =
   | "unknown";
 
 export type StatementImportRowStatus =
+  | "duplicate"
   | "failed"
   | "ignored"
   | "imported"
   | "needs_review"
+  | "rejected"
   | "staged";
 
 export type OptionActivityAction =

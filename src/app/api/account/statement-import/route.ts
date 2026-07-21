@@ -2,9 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { parseBrokerStatementCsv, StatementImportAdapterError } from "@/lib/account/statement-import-adapters";
 import { reconcileImportedOptionRows } from "@/lib/account/statement-import-reconciliation";
 import {
-  buildStatementImportWritePlan,
-  writeStatementImportToPaperAccount,
-} from "@/lib/account/statement-import-write";
+  createStatementImport,
+} from "@/lib/account/statement-import-staging";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -12,22 +11,6 @@ import {
 } from "@/lib/supabase/account-session";
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
-
-function reviewGroupsForResponse(
-  groups: ReturnType<typeof reconcileImportedOptionRows>,
-) {
-  return groups
-    .filter((group) => group.status === "needs_review")
-    .map((group) => ({
-      confidence: group.confidence,
-      explanation: group.explanation,
-      groupKey: group.groupKey,
-      reviewReason: group.reviewReason,
-      sourceRowIndexes: group.sourceRowIndexes,
-      strategyType: group.strategyType,
-      symbol: group.symbol,
-    }));
-}
 
 export async function POST(request: NextRequest) {
   const authResponse = NextResponse.next();
@@ -69,32 +52,17 @@ export async function POST(request: NextRequest) {
   try {
     const parsed = parseBrokerStatementCsv(csv);
     const groups = reconcileImportedOptionRows(parsed.rows);
-    const plan = buildStatementImportWritePlan(parsed.rows, groups);
-    const result = await writeStatementImportToPaperAccount(
+    const result = await createStatementImport(
       auth.supabase,
       auth.user.id,
+      file.name,
+      csv,
+      parsed.broker,
       parsed.rows,
       groups,
     );
 
-    return copyAuthCookies(auth.response, NextResponse.json({
-      broker: parsed.broker,
-      fileName: file.name,
-      reviewGroups: reviewGroupsForResponse(groups),
-      summary: {
-        dividendsTracked: plan.summary.dividendsTracked,
-        equityLots: plan.summary.equityLots,
-        excludedRows: plan.summary.excludedRows,
-        ignoredRows: plan.summary.excludedRows,
-        importedRecords: result.insertedPositions + result.insertedEquityLots,
-        insertedEquityLots: result.insertedEquityLots,
-        insertedEvents: result.insertedEvents,
-        insertedPositions: result.insertedPositions,
-        optionPositions: plan.summary.optionPositions,
-        reviewGroups: plan.summary.reviewGroups,
-        skippedDuplicates: result.skippedPositions + result.skippedEquityLots,
-      },
-    }));
+    return copyAuthCookies(auth.response, NextResponse.json(result));
   } catch (error) {
     if (error instanceof StatementImportAdapterError) {
       return NextResponse.json(
@@ -112,4 +80,3 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 }
-
