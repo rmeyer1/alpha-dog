@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getEnvMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.fn();
+const acquirePaidRouteGuardMock = vi.hoisted(() => vi.fn());
+const releaseGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api-abuse/guard", () => ({
+  acquirePaidRouteGuard: acquirePaidRouteGuardMock,
+}));
 
 vi.mock("@/lib/env", () => ({
   getEnv: getEnvMock,
@@ -16,6 +22,15 @@ function logoRequest(symbol = "AAPL") {
 beforeEach(() => {
   vi.resetModules();
   fetchMock.mockReset();
+  acquirePaidRouteGuardMock.mockReset();
+  releaseGuardMock.mockReset();
+  acquirePaidRouteGuardMock.mockResolvedValue({
+    allowed: true,
+    release: releaseGuardMock,
+    signal: new AbortController().signal,
+    userId: null,
+    withAuthCookies: (response: Response) => response,
+  });
   vi.stubGlobal("fetch", fetchMock);
   getEnvMock.mockReturnValue({
     LOGO_DEV_BASE_URL: "https://img.logo.dev",
@@ -42,8 +57,12 @@ describe("GET /api/logos/[symbol]", () => {
       expect.objectContaining({
         href: "https://img.logo.dev/ticker/AAPL?token=pk_test&size=128&format=png&theme=dark&retina=true&fallback=404",
       }),
-      expect.objectContaining({ cache: "no-store" }),
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
     );
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns a non-200 diagnostic response when credentials are missing", async () => {

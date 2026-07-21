@@ -3,8 +3,7 @@ import {
   integerParam,
   invalidQueryResponse,
   invalidSymbolResponse,
-  jsonResponse,
-  providerErrorResponse,
+  runProtectedFinnhubRequest,
   symbolFromContext,
   type SymbolRouteContext,
 } from "../_utils";
@@ -28,14 +27,13 @@ export async function GET(request: Request, context: SymbolRouteContext) {
     return invalidQueryResponse("Query param limit must be an integer.");
   }
 
-  try {
+  return runProtectedFinnhubRequest(request, async (signal) => {
     const earningsSurprises = await getFinnhubEarningsSurprises({
       limit,
+      signal,
       symbol,
     });
 
-    return jsonResponse({ earningsSurprises, symbol });
-  } catch (error) {
-    return providerErrorResponse(error);
-  }
+    return { earningsSurprises, symbol };
+  });
 }

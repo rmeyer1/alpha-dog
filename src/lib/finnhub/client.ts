@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { withProviderTimeout } from "@/lib/provider-timeout";
 
 export type FinnhubEarningsHour = "bmo" | "amc" | "dmh" | string;
 
@@ -203,6 +204,7 @@ async function requestFinnhubJson<T>(
   signal?: AbortSignal,
 ) {
   const { baseUrl, token } = baseFinnhubUrl();
+  const providerSignal = withProviderTimeout(signal, 10_000);
   const url = new URL(path, baseUrl);
 
   for (const [key, value] of Object.entries(params)) {
@@ -215,7 +217,7 @@ async function requestFinnhubJson<T>(
 
   const response = await fetch(url, {
     cache: "no-store",
-    signal,
+    signal: providerSignal,
   });
   const body = await response.json().catch(() => null) as
     | { error?: string }
@@ -460,6 +462,7 @@ export async function getFinnhubCompanyInsights(options: {
     getFinnhubCompanyProfile({ signal: options.signal, symbol }),
     getFinnhubRecommendationTrends({ signal: options.signal, symbol }),
   ]);
+  options.signal?.throwIfAborted();
   const errors: FinnhubCompanyInsights["errors"] = [];
 
   function valueOrDefault<T>(

@@ -8,6 +8,12 @@ const getMaterializedWheelScreenerResponseMock = vi.hoisted(() => vi.fn());
 const cacheCompletedWheelScreenerResponseMock = vi.hoisted(() => vi.fn());
 const getCachedWheelScreenerResponseMock = vi.hoisted(() => vi.fn());
 const getRunningScreenerRefreshFallbackMock = vi.hoisted(() => vi.fn());
+const acquirePaidRouteGuardMock = vi.hoisted(() => vi.fn());
+const releaseGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api-abuse/guard", () => ({
+  acquirePaidRouteGuard: acquirePaidRouteGuardMock,
+}));
 
 vi.mock("workflow/api", () => ({
   start: startMock,
@@ -95,6 +101,15 @@ beforeEach(() => {
   cacheCompletedWheelScreenerResponseMock.mockReset();
   getCachedWheelScreenerResponseMock.mockReset();
   getRunningScreenerRefreshFallbackMock.mockReset();
+  acquirePaidRouteGuardMock.mockReset();
+  releaseGuardMock.mockReset();
+  acquirePaidRouteGuardMock.mockResolvedValue({
+    allowed: true,
+    release: releaseGuardMock,
+    signal: new AbortController().signal,
+    userId: "user-123",
+    withAuthCookies: (response: Response) => response,
+  });
   getEnvMock.mockReturnValue({ USE_DEMO_DATA: false });
   hasAlpacaCredentialsMock.mockReturnValue(true);
   getSupabaseServiceConfigMock.mockReturnValue({
@@ -128,6 +143,7 @@ describe("POST /api/wheel/screener/runs", () => {
       fallbackResponse,
     );
     expect(startMock).not.toHaveBeenCalled();
+    expect(acquirePaidRouteGuardMock).not.toHaveBeenCalled();
   });
 
   it("starts a workflow when no running refresh fallback exists", async () => {
@@ -148,5 +164,6 @@ describe("POST /api/wheel/screener/runs", () => {
       status: "running",
     });
     expect(startMock).toHaveBeenCalledTimes(1);
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
   });
 });

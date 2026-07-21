@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv } from "@/lib/env";
 
 const logoCacheControl =
@@ -47,7 +48,7 @@ function getLogoDevToken() {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
   const { symbol: symbolParam } = await params;
@@ -72,23 +73,34 @@ export async function GET(
   logoUrl.searchParams.set("retina", "true");
   logoUrl.searchParams.set("fallback", "404");
 
-  const response = await fetch(logoUrl, {
-    cache: "no-store",
-  });
+  const guard = await acquirePaidRouteGuard(request, "logoCacheMiss");
 
-  if (!response.ok || !response.body) {
-    return logoUnavailableResponse({
-      reason: "upstream-unavailable",
-      status: response.status,
-      upstreamStatus: response.status,
-    });
+  if (!guard.allowed) {
+    return guard.response;
   }
 
-  return new NextResponse(response.body, {
-    headers: {
-      "Cache-Control": logoCacheControl,
-      "Content-Type": response.headers.get("content-type") ?? "image/png",
-      "X-Alpha-Dog-Logo-Result": "logo-dev",
-    },
-  });
+  try {
+    const response = await fetch(logoUrl, {
+      cache: "no-store",
+      signal: guard.signal,
+    });
+
+    if (!response.ok || !response.body) {
+      return guard.withAuthCookies(logoUnavailableResponse({
+        reason: "upstream-unavailable",
+        status: response.status,
+        upstreamStatus: response.status,
+      }));
+    }
+
+    return guard.withAuthCookies(new NextResponse(response.body, {
+      headers: {
+        "Cache-Control": logoCacheControl,
+        "Content-Type": response.headers.get("content-type") ?? "image/png",
+        "X-Alpha-Dog-Logo-Result": "logo-dev",
+      },
+    }));
+  } finally {
+    await guard.release();
+  }
 }

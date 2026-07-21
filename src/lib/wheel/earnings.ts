@@ -169,6 +169,7 @@ async function failRefreshRun(runId: string | null, error: unknown) {
 export async function refreshFinnhubEarningsCache(options?: {
   from?: string;
   now?: Date;
+  signal?: AbortSignal;
   to?: string;
 }) {
   if (!earningsProviderEnabled()) {
@@ -183,7 +184,11 @@ export async function refreshFinnhubEarningsCache(options?: {
   const runId = await createRefreshRun(from, to);
 
   try {
-    const events = await getFinnhubEarningsCalendar({ from, to });
+    const events = await getFinnhubEarningsCalendar({
+      from,
+      signal: options?.signal,
+      to,
+    });
     const asOf = new Date().toISOString();
     const rows = events.map((event) => ({
       as_of: asOf,

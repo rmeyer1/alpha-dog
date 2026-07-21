@@ -3,8 +3,7 @@ import {
   dateParam,
   invalidQueryResponse,
   invalidSymbolResponse,
-  jsonResponse,
-  providerErrorResponse,
+  runProtectedFinnhubRequest,
   symbolFromContext,
   type SymbolRouteContext,
 } from "./_utils";
@@ -25,15 +24,12 @@ export async function GET(request: Request, context: SymbolRouteContext) {
     return invalidQueryResponse("Query params from/to must use YYYY-MM-DD format.");
   }
 
-  try {
-    const insights = await getFinnhubCompanyInsights({
+  return runProtectedFinnhubRequest(request, async (signal) => {
+    return await getFinnhubCompanyInsights({
       newsFrom: from,
       newsTo: to,
+      signal,
       symbol,
     });
-
-    return jsonResponse(insights);
-  } catch (error) {
-    return providerErrorResponse(error);
-  }
+  });
 }

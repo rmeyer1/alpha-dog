@@ -96,7 +96,11 @@ async function handleEarningsRefresh(request: Request) {
     });
   }
 
-  const summary = await refreshFinnhubEarningsCache({ from, to });
+  const summary = await refreshFinnhubEarningsCache({
+    from,
+    signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+    to,
+  });
 
   return NextResponse.json({
     ok: true,

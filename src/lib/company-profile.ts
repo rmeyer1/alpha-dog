@@ -176,7 +176,10 @@ function buildEquityStats(
   };
 }
 
-async function getEquityMarketProfile(ticker: string): Promise<EquityMarketProfile> {
+async function getEquityMarketProfile(
+  ticker: string,
+  signal?: AbortSignal,
+): Promise<EquityMarketProfile> {
   if (!hasAlpacaCredentials()) {
     return {
       status: "not_configured",
@@ -191,11 +194,12 @@ async function getEquityMarketProfile(ticker: string): Promise<EquityMarketProfi
 
   try {
     const [assetResult, snapshotResult, barsResult] = await Promise.allSettled([
-      getAlpacaAsset(ticker),
-      getStockSnapshotBySymbol(ticker),
+      getAlpacaAsset(ticker, signal),
+      getStockSnapshotBySymbol(ticker, { signal }),
       getHistoricalDailyBars(ticker, {
         adjustment: "all",
         daysBack: 540,
+        signal,
       }),
     ]);
     const asset = assetResult.status === "fulfilled" ? assetResult.value : null;
@@ -254,6 +258,7 @@ function signalScribeConfig() {
 async function fetchSignalScribeRows<T>(
   table: string,
   params: Record<string, string>,
+  signal?: AbortSignal,
 ) {
   const config = signalScribeConfig();
 
@@ -274,6 +279,7 @@ async function fetchSignalScribeRows<T>(
       Accept: "application/json",
     },
     cache: "no-store",
+    signal,
   });
   const body = await response.json().catch(() => null);
 
@@ -301,6 +307,7 @@ function filingIdFilter(filings: SignalScribeFiling[]) {
 
 async function getSignalScribeProfile(
   ticker: string,
+  signal?: AbortSignal,
 ): Promise<SignalScribeProfile> {
   if (!signalScribeConfig()) {
     return {
@@ -322,14 +329,14 @@ async function getSignalScribeProfile(
           "id,ticker,cik,company_name,exchange,sic,sector,industry",
         ticker: `eq.${ticker}`,
         limit: "1",
-      }),
+      }, signal),
       fetchSignalScribeRows<SignalScribeAnalysis>("filing_analysis", {
         select:
           "id,accession_number,form_type,summary,business_summary,key_findings,red_flags,catalysts,financial_summary,management_tone,risk_score,quality_score,source_citations,created_at",
         company_ticker: `eq.${ticker}`,
         order: "created_at.desc",
         limit: "6",
-      }),
+      }, signal),
     ]);
     const company = companies?.[0] ?? null;
     const [filings, financialFacts] = company
@@ -340,14 +347,14 @@ async function getSignalScribeProfile(
             company_id: `eq.${company.id}`,
             order: "filing_date.desc.nullslast",
             limit: "12",
-          }),
+          }, signal),
           fetchSignalScribeRows<SignalScribeFinancialFact>("financial_facts", {
             select:
               "id,metric_name,value,unit,fiscal_year,fiscal_period,accession_number",
             company_id: `eq.${company.id}`,
             order: "fiscal_year.desc.nullslast,fiscal_period.desc.nullslast",
             limit: "80",
-          }),
+          }, signal),
         ])
       : [[], []];
     const filingFilter = filingIdFilter(filings ?? []);
@@ -357,7 +364,7 @@ async function getSignalScribeProfile(
           filing_id: filingFilter,
           order: "created_at.desc",
           limit: "8",
-        })
+        }, signal)
       : [];
 
     if (!company && (!analysesByTicker || analysesByTicker.length === 0)) {
@@ -395,11 +402,14 @@ async function getSignalScribeProfile(
   }
 }
 
-export async function getCompanyProfile(tickerInput: string) {
+export async function getCompanyProfile(
+  tickerInput: string,
+  options: { signal?: AbortSignal } = {},
+) {
   const ticker = normalizeTicker(tickerInput);
   const [market, signalScribe] = await Promise.all([
-    getEquityMarketProfile(ticker),
-    getSignalScribeProfile(ticker),
+    getEquityMarketProfile(ticker, options.signal),
+    getSignalScribeProfile(ticker, options.signal),
   ]);
 
   return {

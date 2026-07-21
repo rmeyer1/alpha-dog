@@ -1,4 +1,5 @@
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { withProviderTimeout } from "@/lib/provider-timeout";
 import { round } from "@/lib/wheel/calculations";
 import type {
   OptionType,
@@ -191,21 +192,46 @@ class AlpacaHttpError extends Error {
 class AlpacaRequestLimiter {
   private activeCount = 0;
   private burstCapacity = 1;
-  private queue: Array<(release: () => void) => void> = [];
+  private queue: Array<{
+    onAbort?: () => void;
+    reject: (reason?: unknown) => void;
+    resolve: (release: () => void) => void;
+    signal?: AbortSignal;
+  }> = [];
   private refillTimer: ReturnType<typeof setTimeout> | null = null;
   private refillTokensPerMs = 1 / 1000;
   private tokens = 1;
   private updatedAtMs = Date.now();
 
-  acquire() {
+  acquire(signal?: AbortSignal) {
     if (rateLimiterDisabled()) {
       return Promise.resolve(() => {});
     }
 
     this.configure();
+    signal?.throwIfAborted();
 
-    return new Promise<() => void>((resolve) => {
-      this.queue.push(resolve);
+    return new Promise<() => void>((resolve, reject) => {
+      const entry: (typeof this.queue)[number] = {
+        reject,
+        resolve,
+        signal,
+      };
+
+      if (signal) {
+        entry.onAbort = () => {
+          const index = this.queue.indexOf(entry);
+
+          if (index >= 0) {
+            this.queue.splice(index, 1);
+            reject(signal.reason);
+            this.pump();
+          }
+        };
+        signal.addEventListener("abort", entry.onAbort, { once: true });
+      }
+
+      this.queue.push(entry);
       this.pump();
     });
   }
@@ -269,16 +295,25 @@ class AlpacaRequestLimiter {
       this.activeCount < maxConcurrency &&
       this.tokens >= 1
     ) {
-      const resolve = this.queue.shift();
+      const entry = this.queue.shift();
 
-      if (!resolve) {
+      if (!entry) {
         continue;
+      }
+
+      if (entry.signal?.aborted) {
+        entry.reject(entry.signal.reason);
+        continue;
+      }
+
+      if (entry.signal && entry.onAbort) {
+        entry.signal.removeEventListener("abort", entry.onAbort);
       }
 
       this.tokens -= 1;
       this.activeCount += 1;
       let released = false;
-      resolve(() => {
+      entry.resolve(() => {
         if (released) {
           return;
         }
@@ -371,8 +406,20 @@ function rateLimiterDisabled() {
   return process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
 }
 
-async function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function wait(ms: number, signal?: AbortSignal) {
+  await new Promise<void>((resolve, reject) => {
+    signal?.throwIfAborted();
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function parseRetryAfterMs(headers: Headers | undefined) {
@@ -432,15 +479,18 @@ function alpacaErrorMessage(
   return requestId ? `${base} Request ID: ${requestId}.` : base;
 }
 
-async function fetchAlpacaJson<T>(url: URL): Promise<T> {
+async function fetchAlpacaJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
+  const providerSignal = withProviderTimeout(signal, 30_000);
+
   for (let attempt = 0; attempt <= ALPACA_RETRY_DELAYS_MS.length; attempt += 1) {
-    const release = await alpacaRequestLimiter.acquire();
+    const release = await alpacaRequestLimiter.acquire(providerSignal);
     let released = false;
 
     try {
       const response = await fetch(url, {
         headers: alpacaHeaders(),
         cache: "no-store",
+        signal: providerSignal,
       });
       const body = (await response.json().catch(() => null)) as
         | (T & { message?: string })
@@ -468,7 +518,10 @@ async function fetchAlpacaJson<T>(url: URL): Promise<T> {
       ) {
         release();
         released = true;
-        await wait(error.retryAfterMs ?? ALPACA_RETRY_DELAYS_MS[attempt]);
+        await wait(
+          error.retryAfterMs ?? ALPACA_RETRY_DELAYS_MS[attempt],
+          providerSignal,
+        );
         continue;
       }
 
@@ -495,11 +548,11 @@ async function getAssetsByExchange(exchange: "NYSE" | "NASDAQ") {
   return fetchAlpacaJson<AlpacaAsset[]>(url);
 }
 
-export async function getAlpacaAsset(ticker: string) {
+export async function getAlpacaAsset(ticker: string, signal?: AbortSignal) {
   const env = getEnv();
   const url = new URL(`/v2/assets/${ticker}`, env.ALPACA_TRADING_BASE_URL);
 
-  return fetchAlpacaJson<AlpacaAsset>(url);
+  return fetchAlpacaJson<AlpacaAsset>(url, signal);
 }
 
 export async function getWheelAssetUniverse(): Promise<AlpacaWheelAsset[]> {
@@ -544,6 +597,7 @@ async function getOptionContractsPage(
   filters: WheelFilters,
   underlyingPrice: number,
   pageToken?: string,
+  signal?: AbortSignal,
 ) {
   const env = getEnv();
   const now = new Date();
@@ -569,7 +623,7 @@ async function getOptionContractsPage(
     url.searchParams.set("page_token", pageToken);
   }
 
-  return fetchAlpacaJson<AlpacaContractsResponse>(url);
+  return fetchAlpacaJson<AlpacaContractsResponse>(url, signal);
 }
 
 async function getOptionContracts(
@@ -577,6 +631,7 @@ async function getOptionContracts(
   optionType: OptionType,
   filters: WheelFilters,
   underlyingPrice: number,
+  signal?: AbortSignal,
 ) {
   const contracts: AlpacaOptionContract[] = [];
   let pageToken: string | undefined;
@@ -588,6 +643,7 @@ async function getOptionContracts(
       filters,
       underlyingPrice,
       pageToken,
+      signal,
     );
     contracts.push(...(page.option_contracts ?? []));
     pageToken = page.next_page_token ?? undefined;
@@ -604,6 +660,7 @@ async function getOptionChainSnapshotsPage(
   feed: "opra" | "indicative",
   updatedSince?: string,
   pageToken?: string,
+  signal?: AbortSignal,
 ) {
   const env = getEnv();
   const now = new Date();
@@ -635,7 +692,7 @@ async function getOptionChainSnapshotsPage(
     url.searchParams.set("page_token", pageToken);
   }
 
-  return fetchAlpacaJson<AlpacaSnapshotsResponse>(url);
+  return fetchAlpacaJson<AlpacaSnapshotsResponse>(url, signal);
 }
 
 async function getOptionChainSnapshots(
@@ -644,7 +701,7 @@ async function getOptionChainSnapshots(
   filters: WheelFilters,
   underlyingPrice: number,
   feed: "opra" | "indicative",
-  options: { updatedSince?: string } = {},
+  options: { signal?: AbortSignal; updatedSince?: string } = {},
 ) {
   const snapshots: Record<string, AlpacaOptionSnapshot> = {};
   let pageToken: string | undefined;
@@ -658,6 +715,7 @@ async function getOptionChainSnapshots(
       feed,
       options.updatedSince,
       pageToken,
+      options.signal,
     );
     Object.assign(snapshots, page.snapshots ?? {});
     pageToken = page.next_page_token ?? undefined;
@@ -666,7 +724,11 @@ async function getOptionChainSnapshots(
   return snapshots;
 }
 
-async function getSnapshotsBySymbols(symbols: string[], feed: "opra" | "indicative") {
+async function getSnapshotsBySymbols(
+  symbols: string[],
+  feed: "opra" | "indicative",
+  signal?: AbortSignal,
+) {
   const env = getEnv();
   const snapshots: Record<string, AlpacaOptionSnapshot> = {};
 
@@ -678,7 +740,7 @@ async function getSnapshotsBySymbols(symbols: string[], feed: "opra" | "indicati
     url.searchParams.set("feed", feed);
     url.searchParams.set("symbols", symbolChunk.join(","));
 
-    const body = await fetchAlpacaJson<AlpacaSnapshotsResponse>(url);
+    const body = await fetchAlpacaJson<AlpacaSnapshotsResponse>(url, signal);
     Object.assign(snapshots, body.snapshots ?? {});
   }
 
@@ -709,6 +771,7 @@ export async function getStockSnapshotsBySymbols(
   options: {
     chunkSize?: number;
     feed?: AlpacaStockFeed;
+    signal?: AbortSignal;
   } = {},
 ) {
   const env = getEnv();
@@ -725,7 +788,10 @@ export async function getStockSnapshotsBySymbols(
       url.searchParams.set("feed", options.feed ?? "sip");
       url.searchParams.set("symbols", symbolChunk.join(","));
 
-      const body = await fetchAlpacaJson<AlpacaStockSnapshotsResponse>(url);
+      const body = await fetchAlpacaJson<AlpacaStockSnapshotsResponse>(
+        url,
+        options.signal,
+      );
       const responseSnapshots = body.snapshots ??
         Object.fromEntries(
           Object.entries(body).filter(([key]) => key !== "message"),
@@ -740,11 +806,12 @@ export async function getStockSnapshotsBySymbols(
 
 export async function getStockSnapshotBySymbol(
   symbol: string,
-  options: { feed?: AlpacaStockFeed } = {},
+  options: { feed?: AlpacaStockFeed; signal?: AbortSignal } = {},
 ) {
   const snapshots = await getStockSnapshotsBySymbols([symbol], {
     chunkSize: 1,
     feed: options.feed,
+    signal: options.signal,
   });
 
   return snapshots[symbol] ?? null;
@@ -756,6 +823,7 @@ export async function getHistoricalDailyBars(
     adjustment?: "raw" | "split" | "dividend" | "all";
     daysBack?: number;
     feed?: AlpacaStockFeed;
+    signal?: AbortSignal;
   } = {},
 ) {
   const env = getEnv();
@@ -770,7 +838,7 @@ export async function getHistoricalDailyBars(
   url.searchParams.set("adjustment", options.adjustment ?? "raw");
   url.searchParams.set("feed", options.feed ?? getEnv().ALPACA_STOCK_FEED);
 
-  const body = await fetchAlpacaJson<AlpacaBarsResponse>(url);
+  const body = await fetchAlpacaJson<AlpacaBarsResponse>(url, options.signal);
 
   return body.bars ?? [];
 }
@@ -844,7 +912,7 @@ export async function getHistoricalDailyBarsBySymbols(
 
 export async function getLatestStockBar(
   ticker: string,
-  options: { feed?: AlpacaStockFeed } = {},
+  options: { feed?: AlpacaStockFeed; signal?: AbortSignal } = {},
 ) {
   const env = getEnv();
   const url = new URL(
@@ -854,7 +922,7 @@ export async function getLatestStockBar(
 
   url.searchParams.set("feed", options.feed ?? getEnv().ALPACA_STOCK_FEED);
 
-  const body = await fetchAlpacaJson<AlpacaLatestBarResponse>(url);
+  const body = await fetchAlpacaJson<AlpacaLatestBarResponse>(url, options.signal);
 
   return body.bar;
 }
@@ -1104,11 +1172,12 @@ async function getContractsForOptionTypes(
   optionTypes: readonly OptionType[],
   filters: WheelFilters,
   underlyingPrice: number,
+  signal?: AbortSignal,
 ) {
   return (
     await Promise.all(
       optionTypes.map((optionType) =>
-        getOptionContracts(ticker, optionType, filters, underlyingPrice),
+        getOptionContracts(ticker, optionType, filters, underlyingPrice, signal),
       ),
     )
   ).flat();
@@ -1120,7 +1189,7 @@ async function getChainSnapshotsForOptionTypes(
   filters: WheelFilters,
   underlyingPrice: number,
   feed: "opra" | "indicative",
-  options: { updatedSince?: string } = {},
+  options: { signal?: AbortSignal; updatedSince?: string } = {},
 ) {
   const snapshots: Record<string, AlpacaOptionSnapshot> = {};
 
@@ -1149,16 +1218,24 @@ async function getLiveOptionContracts(
   strategy: WheelCompanyStrategy | undefined,
   underlyingPrice: number,
   feed: "opra" | "indicative",
+  signal?: AbortSignal,
 ) {
   const optionTypes = optionTypesForStrategy(strategy);
   const [metadataResult, chainResult] = await Promise.allSettled([
-    getContractsForOptionTypes(ticker, optionTypes, filters, underlyingPrice),
+    getContractsForOptionTypes(
+      ticker,
+      optionTypes,
+      filters,
+      underlyingPrice,
+      signal,
+    ),
     getChainSnapshotsForOptionTypes(
       ticker,
       optionTypes,
       filters,
       underlyingPrice,
       feed,
+      { signal },
     ),
   ]);
   const contracts =
@@ -1170,6 +1247,7 @@ async function getLiveOptionContracts(
     snapshots = await getSnapshotsBySymbols(
       contracts.map((contract) => contract.symbol),
       feed,
+      signal,
     );
   }
 
@@ -1218,7 +1296,7 @@ export async function getLiveWheelMarketData(
   ticker: string,
   filters: WheelFilters,
   strategy?: WheelCompanyStrategy,
-  options: { forceRefresh?: boolean } = {},
+  options: { forceRefresh?: boolean; signal?: AbortSignal } = {},
 ): Promise<LiveWheelMarketData> {
   const cacheKey = buildLiveMarketDataCacheKey(ticker, filters, strategy);
   const cached = liveMarketDataCache.get(cacheKey);
@@ -1236,7 +1314,12 @@ export async function getLiveWheelMarketData(
     }
   }
 
-  const inFlight = fetchLiveWheelMarketData(ticker, filters, strategy)
+  const inFlight = fetchLiveWheelMarketData(
+    ticker,
+    filters,
+    strategy,
+    options.signal,
+  )
     .then((data) => {
       liveMarketDataCache.set(cacheKey, {
         data: cloneLiveMarketData(data),
@@ -1258,11 +1341,12 @@ async function fetchLiveWheelMarketData(
   ticker: string,
   filters: WheelFilters,
   strategy?: WheelCompanyStrategy,
+  signal?: AbortSignal,
 ): Promise<LiveWheelMarketData> {
   const env = getEnv();
   const [latestBar, historicalBars] = await Promise.all([
-    getLatestStockBar(ticker),
-    getHistoricalDailyBars(ticker),
+    getLatestStockBar(ticker, { signal }),
+    getHistoricalDailyBars(ticker, { signal }),
   ]);
   const closes = historicalBars.map((bar) => bar.c).filter(Number.isFinite);
   const fallbackPrice = closes.at(-1);
@@ -1293,6 +1377,7 @@ async function fetchLiveWheelMarketData(
     strategy,
     price,
     env.ALPACA_OPTIONS_FEED,
+    signal,
   );
 
   return {
@@ -1306,6 +1391,7 @@ async function fetchLiveWheelMarketData(
 export async function probeOptionsFeed(
   ticker: string,
   feed: "opra" | "indicative",
+  signal?: AbortSignal,
 ): Promise<AlpacaFeedProbeResult> {
   if (!hasAlpacaCredentials()) {
     return {
@@ -1318,6 +1404,7 @@ export async function probeOptionsFeed(
   }
 
   const env = getEnv();
+  const providerSignal = withProviderTimeout(signal, 10_000);
   const url = new URL(
     `/v1beta1/options/snapshots/${ticker}`,
     env.ALPACA_MARKET_DATA_BASE_URL,
@@ -1329,6 +1416,7 @@ export async function probeOptionsFeed(
     const response = await fetch(url, {
       headers: alpacaHeaders(),
       cache: "no-store",
+      signal: providerSignal,
     });
     const body = (await response.json().catch(() => null)) as
       | { snapshots?: Record<string, unknown>; message?: string }

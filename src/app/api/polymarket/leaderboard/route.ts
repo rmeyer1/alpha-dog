@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
   fetchPolymarketLeaderboard,
   polymarketTtlMs,
@@ -59,19 +60,35 @@ export async function GET(request: Request) {
       );
     }
 
-    const response = await fetchPolymarketLeaderboard(parsed.data);
-    setMemoryCache(key, response, polymarketTtlMs.leaderboard);
+    const guard = await acquirePaidRouteGuard(
+      request,
+      parsed.data.forceRefresh
+        ? "polymarketForceRefresh"
+        : "polymarketCacheMiss",
+    );
 
-    return NextResponse.json(response);
-  } catch (error) {
+    if (!guard.allowed) {
+      return guard.response;
+    }
+
+    try {
+      const response = await fetchPolymarketLeaderboard(
+        parsed.data,
+        null,
+        guard.signal,
+      );
+      setMemoryCache(key, response, polymarketTtlMs.leaderboard);
+
+      return guard.withAuthCookies(NextResponse.json(response));
+    } finally {
+      await guard.release();
+    }
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: "POLYMARKET_LEADERBOARD_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to load Polymarket leaderboard.",
+          message: "Unable to load Polymarket leaderboard.",
           retryable: true,
         },
       },

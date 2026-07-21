@@ -143,6 +143,7 @@ async function computeWheelCandidates(
     resultLimit: number;
     forceRefresh?: boolean;
     strategy?: WheelCompanyStrategy;
+    signal?: AbortSignal;
     ticker: string;
     useDemoData: boolean;
   },
@@ -154,6 +155,7 @@ async function computeWheelCandidates(
     personaId,
     resultLimit,
     strategy,
+    signal,
     ticker,
     useDemoData,
   } = options;
@@ -169,8 +171,11 @@ async function computeWheelCandidates(
     : forceRefresh
       ? await getLiveWheelMarketData(ticker, filters, strategy, {
           forceRefresh: true,
+          ...(signal ? { signal } : {}),
         })
-      : await getLiveWheelMarketData(ticker, filters, strategy);
+      : signal
+        ? await getLiveWheelMarketData(ticker, filters, strategy, { signal })
+        : await getLiveWheelMarketData(ticker, filters, strategy);
   const { underlying, rawContracts } = marketData;
   const feed: DataFeed = marketData.feed;
   const earningsContexts = useDemoData
@@ -284,16 +289,82 @@ async function computeWheelCandidates(
   };
 }
 
-export async function analyzeWheelCandidates(
-  request: WheelAnalysisRequest,
-): Promise<WheelAnalysisResponse> {
+function prepareWheelAnalysis(request: WheelAnalysisRequest) {
   const env = getEnv();
   const ticker = normalizeTicker(request.ticker);
   const personaId: PersonaId = request.persona;
   const filters: WheelFilters = mergeFilters(personaId, request.filters);
   const resultLimit = request.resultLimit ?? 25;
-  const now = new Date();
   const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const cacheKey = buildAnalysisCacheKey({
+    feed: env.ALPACA_OPTIONS_FEED,
+    filters,
+    personaId,
+    resultLimit,
+    strategy: request.strategy,
+    ticker,
+  });
+
+  return {
+    cacheKey,
+    filters,
+    personaId,
+    resultLimit,
+    ticker,
+    useDemoData,
+  };
+}
+
+export async function getCachedWheelAnalysis(
+  request: WheelAnalysisRequest,
+): Promise<WheelAnalysisResponse | null> {
+  const prepared = prepareWheelAnalysis(request);
+
+  if (prepared.useDemoData || request.forceRefresh) {
+    return null;
+  }
+
+  const cache = getAnalysisCacheStore();
+  const freshEntry = cache.getFresh(prepared.cacheKey);
+
+  if (freshEntry) {
+    return applyCacheFreshness(
+      freshEntry.response,
+      "fresh",
+      cachedEntryNextRefresh(freshEntry),
+    );
+  }
+
+  const runtimeFreshEntry = await getFreshRuntimeAnalysisCache(
+    prepared.cacheKey,
+  );
+
+  if (!runtimeFreshEntry) {
+    return null;
+  }
+
+  cache.set(prepared.cacheKey, runtimeFreshEntry.response);
+
+  return applyCacheFreshness(
+    runtimeFreshEntry.response,
+    "fresh",
+    cachedEntryNextRefresh(runtimeFreshEntry),
+  );
+}
+
+export async function analyzeWheelCandidates(
+  request: WheelAnalysisRequest,
+  options: { signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<WheelAnalysisResponse> {
+  const {
+    cacheKey,
+    filters,
+    personaId,
+    resultLimit,
+    ticker,
+    useDemoData,
+  } = prepareWheelAnalysis(request);
+  const now = new Date();
 
   if (useDemoData) {
     return computeWheelCandidates({
@@ -303,42 +374,19 @@ export async function analyzeWheelCandidates(
       personaId,
       resultLimit,
       strategy: request.strategy,
+      signal: options.signal,
       ticker,
       useDemoData,
     });
   }
 
-  const cacheKey = buildAnalysisCacheKey({
-    feed: env.ALPACA_OPTIONS_FEED,
-    filters,
-    personaId,
-    resultLimit,
-    strategy: request.strategy,
-    ticker,
-  });
   const cache = getAnalysisCacheStore();
 
-  if (!request.forceRefresh) {
-    const freshEntry = cache.getFresh(cacheKey);
+  if (!options.skipCache) {
+    const cached = await getCachedWheelAnalysis(request);
 
-    if (freshEntry) {
-      return applyCacheFreshness(
-        freshEntry.response,
-        "fresh",
-        cachedEntryNextRefresh(freshEntry),
-      );
-    }
-
-    const runtimeFreshEntry = await getFreshRuntimeAnalysisCache(cacheKey);
-
-    if (runtimeFreshEntry) {
-      cache.set(cacheKey, runtimeFreshEntry.response);
-
-      return applyCacheFreshness(
-        runtimeFreshEntry.response,
-        "fresh",
-        cachedEntryNextRefresh(runtimeFreshEntry),
-      );
+    if (cached) {
+      return cached;
     }
   }
 
@@ -350,6 +398,7 @@ export async function analyzeWheelCandidates(
       personaId,
       resultLimit,
       strategy: request.strategy,
+      signal: options.signal,
       ticker,
       useDemoData,
     });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
@@ -82,23 +83,30 @@ export async function POST(request: Request) {
       });
     }
 
-    const run = await start(wheelScreenerWorkflow, [parsed.data]);
-    const status = await run.status;
+    const guard = await acquirePaidRouteGuard(request, "wheelScreenerStart");
 
-    return NextResponse.json({
-      runId: run.runId,
-      status,
-      result: null,
-    });
-  } catch (error) {
+    if (!guard.allowed) {
+      return guard.response;
+    }
+
+    try {
+      const run = await start(wheelScreenerWorkflow, [parsed.data]);
+      const status = await run.status;
+
+      return guard.withAuthCookies(NextResponse.json({
+        runId: run.runId,
+        status,
+        result: null,
+      }));
+    } finally {
+      await guard.release();
+    }
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: "INTERNAL_SCREENER_WORKFLOW_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to start wheel screener workflow.",
+          message: "Unable to start wheel screener workflow.",
           retryable: true,
         },
       },

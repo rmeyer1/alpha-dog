@@ -67,4 +67,23 @@ describe("trade analysis provider", () => {
 
     expect(requestBody.tools).toBeUndefined();
   });
+
+  it("passes cancellation to OpenAI", async () => {
+    const controller = new AbortController();
+
+    await runTradeAnalysisProvider({
+      chartSource: "server_chart_indicators",
+      messages: [
+        { content: "system", role: "system" },
+        { content: "user", role: "user" },
+      ],
+      signal: controller.signal,
+    });
+
+    const providerSignal = vi.mocked(fetch).mock.calls[0][1]?.signal;
+
+    expect(providerSignal).toBeInstanceOf(AbortSignal);
+    controller.abort();
+    expect(providerSignal?.aborted).toBe(true);
+  });
 });

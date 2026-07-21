@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
   fetchPolymarketSharpPlays,
   polymarketTtlMs,
@@ -59,19 +60,35 @@ export async function GET(request: Request) {
       );
     }
 
-    const response = await fetchPolymarketSharpPlays(parsed.data);
-    setMemoryCache(key, response, polymarketTtlMs.sharpPlays);
+    const guard = await acquirePaidRouteGuard(
+      request,
+      parsed.data.forceRefresh
+        ? "polymarketForceRefresh"
+        : "polymarketCacheMiss",
+    );
 
-    return NextResponse.json(response);
-  } catch (error) {
+    if (!guard.allowed) {
+      return guard.response;
+    }
+
+    try {
+      const response = await fetchPolymarketSharpPlays(
+        parsed.data,
+        null,
+        guard.signal,
+      );
+      setMemoryCache(key, response, polymarketTtlMs.sharpPlays);
+
+      return guard.withAuthCookies(NextResponse.json(response));
+    } finally {
+      await guard.release();
+    }
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: "POLYMARKET_SHARP_PLAYS_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to load Polymarket sharp plays.",
+          message: "Unable to load Polymarket sharp plays.",
           retryable: true,
         },
       },

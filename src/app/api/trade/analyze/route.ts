@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { analyzeTradeCandidate } from "@/lib/trade-analysis/analyze";
 import type { TradeAnalysisInput } from "@/lib/trade-analysis/types";
 import { tradeAnalysisRequestSchema } from "@/lib/trade-analysis/validation";
@@ -20,25 +21,31 @@ export async function POST(request: Request) {
     );
   }
 
+  const guard = await acquirePaidRouteGuard(request, "tradeAnalyze");
+
+  if (!guard.allowed) {
+    return guard.response;
+  }
+
   try {
     const response = await analyzeTradeCandidate(
       parsed.data as TradeAnalysisInput,
+      { signal: guard.signal },
     );
 
-    return NextResponse.json(response);
-  } catch (error) {
-    return NextResponse.json(
+    return guard.withAuthCookies(NextResponse.json(response));
+  } catch {
+    return guard.withAuthCookies(NextResponse.json(
       {
         error: {
           code: "TRADE_ANALYSIS_FAILED",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to analyze this trade.",
+          message: "Unable to analyze this trade.",
           retryable: true,
         },
       },
       { status: 502 },
-    );
+    ));
+  } finally {
+    await guard.release();
   }
 }

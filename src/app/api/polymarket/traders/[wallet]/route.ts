@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
   fetchPolymarketWalletProfile,
   polymarketTtlMs,
@@ -66,22 +67,38 @@ export async function GET(
       );
     }
 
-    const response = await fetchPolymarketWalletProfile({
-      forceRefresh: query.data.forceRefresh,
-      wallet: wallet.data,
-    });
-    setMemoryCache(key, response, polymarketTtlMs.wallet);
+    const guard = await acquirePaidRouteGuard(
+      request,
+      query.data.forceRefresh
+        ? "polymarketForceRefresh"
+        : "polymarketCacheMiss",
+    );
 
-    return NextResponse.json(response);
-  } catch (error) {
+    if (!guard.allowed) {
+      return guard.response;
+    }
+
+    try {
+      const response = await fetchPolymarketWalletProfile(
+        {
+          forceRefresh: query.data.forceRefresh,
+          wallet: wallet.data,
+        },
+        null,
+        guard.signal,
+      );
+      setMemoryCache(key, response, polymarketTtlMs.wallet);
+
+      return guard.withAuthCookies(NextResponse.json(response));
+    } finally {
+      await guard.release();
+    }
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: "POLYMARKET_WALLET_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to load Polymarket wallet profile.",
+          message: "Unable to load Polymarket wallet profile.",
           retryable: true,
         },
       },
