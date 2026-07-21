@@ -114,9 +114,11 @@ test("account page shows profile-required callback notice", async ({ page }) => 
 test("manual account form handles validation, server errors, and success announcements", async ({ page }) => {
   await mockAccountState(page, { status: "unauthenticated" });
   let manualAccountRequests = 0;
+  const manualAccountBodies: Record<string, unknown>[] = [];
 
   await page.route("**/api/auth/manual-account", async (route) => {
     manualAccountRequests += 1;
+    manualAccountBodies.push(route.request().postDataJSON());
     const body = manualAccountRequests === 1
       ? {
           error: {
@@ -130,10 +132,8 @@ test("manual account form handles validation, server errors, and success announc
           },
         }
       : {
-          account: {
-            email: "desk@example.com",
-          },
-          status: "invite_sent",
+          message: "If this email is eligible, an invitation will arrive shortly.",
+          status: "accepted",
         };
 
     await route.fulfill({
@@ -145,7 +145,7 @@ test("manual account form handles validation, server errors, and success announc
 
   await page.goto("/account/manual?next=/screeners");
 
-  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByRole("button", { name: "Request invite" }).click();
   await expect(page.getByText("Please fill out this field.")).toHaveCount(0);
   expect(manualAccountRequests).toBe(0);
   await expect(page.getByLabel("First name")).toBeVisible();
@@ -155,12 +155,18 @@ test("manual account form handles validation, server errors, and success announc
   await page.getByLabel("First name").fill("Ryan");
   await page.getByLabel("Last name").fill("Meyer");
   await page.getByLabel("Email").fill("desk@example.com");
-  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByRole("button", { name: "Request invite" }).click();
   await expect(page.getByText("Use a work email address.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page.getByText("Invite sent to desk@example.com. Check your email to continue."))
+  await page.getByRole("button", { name: "Request invite" }).click();
+  await expect(page.getByText("If this email is eligible, an invitation will arrive shortly. Check your inbox to continue."))
     .toBeVisible();
+  expect(manualAccountBodies).toHaveLength(2);
+  expect(manualAccountBodies[1]).toMatchObject({
+    email: "desk@example.com",
+    nextPath: "/screeners",
+  });
+  expect(manualAccountBodies[1]).not.toHaveProperty("redirectTo");
 });
 
 test("account navigation exposes loading and error states", async ({ page }) => {

@@ -88,6 +88,18 @@ const envSchema = z.object({
     emptyStringToUndefined,
     z.string().min(32).optional(),
   ),
+  ALPHA_DOG_APP_URL: z.preprocess(
+    emptyStringToUndefined,
+    z.string().url().optional(),
+  ),
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
+  TURNSTILE_SECRET_KEY: z.preprocess(
+    emptyStringToUndefined,
+    z.string().optional(),
+  ),
   WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),

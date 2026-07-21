@@ -22,6 +22,7 @@ configuration is unavailable, protected work fails closed with
 | Finnhub company routes | Anonymous with quota | 60/user/5m, 30/IP/5m | 8 | 10s |
 | `GET /api/logos/[symbol]` origin cache miss | Public cacheable | 240/user/5m, 120/IP/5m | 12 | 5s |
 | `GET /api/alpaca/feed-test` | Internal only; hidden in production, authenticated outside production | 10/user and IP/5m | 2 | 10s |
+| `POST /api/auth/manual-account` | Anonymous with Turnstile | 5/IP/hour, 2/normalized email/day | 4 | 5s challenge |
 | `GET/POST /api/cron/*` | Internal cron | Existing `CRON_SECRET`; excluded from user/IP quotas | Existing workflow bounds | Route-specific |
 
 The Polymarket routes covered by the two Polymarket rows are leaderboard,
@@ -33,6 +34,9 @@ recommendations.
 
 - Rate and concurrency denials return HTTP `429`, a `Retry-After` header, and
   stable codes `API_RATE_LIMITED` or `API_CONCURRENCY_LIMITED`.
+- Manual-account denials return the same HTTP `202` response as an eligible
+  request so callers cannot use throttling to discover whether an address is
+  registered. Its IP and normalized-email values are stored only as HMACs.
 - Limiter failures return HTTP `503` with
   `ABUSE_PROTECTION_UNAVAILABLE`; provider failures do not expose upstream
   payloads, credentials, or provider error details.
@@ -44,6 +48,8 @@ recommendations.
   as the HMAC secret.
 
 Apply `20260720224500_create_api_abuse_protection.sql` before deploying the
-route changes. Old rate windows, expired leases, and old usage aggregates can
-be deleted by a maintenance job after the desired observability retention
+paid-route changes and
+`20260721150739_harden_manual_account_invitations.sql` before deploying manual
+account hardening. Old rate windows, expired leases, and old usage aggregates
+can be deleted by a maintenance job after the desired observability retention
 period.

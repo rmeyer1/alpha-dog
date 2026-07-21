@@ -16,10 +16,14 @@ Normalization is intentionally simple:
 
 ## Error Codes
 
-- `EMAIL_ALREADY_REGISTERED`: manual account creation attempted with an email whose normalized form already exists.
+- `EMAIL_ALREADY_REGISTERED`: internal manual-account outcome when the
+  normalized email already exists. The public invitation endpoint maps this to
+  the same generic accepted response as a new address.
 - `ACCOUNT_EMAIL_CONFLICT`: OAuth returned an email whose normalized form already belongs to another account and the provider identity is not already linked to the authenticated user.
 
-These codes are safe for UI routing and should not include provider tokens, raw Supabase errors, or internal database details.
+`ACCOUNT_EMAIL_CONFLICT` is safe for authenticated OAuth UI routing. The manual
+account endpoint must not expose `EMAIL_ALREADY_REGISTERED`, provider tokens,
+raw Supabase errors, or internal database details.
 
 ## Provider Linking
 
@@ -37,6 +41,8 @@ For OAuth callbacks:
 - New Google user with unused email: create account profile and linked Google identity.
 - Existing Google user signs in again: do not create a duplicate profile; preserve linked identity.
 - Manual account exists, Google returns the same normalized email: return `ACCOUNT_EMAIL_CONFLICT` unless an explicit linking flow proves ownership.
-- Google account exists, manual account creation uses the same email: return `EMAIL_ALREADY_REGISTERED`.
+- Google account exists, manual account creation uses the same email: record the
+  internal `EMAIL_ALREADY_REGISTERED` outcome and return the generic accepted
+  response.
 - Future Apple private relay email: treat as a distinct email string unless explicitly linked by an authenticated user.
 - Future provider same-email collision: use `ACCOUNT_EMAIL_CONFLICT` unless explicit linking is completed.

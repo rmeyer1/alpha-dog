@@ -122,9 +122,9 @@ begin
       and window_started_at = v_window_started_at;
   end if;
 
-  if pg_catalog.coalesce(v_ip_count, 0) >= p_ip_limit or
-     (p_user_id is not null and pg_catalog.coalesce(v_user_count, 0) >= p_user_limit) then
-    v_retry_after := pg_catalog.greatest(
+  if coalesce(v_ip_count, 0) >= p_ip_limit or
+     (p_user_id is not null and coalesce(v_user_count, 0) >= p_user_limit) then
+    v_retry_after := greatest(
       1,
       pg_catalog.ceil(
         extract(
@@ -154,7 +154,7 @@ begin
   where route_key = p_route_key and expires_at > v_now;
 
   if v_active_count >= p_concurrency_limit then
-    select pg_catalog.greatest(
+    select greatest(
       1,
       pg_catalog.ceil(extract(epoch from (min(expires_at) - v_now)))::integer
     ) into v_retry_after
