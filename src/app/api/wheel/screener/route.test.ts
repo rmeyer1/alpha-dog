@@ -7,6 +7,12 @@ const getSupabaseServiceConfigMock = vi.hoisted(() => vi.fn());
 const getMaterializedWheelScreenerResponseMock = vi.hoisted(() => vi.fn());
 const analyzeTopWheelCompaniesMock = vi.hoisted(() => vi.fn());
 const getRunningScreenerRefreshFallbackMock = vi.hoisted(() => vi.fn());
+const acquirePaidRouteGuardMock = vi.hoisted(() => vi.fn());
+const releaseGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api-abuse/guard", () => ({
+  acquirePaidRouteGuard: acquirePaidRouteGuardMock,
+}));
 
 vi.mock("workflow/api", () => ({
   start: startMock,
@@ -92,6 +98,15 @@ beforeEach(() => {
   getMaterializedWheelScreenerResponseMock.mockReset();
   analyzeTopWheelCompaniesMock.mockReset();
   getRunningScreenerRefreshFallbackMock.mockReset();
+  acquirePaidRouteGuardMock.mockReset();
+  releaseGuardMock.mockReset();
+  acquirePaidRouteGuardMock.mockResolvedValue({
+    allowed: true,
+    release: releaseGuardMock,
+    signal: new AbortController().signal,
+    userId: "user-123",
+    withAuthCookies: (response: Response) => response,
+  });
   getEnvMock.mockReturnValue({ USE_DEMO_DATA: false });
   hasAlpacaCredentialsMock.mockReturnValue(true);
   getSupabaseServiceConfigMock.mockReturnValue({
@@ -101,6 +116,24 @@ beforeEach(() => {
 });
 
 describe("POST /api/wheel/screener", () => {
+  it("serves a materialized cache hit without consuming a paid quota", async () => {
+    getMaterializedWheelScreenerResponseMock.mockResolvedValue(fallbackResponse);
+
+    const { POST } = await import("./route");
+    const response = await POST(new Request(
+      "https://alpha-dog.test/api/wheel/screener",
+      {
+        body: JSON.stringify({ ...requestBody, forceRefresh: false }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    ));
+
+    expect(response.status).toBe(200);
+    expect(acquirePaidRouteGuardMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
   it("serves a running refresh fallback instead of starting a duplicate workflow", async () => {
     getRunningScreenerRefreshFallbackMock.mockResolvedValue(fallbackResponse);
 
@@ -114,6 +147,7 @@ describe("POST /api/wheel/screener", () => {
       expect.objectContaining(requestBody),
     );
     expect(startMock).not.toHaveBeenCalled();
+    expect(acquirePaidRouteGuardMock).not.toHaveBeenCalled();
   });
 
   it("starts a workflow when no running refresh fallback exists", async () => {
@@ -134,5 +168,23 @@ describe("POST /api/wheel/screener", () => {
       status: "running",
     });
     expect(startMock).toHaveBeenCalledTimes(1);
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not start a workflow when the concurrency budget is exhausted", async () => {
+    getRunningScreenerRefreshFallbackMock.mockResolvedValue(null);
+    acquirePaidRouteGuardMock.mockResolvedValue({
+      allowed: false,
+      response: Response.json(
+        { error: { code: "API_CONCURRENCY_LIMITED" } },
+        { status: 429, headers: { "Retry-After": "10" } },
+      ),
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(screenerRequest());
+
+    expect(response.status).toBe(429);
+    expect(startMock).not.toHaveBeenCalled();
   });
 });

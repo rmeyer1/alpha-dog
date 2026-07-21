@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { withProviderTimeout } from "@/lib/provider-timeout";
 import { tradeAnalysisJsonSchema } from "./prompt";
 import type { TradeAnalysisChartSource, TradeAnalysisResult } from "./types";
 import { tradeAnalysisResultSchema } from "./validation";
@@ -6,6 +7,7 @@ import { tradeAnalysisResultSchema } from "./validation";
 interface TradeAnalysisProviderInput {
   chartSource: TradeAnalysisChartSource;
   messages: Array<{ content: string; role: "system" | "user" }>;
+  signal?: AbortSignal;
 }
 
 interface TradeAnalysisProviderOutput {
@@ -51,6 +53,7 @@ function extractOutputText(body: OpenAIResponseBody) {
 export async function runTradeAnalysisProvider({
   chartSource,
   messages,
+  signal,
 }: TradeAnalysisProviderInput): Promise<TradeAnalysisProviderOutput> {
   const env = getEnv();
 
@@ -63,6 +66,7 @@ export async function runTradeAnalysisProvider({
   }
 
   const model = env.OPENAI_TRADE_ANALYSIS_MODEL;
+  const providerSignal = withProviderTimeout(signal, 45_000);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -81,6 +85,7 @@ export async function runTradeAnalysisProvider({
         },
       },
     }),
+    signal: providerSignal,
   });
   const body = (await response.json().catch(() => null)) as
     | OpenAIResponseBody

@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { withProviderTimeout } from "@/lib/provider-timeout";
 import {
   demoActivityByWallet,
   demoClosedPositionsByWallet,
@@ -94,12 +95,15 @@ async function parsePolymarketError(response: Response) {
 async function requestPolymarket<T>(
   path: string,
   query?: Record<string, string | number | boolean | null | undefined>,
+  signal?: AbortSignal,
 ): Promise<T> {
+  const providerSignal = withProviderTimeout(signal, 15_000);
   const response = await fetch(buildDataApiUrl(path, query), {
     cache: "no-store",
     headers: {
       Accept: "application/json",
     },
+    signal: providerSignal,
   });
 
   if (!response.ok) {
@@ -217,6 +221,7 @@ function sortDemoLeaderboard(request: PolymarketLeaderboardRequest) {
 export async function fetchPolymarketLeaderboard(
   request: PolymarketLeaderboardRequest,
   cachedUntil: string | null = null,
+  signal?: AbortSignal,
 ): Promise<PolymarketLeaderboardResponse> {
   const env = getEnv();
   const rows = env.USE_DEMO_DATA
@@ -227,7 +232,7 @@ export async function fetchPolymarketLeaderboard(
         offset: request.offset,
         orderBy: request.orderBy,
         timePeriod: request.timePeriod,
-      })).map(normalizeLeaderboardRow);
+      }, signal)).map(normalizeLeaderboardRow);
 
   return {
     dataFreshness: dataFreshness(env.USE_DEMO_DATA ? "demo" : "polymarket", cachedUntil),
@@ -238,6 +243,7 @@ export async function fetchPolymarketLeaderboard(
 export async function fetchPolymarketWalletProfile(
   request: PolymarketWalletRequest,
   cachedUntil: string | null = null,
+  signal?: AbortSignal,
 ): Promise<TraderWalletProfile> {
   const env = getEnv();
   const wallet = request.wallet.toLowerCase();
@@ -271,22 +277,22 @@ export async function fetchPolymarketWalletProfile(
     requestPolymarket<unknown[]>("/positions", {
       limit: 50,
       user: wallet,
-    }).then((rows) => rows.map(normalizePosition)),
+    }, signal).then((rows) => rows.map(normalizePosition)),
     requestPolymarket<unknown[]>("/closed-positions", {
       limit: 50,
       sortBy: "REALIZEDPNL",
       sortDirection: "DESC",
       user: wallet,
-    }).then((rows) => rows.map(normalizeClosedPosition)),
+    }, signal).then((rows) => rows.map(normalizeClosedPosition)),
     requestPolymarket<unknown[]>("/activity", {
       limit: 100,
       sortBy: "TIMESTAMP",
       sortDirection: "DESC",
       user: wallet,
-    }).then((rows) => rows.map(normalizeActivity)),
+    }, signal).then((rows) => rows.map(normalizeActivity)),
     requestPolymarket<unknown[]>("/value", {
       user: wallet,
-    }).then((rows) => rows.map((row) => normalizeValue(row, wallet))),
+    }, signal).then((rows) => rows.map((row) => normalizeValue(row, wallet))),
   ]);
   const totalValue = values[0]?.value ?? 0;
   const scored = scoreWalletProfile({
@@ -308,7 +314,10 @@ export async function fetchPolymarketWalletProfile(
   };
 }
 
-async function fetchPolymarketOpenPositions(wallet: string) {
+async function fetchPolymarketOpenPositions(
+  wallet: string,
+  signal?: AbortSignal,
+) {
   const env = getEnv();
   const normalizedWallet = wallet.toLowerCase();
 
@@ -319,7 +328,7 @@ async function fetchPolymarketOpenPositions(wallet: string) {
   return await requestPolymarket<unknown[]>("/positions", {
     limit: 50,
     user: normalizedWallet,
-  }).then((rows) => rows.map(normalizePosition));
+  }, signal).then((rows) => rows.map(normalizePosition));
 }
 
 async function mapConcurrent<T, R>(
@@ -346,6 +355,7 @@ async function mapConcurrent<T, R>(
 export async function fetchPolymarketWhales(
   request: PolymarketWhalesRequest,
   cachedUntil: string | null = null,
+  signal?: AbortSignal,
 ): Promise<PolymarketWhalesResponse> {
   const leaderboard = await fetchPolymarketLeaderboard(
     {
@@ -355,6 +365,7 @@ export async function fetchPolymarketWhales(
       orderBy: request.orderBy,
     },
     cachedUntil,
+    signal,
   );
   const leaderboardRows = leaderboard.traders.map((trader) => ({
     pnl: trader.pnl,
@@ -370,7 +381,7 @@ export async function fetchPolymarketWhales(
     const profile = await fetchPolymarketWalletProfile({
       forceRefresh: request.forceRefresh,
       wallet: row.proxyWallet,
-    });
+    }, null, signal);
 
     return profileToWhaleCandidate({
       leaderboardRow: row,
@@ -501,8 +512,13 @@ function buildSharpPlay(
 export async function fetchPolymarketSharpPlays(
   request: PolymarketSharpPlaysRequest,
   cachedUntil: string | null = null,
+  signal?: AbortSignal,
 ): Promise<PolymarketSharpPlaysResponse> {
-  const leaderboard = await fetchPolymarketLeaderboard(request, cachedUntil);
+  const leaderboard = await fetchPolymarketLeaderboard(
+    request,
+    cachedUntil,
+    signal,
+  );
   const leaderboardRows = leaderboard.traders.map((trader) => ({
     pnl: trader.pnl,
     profileImage: trader.profileImage,
@@ -519,7 +535,10 @@ export async function fetchPolymarketSharpPlays(
   >();
 
   await mapConcurrent(leaderboardRows, 8, async (trader) => {
-    const positions = await fetchPolymarketOpenPositions(trader.proxyWallet);
+    const positions = await fetchPolymarketOpenPositions(
+      trader.proxyWallet,
+      signal,
+    );
 
     for (const position of positions) {
       if (position.currentValue <= 0 || !position.conditionId) {

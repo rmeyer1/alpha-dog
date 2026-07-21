@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getRun } from "workflow/api";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import type {
   WheelScreenerResponse,
   WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ runId: string }> },
 ) {
   const { runId } = await params;
@@ -23,11 +24,17 @@ export async function GET(
     );
   }
 
+  const guard = await acquirePaidRouteGuard(request, "wheelScreenerStatus");
+
+  if (!guard.allowed) {
+    return guard.response;
+  }
+
   try {
     const run = getRun<WheelScreenerResponse>(runId);
 
     if (!(await run.exists)) {
-      return NextResponse.json(
+      return guard.withAuthCookies(NextResponse.json(
         {
           error: {
             code: "SCREENER_RUN_NOT_FOUND",
@@ -35,7 +42,7 @@ export async function GET(
           },
         },
         { status: 404 },
-      );
+      ));
     }
 
     const status = await run.status;
@@ -46,20 +53,19 @@ export async function GET(
       result,
     };
 
-    return NextResponse.json(response);
-  } catch (error) {
-    return NextResponse.json(
+    return guard.withAuthCookies(NextResponse.json(response));
+  } catch {
+    return guard.withAuthCookies(NextResponse.json(
       {
         error: {
           code: "INTERNAL_SCREENER_RUN_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to load wheel screener workflow run.",
+          message: "Unable to load wheel screener workflow run.",
           retryable: true,
         },
       },
       { status: 502 },
-    );
+    ));
+  } finally {
+    await guard.release();
   }
 }

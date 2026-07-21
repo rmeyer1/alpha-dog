@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRun } from "workflow/api";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 
 export async function GET(
   request: Request,
@@ -24,11 +25,17 @@ export async function GET(
     );
   }
 
+  const guard = await acquirePaidRouteGuard(request, "wheelScreenerStatus");
+
+  if (!guard.allowed) {
+    return guard.response;
+  }
+
   try {
     const run = getRun<unknown>(runId);
 
     if (!(await run.exists)) {
-      return NextResponse.json(
+      return guard.withAuthCookies(NextResponse.json(
         {
           error: {
             code: "SCREENER_RUN_NOT_FOUND",
@@ -36,10 +43,10 @@ export async function GET(
           },
         },
         { status: 404 },
-      );
+      ));
     }
 
-    return new Response(
+    return guard.withAuthCookies(new NextResponse(
       run.getReadable<Uint8Array>({
         startIndex: Number.isFinite(startIndex) ? startIndex : undefined,
       }),
@@ -49,20 +56,21 @@ export async function GET(
           "Content-Type": "application/x-ndjson; charset=utf-8",
         },
       },
-    );
-  } catch (error) {
-    return NextResponse.json(
+    ));
+  } catch {
+    return guard.withAuthCookies(NextResponse.json(
       {
         error: {
           code: "INTERNAL_SCREENER_STREAM_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to stream wheel screener workflow progress.",
+          message: "Unable to stream wheel screener workflow progress.",
           retryable: true,
         },
       },
       { status: 502 },
-    );
+    ));
+  } finally {
+    // This lease bounds workflow stream setup. The stream itself is expected to
+    // remain open and is protected by authentication plus the request budget.
+    await guard.release();
   }
 }

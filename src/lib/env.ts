@@ -84,6 +84,10 @@ const envSchema = z.object({
   OPENAI_TRADE_ANALYSIS_MODEL: z
     .preprocess(emptyStringToUndefined, z.string().optional())
     .default("gpt-5.4-mini"),
+  API_ABUSE_HMAC_SECRET: z.preprocess(
+    emptyStringToUndefined,
+    z.string().min(32).optional(),
+  ),
   WHEEL_SCREENER_LIVE_BATCH_SIZE: optionalPositiveInteger("32"),
   WHEEL_SCREENER_LIVE_CONCURRENCY: optionalPositiveInteger("8"),
   WHEEL_UNIVERSE_DEEP_SCAN_SIZE: optionalPositiveInteger("250"),

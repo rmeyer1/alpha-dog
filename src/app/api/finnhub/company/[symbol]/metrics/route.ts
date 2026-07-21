@@ -1,8 +1,7 @@
 import { getFinnhubBasicFinancials } from "@/lib/finnhub/client";
 import {
   invalidSymbolResponse,
-  jsonResponse,
-  providerErrorResponse,
+  runProtectedFinnhubRequest,
   symbolFromContext,
   type SymbolRouteContext,
 } from "../_utils";
@@ -18,11 +17,9 @@ export async function GET(request: Request, context: SymbolRouteContext) {
 
   const metric = new URL(request.url).searchParams.get("metric") ?? "all";
 
-  try {
-    const metrics = await getFinnhubBasicFinancials({ metric, symbol });
+  return runProtectedFinnhubRequest(request, async (signal) => {
+    const metrics = await getFinnhubBasicFinancials({ metric, signal, symbol });
 
-    return jsonResponse({ metrics, symbol });
-  } catch (error) {
-    return providerErrorResponse(error);
-  }
+    return { metrics, symbol };
+  });
 }

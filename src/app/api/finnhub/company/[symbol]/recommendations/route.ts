@@ -1,26 +1,26 @@
 import { getFinnhubRecommendationTrends } from "@/lib/finnhub/client";
 import {
   invalidSymbolResponse,
-  jsonResponse,
-  providerErrorResponse,
+  runProtectedFinnhubRequest,
   symbolFromContext,
   type SymbolRouteContext,
 } from "../_utils";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_request: Request, context: SymbolRouteContext) {
+export async function GET(request: Request, context: SymbolRouteContext) {
   const symbol = await symbolFromContext(context);
 
   if (!symbol) {
     return invalidSymbolResponse();
   }
 
-  try {
-    const recommendations = await getFinnhubRecommendationTrends({ symbol });
+  return runProtectedFinnhubRequest(request, async (signal) => {
+    const recommendations = await getFinnhubRecommendationTrends({
+      signal,
+      symbol,
+    });
 
-    return jsonResponse({ recommendations, symbol });
-  } catch (error) {
-    return providerErrorResponse(error);
-  }
+    return { recommendations, symbol };
+  });
 }

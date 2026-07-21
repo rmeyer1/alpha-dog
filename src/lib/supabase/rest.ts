@@ -5,6 +5,8 @@ interface SupabaseRequestOptions {
   method?: "GET" | "POST" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | null | undefined>;
   prefer?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export interface SupabaseServiceConfig {
@@ -74,6 +76,11 @@ export async function requestSupabaseRest<T>(
     return null;
   }
 
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? 10_000);
+  const signal = options.signal && timeoutSignal
+    ? AbortSignal.any([options.signal, timeoutSignal])
+    : options.signal ?? timeoutSignal;
+
   const response = await fetch(buildRestUrl(config, table, options.query), {
     method: options.method ?? "GET",
     headers: {
@@ -84,6 +91,7 @@ export async function requestSupabaseRest<T>(
     },
     body: options.body == null ? undefined : JSON.stringify(options.body),
     cache: "no-store",
+    signal,
   });
 
   if (!response.ok) {

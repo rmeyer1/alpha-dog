@@ -59,8 +59,11 @@ function buildAuditRecord({
 
 export async function analyzeTradeCandidate(
   input: TradeAnalysisInput,
+  options: { signal?: AbortSignal } = {},
 ): Promise<TradeAnalysisResponse> {
-  const profile = await getCompanyProfile(input.ticker);
+  const profile = await getCompanyProfile(input.ticker, {
+    signal: options.signal,
+  });
   const internalChartContext = buildChartContext(input, profile);
   const chartSource = internalChartContext.source;
   const messages = buildTradeAnalysisMessages({
@@ -73,6 +76,7 @@ export async function analyzeTradeCandidate(
     const providerResult = await runTradeAnalysisProvider({
       chartSource,
       messages,
+      signal: options.signal,
     });
     const auditId = await saveTradeAnalysisRun(
       buildAuditRecord({

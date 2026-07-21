@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 
 export interface SymbolRouteContext {
   params: Promise<{ symbol: string }>;
@@ -42,12 +43,12 @@ export function invalidQueryResponse(message: string) {
   return errorResponse("INVALID_QUERY", message, 400);
 }
 
-export function providerErrorResponse(error: unknown) {
-  const message = error instanceof Error
-    ? error.message
-    : "Finnhub request failed.";
-
-  return errorResponse("FINNHUB_REQUEST_FAILED", message, 502);
+export function providerErrorResponse() {
+  return errorResponse(
+    "FINNHUB_REQUEST_FAILED",
+    "Company data is temporarily unavailable.",
+    502,
+  );
 }
 
 export function jsonResponse(body: unknown) {
@@ -56,6 +57,25 @@ export function jsonResponse(body: unknown) {
       "Cache-Control": "private, max-age=300",
     },
   });
+}
+
+export async function runProtectedFinnhubRequest(
+  request: Request,
+  operation: (signal: AbortSignal) => Promise<unknown>,
+) {
+  const guard = await acquirePaidRouteGuard(request, "finnhubCompany");
+
+  if (!guard.allowed) {
+    return guard.response;
+  }
+
+  try {
+    return guard.withAuthCookies(jsonResponse(await operation(guard.signal)));
+  } catch {
+    return guard.withAuthCookies(providerErrorResponse());
+  } finally {
+    await guard.release();
+  }
 }
 
 export function dateParam(

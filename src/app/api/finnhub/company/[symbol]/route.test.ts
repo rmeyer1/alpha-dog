@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getFinnhubCompanyInsightsMock = vi.hoisted(() => vi.fn());
+const acquirePaidRouteGuardMock = vi.hoisted(() => vi.fn());
+const releaseGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/api-abuse/guard", () => ({
+  acquirePaidRouteGuard: acquirePaidRouteGuardMock,
+}));
 
 vi.mock("@/lib/finnhub/client", () => ({
   getFinnhubCompanyInsights: getFinnhubCompanyInsightsMock,
@@ -15,6 +21,15 @@ function routeContext(symbol = "aapl") {
 beforeEach(() => {
   vi.resetModules();
   getFinnhubCompanyInsightsMock.mockReset();
+  acquirePaidRouteGuardMock.mockReset();
+  releaseGuardMock.mockReset();
+  acquirePaidRouteGuardMock.mockResolvedValue({
+    allowed: true,
+    release: releaseGuardMock,
+    signal: new AbortController().signal,
+    userId: null,
+    withAuthCookies: (response: Response) => response,
+  });
 });
 
 describe("GET /api/finnhub/company/[symbol]", () => {
@@ -43,8 +58,10 @@ describe("GET /api/finnhub/company/[symbol]", () => {
     expect(getFinnhubCompanyInsightsMock).toHaveBeenCalledWith({
       newsFrom: "2026-06-01",
       newsTo: "2026-06-08",
+      signal: expect.any(AbortSignal),
       symbol: "AAPL",
     });
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
   });
 
   it("rejects invalid symbols before calling Finnhub", async () => {

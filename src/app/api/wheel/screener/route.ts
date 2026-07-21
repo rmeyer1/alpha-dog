@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
+import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
@@ -62,30 +63,40 @@ export async function POST(request: Request) {
         return NextResponse.json(runningFallback);
       }
 
-      const run = await start(wheelScreenerWorkflow, [parsed.data]);
-
-      return NextResponse.json(
-        {
-          runId: run.runId,
-          status: await run.status,
-          result: null,
-        },
-        { status: 202 },
+      const guard = await acquirePaidRouteGuard(
+        request,
+        "wheelScreenerStart",
       );
+
+      if (!guard.allowed) {
+        return guard.response;
+      }
+
+      try {
+        const run = await start(wheelScreenerWorkflow, [parsed.data]);
+
+        return guard.withAuthCookies(NextResponse.json(
+          {
+            runId: run.runId,
+            status: await run.status,
+            result: null,
+          },
+          { status: 202 },
+        ));
+      } finally {
+        await guard.release();
+      }
     }
 
     const response = await analyzeTopWheelCompanies(parsed.data);
 
     return NextResponse.json(response);
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       {
         error: {
           code: "INTERNAL_SCREENER_ERROR",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unable to screen wheel companies.",
+          message: "Unable to screen wheel companies.",
           retryable: true,
         },
       },
