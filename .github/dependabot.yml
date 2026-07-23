@@ -1,0 +1,53 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    groups:
+      next-react:
+        patterns:
+          - next
+          - react
+          - react-dom
+          - eslint-config-next
+        update-types:
+          - minor
+          - patch
+      runtime-dependencies:
+        dependency-type: production
+        exclude-patterns:
+          - next
+          - react
+          - react-dom
+        update-types:
+          - minor
+          - patch
+      development-dependencies:
+        dependency-type: development
+        exclude-patterns:
+          - eslint-config-next
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: America/New_York
+    groups:
+      github-actions:
+        patterns:
+          - "*"

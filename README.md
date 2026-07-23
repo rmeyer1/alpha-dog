@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Alpha Dog
 
-## Getting Started
+[![CI](https://github.com/rmeyer1/alpha-dog/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rmeyer1/alpha-dog/actions/workflows/ci.yml)
 
-First, run the development server:
+Alpha Dog is a Next.js application for researching and managing
+options-trading workflows.
+
+## Reproducible setup
+
+The local and pull-request CI toolchain is pinned to Node.js 22.22.0 with npm
+10.9.4. Version managers can read `.nvmrc`; `package.json` declares the exact
+package manager and compatible Node 22/npm 10 deployment engines.
+
+```bash
+nvm use
+npm --version
+npm ci
+npm run verify:toolchain
+```
+
+`npm ci` is the only supported clean-install command. It fails if
+`package.json` and `package-lock.json` drift rather than rewriting the lockfile.
+
+Copy `.env.example` to `.env.local` when local provider configuration is
+needed, then start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Quality gates
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the same commands required by pull-request CI:
 
-## Learn More
+```bash
+npm run verify:toolchain
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npx playwright install chromium
+npm run test:e2e:smoke
+npm audit --audit-level=high
+```
 
-To learn more about Next.js, take a look at the following resources:
+The smoke suite builds and starts the application without live provider
+credentials. Network-sensitive application calls are either intercepted or
+exercise the fail-closed configuration boundary.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The pull-request workflow is independent of the scheduled cron-trigger
+workflows in `.github/workflows/`.
