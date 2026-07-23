@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PolymarketCategory,
   PolymarketLeaderboardResponse,
@@ -34,8 +34,19 @@ import {
   polymarketOrderByValues,
   polymarketTimePeriods,
 } from "@/lib/polymarket/types";
+import {
+  parseTraderDashboardState,
+  serializeTraderDashboardState,
+  type TraderAppliedFilters,
+  type TraderDashboardTab,
+  type TraderDashboardUrlState,
+} from "@/lib/dashboard-url-state";
+import {
+  isAbortError,
+  LatestRequestLifecycle,
+} from "@/lib/request-lifecycle";
 
-type DashboardTab = "smart" | "whales" | "sharp" | "lookup";
+type DashboardTab = TraderDashboardTab;
 type RequestState = "idle" | "loading" | "refreshing" | "success" | "error";
 
 interface ApiErrorPayload {
@@ -323,9 +334,12 @@ function Header({
 }
 
 function Filters({
+  appliedFilters,
   category,
+  hasUnappliedChanges,
   limit,
   minValue,
+  onApply,
   onCategoryChange,
   onLimitChange,
   onMinValueChange,
@@ -335,9 +349,12 @@ function Filters({
   showMinValue,
   timePeriod,
 }: {
+  appliedFilters: TraderAppliedFilters;
   category: PolymarketCategory;
+  hasUnappliedChanges: boolean;
   limit: number;
   minValue: number;
+  onApply: () => void;
   onCategoryChange: (category: PolymarketCategory) => void;
   onLimitChange: (limit: number) => void;
   onMinValueChange: (value: number) => void;
@@ -348,7 +365,7 @@ function Filters({
   timePeriod: PolymarketTimePeriod;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#151718] p-4 md:grid-cols-4 xl:grid-cols-5">
+    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#151718] p-4 md:grid-cols-4 xl:grid-cols-6">
       <label className="grid gap-1.5 text-sm">
         <span className="text-zinc-400">Category</span>
         <select
@@ -412,6 +429,21 @@ function Filters({
           />
         </label>
       ) : null}
+      <div className="grid content-end gap-1.5">
+        <button
+          className="h-10 rounded-lg bg-cyan-300 px-4 text-sm font-semibold text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!hasUnappliedChanges}
+          onClick={onApply}
+          type="button"
+        >
+          Apply filters
+        </button>
+        <span className="text-[11px] text-zinc-500">
+          {hasUnappliedChanges
+            ? "Draft changes are pending."
+            : `${appliedFilters.category} · ${appliedFilters.timePeriod}`}
+        </span>
+      </div>
     </section>
   );
 }
@@ -971,40 +1003,66 @@ function WalletDrawer({
   );
 }
 
+const defaultTraderFilters: TraderAppliedFilters = {
+  category: "OVERALL",
+  limit: 25,
+  minValue: 10000,
+  orderBy: "PNL",
+  timePeriod: "WEEK",
+};
+
+const defaultTraderUrlState: TraderDashboardUrlState = {
+  filters: defaultTraderFilters,
+  tab: "smart",
+  wallet: "",
+};
+
+function appliedFilterLabel(filters: TraderAppliedFilters) {
+  return `${filters.category} · ${filters.timePeriod} · ${filters.orderBy} · ${filters.limit} rows`;
+}
+
 export function TraderIntelligence() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("smart");
-  const [category, setCategory] = useState<PolymarketCategory>("OVERALL");
-  const [timePeriod, setTimePeriod] = useState<PolymarketTimePeriod>("WEEK");
-  const [orderBy, setOrderBy] = useState<PolymarketOrderBy>("PNL");
-  const [limit, setLimit] = useState(25);
-  const [minValue, setMinValue] = useState(10000);
+  const [draftFilters, setDraftFilters] =
+    useState<TraderAppliedFilters>(defaultTraderFilters);
+  const [appliedFilters, setAppliedFilters] =
+    useState<TraderAppliedFilters>(defaultTraderFilters);
   const [leaderboard, setLeaderboard] =
     useState<PolymarketLeaderboardResponse | null>(null);
   const [whales, setWhales] = useState<PolymarketWhalesResponse | null>(null);
   const [sharpPlays, setSharpPlays] =
     useState<PolymarketSharpPlaysResponse | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [lookupWallet, setLookupWallet] = useState("");
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] =
     useState<TraderWalletProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [profileRequestRevision, setProfileRequestRevision] = useState(0);
+  const [resultFilters, setResultFilters] =
+    useState<Partial<Record<DashboardTab, TraderAppliedFilters>>>({});
+  const [urlReady, setUrlReady] = useState(false);
+  const listLifecycle = useRef(new LatestRequestLifecycle());
+  const profileLifecycle = useRef(new LatestRequestLifecycle());
+  const selectedWalletRef = useRef<string | null>(null);
 
   const params = useMemo(() => {
     const searchParams = new URLSearchParams({
-      category,
-      limit: String(limit),
-      orderBy,
-      timePeriod,
+      category: appliedFilters.category,
+      limit: String(appliedFilters.limit),
+      orderBy: appliedFilters.orderBy,
+      timePeriod: appliedFilters.timePeriod,
     });
 
     return searchParams;
-  }, [category, limit, orderBy, timePeriod]);
+  }, [appliedFilters]);
 
   const loadLeaderboard = useCallback(async (forceRefresh = false) => {
+    const token = listLifecycle.current.begin();
     setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setError(null);
+    setListError(null);
 
     try {
       const nextParams = new URLSearchParams(params);
@@ -1014,6 +1072,7 @@ export function TraderIntelligence() {
 
       const response = await fetch(`/api/polymarket/leaderboard?${nextParams}`, {
         cache: "no-store",
+        signal: token.signal,
       });
       const payload = await response.json() as
         | PolymarketLeaderboardResponse
@@ -1027,31 +1086,47 @@ export function TraderIntelligence() {
         );
       }
 
-      setLeaderboard(payload);
-      setRequestState("success");
+      listLifecycle.current.commit(token, () => {
+        setLeaderboard(payload);
+        setResultFilters((current) => ({
+          ...current,
+          smart: appliedFilters,
+        }));
+        setRequestState("success");
+      });
     } catch (caught) {
-      setRequestState("error");
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Unable to load trader leaderboard.",
-      );
+      if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
+        return;
+      }
+
+      listLifecycle.current.commit(token, () => {
+        setRequestState("error");
+        setListError(
+          caught instanceof Error
+            ? caught.message
+            : "Unable to load trader leaderboard.",
+        );
+      });
+    } finally {
+      listLifecycle.current.finish(token);
     }
-  }, [params]);
+  }, [appliedFilters, params]);
 
   const loadWhales = useCallback(async (forceRefresh = false) => {
+    const token = listLifecycle.current.begin();
     setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setError(null);
+    setListError(null);
 
     try {
       const nextParams = new URLSearchParams(params);
-      nextParams.set("minValue", String(minValue));
+      nextParams.set("minValue", String(appliedFilters.minValue));
       if (forceRefresh) {
         nextParams.set("forceRefresh", "true");
       }
 
       const response = await fetch(`/api/polymarket/whales?${nextParams}`, {
         cache: "no-store",
+        signal: token.signal,
       });
       const payload = await response.json() as
         | PolymarketWhalesResponse
@@ -1065,21 +1140,36 @@ export function TraderIntelligence() {
         );
       }
 
-      setWhales(payload);
-      setRequestState("success");
+      listLifecycle.current.commit(token, () => {
+        setWhales(payload);
+        setResultFilters((current) => ({
+          ...current,
+          whales: appliedFilters,
+        }));
+        setRequestState("success");
+      });
     } catch (caught) {
-      setRequestState("error");
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Unable to load whale candidates.",
-      );
+      if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
+        return;
+      }
+
+      listLifecycle.current.commit(token, () => {
+        setRequestState("error");
+        setListError(
+          caught instanceof Error
+            ? caught.message
+            : "Unable to load whale candidates.",
+        );
+      });
+    } finally {
+      listLifecycle.current.finish(token);
     }
-  }, [minValue, params]);
+  }, [appliedFilters, params]);
 
   const loadSharpPlays = useCallback(async (forceRefresh = false) => {
+    const token = listLifecycle.current.begin();
     setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setError(null);
+    setListError(null);
 
     try {
       const nextParams = new URLSearchParams(params);
@@ -1090,6 +1180,7 @@ export function TraderIntelligence() {
 
       const response = await fetch(`/api/polymarket/sharp-plays?${nextParams}`, {
         cache: "no-store",
+        signal: token.signal,
       });
       const payload = await response.json() as
         | PolymarketSharpPlaysResponse
@@ -1103,30 +1194,47 @@ export function TraderIntelligence() {
         );
       }
 
-      setSharpPlays(payload);
-      setRequestState("success");
+      listLifecycle.current.commit(token, () => {
+        setSharpPlays(payload);
+        setResultFilters((current) => ({
+          ...current,
+          sharp: appliedFilters,
+        }));
+        setRequestState("success");
+      });
     } catch (caught) {
-      setRequestState("error");
-      setError(
-        caught instanceof Error ? caught.message : "Unable to load sharp plays.",
-      );
+      if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
+        return;
+      }
+
+      listLifecycle.current.commit(token, () => {
+        setRequestState("error");
+        setListError(
+          caught instanceof Error ? caught.message : "Unable to load sharp plays.",
+        );
+      });
+    } finally {
+      listLifecycle.current.finish(token);
     }
-  }, [params]);
+  }, [appliedFilters, params]);
 
   const loadWalletProfile = useCallback(async (
     wallet: string,
     forceRefresh = false,
   ) => {
-    setSelectedWallet(wallet);
-    setSelectedProfile(null);
+    const token = profileLifecycle.current.begin();
     setProfileLoading(true);
+    setProfileError(null);
 
     try {
       const response = await fetch(
         `/api/polymarket/traders/${encodeURIComponent(wallet)}${
           forceRefresh ? "?forceRefresh=true" : ""
         }`,
-        { cache: "no-store" },
+        {
+          cache: "no-store",
+          signal: token.signal,
+        },
       );
       const payload = await response.json() as
         | TraderWalletProfile
@@ -1140,43 +1248,174 @@ export function TraderIntelligence() {
         );
       }
 
-      setSelectedProfile(payload);
+      profileLifecycle.current.commit(token, () => {
+        setSelectedProfile(payload);
+      });
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Unable to load wallet profile.",
-      );
+      if (isAbortError(caught) || !profileLifecycle.current.isActive(token)) {
+        return;
+      }
+
+      profileLifecycle.current.commit(token, () => {
+        setProfileError(
+          caught instanceof Error
+            ? caught.message
+            : "Unable to load wallet profile.",
+        );
+      });
     } finally {
-      setProfileLoading(false);
+      profileLifecycle.current.commit(token, () => {
+        setProfileLoading(false);
+      });
+      profileLifecycle.current.finish(token);
     }
   }, []);
 
   useEffect(() => {
-    let loadTimer: number | null = null;
+    const listRequests = listLifecycle.current;
+    const profileRequests = profileLifecycle.current;
 
-    if (activeTab === "smart") {
-      loadTimer = window.setTimeout(() => {
-        void loadLeaderboard();
-      }, 0);
+    function restoreFromUrl() {
+      const restored = parseTraderDashboardState(
+        window.location.search,
+        defaultTraderUrlState,
+      );
+
+      listRequests.abort();
+      profileRequests.abort();
+      setActiveTab(restored.tab);
+      setDraftFilters(restored.filters);
+      setAppliedFilters(restored.filters);
+      setLookupWallet(restored.wallet);
+      const nextWallet = walletPattern.test(restored.wallet)
+        ? restored.wallet
+        : null;
+      if (selectedWalletRef.current !== nextWallet) {
+        setSelectedProfile(null);
+      }
+      selectedWalletRef.current = nextWallet;
+      setSelectedWallet(nextWallet);
+      if (nextWallet) {
+        setProfileRequestRevision((current) => current + 1);
+      }
+      setRequestState("idle");
+      setProfileLoading(false);
+      setListError(null);
+      setProfileError(null);
+      setUrlReady(true);
     }
 
-    if (activeTab === "whales") {
-      loadTimer = window.setTimeout(() => {
-        void loadWhales();
-      }, 0);
-    }
-
-    if (activeTab === "sharp") {
-      loadTimer = window.setTimeout(() => {
-        void loadSharpPlays();
-      }, 0);
-    }
+    restoreFromUrl();
+    window.addEventListener("popstate", restoreFromUrl);
 
     return () => {
-      if (loadTimer) {
-        window.clearTimeout(loadTimer);
-      }
+      window.removeEventListener("popstate", restoreFromUrl);
+      listRequests.abort();
+      profileRequests.abort();
     };
-  }, [activeTab, loadLeaderboard, loadSharpPlays, loadWhales]);
+  }, []);
+
+  useEffect(() => {
+    if (!urlReady || activeTab === "lookup") {
+      return;
+    }
+
+    const loadTimer = window.setTimeout(() => {
+      if (activeTab === "smart") {
+        void loadLeaderboard();
+      } else if (activeTab === "whales") {
+        void loadWhales();
+      } else {
+        void loadSharpPlays();
+      }
+    }, 0);
+
+    return () => window.clearTimeout(loadTimer);
+  }, [
+    activeTab,
+    appliedFilters,
+    loadLeaderboard,
+    loadSharpPlays,
+    loadWhales,
+    urlReady,
+  ]);
+
+  useEffect(() => {
+    if (!urlReady || !selectedWallet) {
+      return;
+    }
+
+    const loadTimer = window.setTimeout(() => {
+      void loadWalletProfile(selectedWallet);
+    }, 0);
+
+    return () => window.clearTimeout(loadTimer);
+  }, [
+    loadWalletProfile,
+    profileRequestRevision,
+    selectedWallet,
+    urlReady,
+  ]);
+
+  function writeDashboardUrl(
+    state: TraderDashboardUrlState,
+    mode: "push" | "replace" = "push",
+  ) {
+    const query = serializeTraderDashboardState(state).toString();
+    const nextUrl = `${window.location.pathname}?${query}`;
+
+    if (`${window.location.pathname}${window.location.search}` === nextUrl) {
+      return;
+    }
+
+    window.history[mode === "push" ? "pushState" : "replaceState"](
+      null,
+      "",
+      nextUrl,
+    );
+  }
+
+  function handleTabChange(tab: DashboardTab) {
+    if (tab === "lookup") {
+      listLifecycle.current.abort();
+      setRequestState("idle");
+    }
+
+    setActiveTab(tab);
+    writeDashboardUrl({
+      filters: appliedFilters,
+      tab,
+      wallet: selectedWallet ?? "",
+    });
+  }
+
+  function handleApplyFilters() {
+    setAppliedFilters(draftFilters);
+    writeDashboardUrl({
+      filters: draftFilters,
+      tab: activeTab,
+      wallet: selectedWallet ?? "",
+    });
+  }
+
+  function handleSelectWallet(wallet: string) {
+    const normalizedWallet = wallet.toLowerCase();
+
+    if (selectedWalletRef.current !== normalizedWallet) {
+      setSelectedProfile(null);
+    } else {
+      setProfileRequestRevision((current) => current + 1);
+    }
+    selectedWalletRef.current = normalizedWallet;
+    setProfileError(null);
+    setSelectedWallet(normalizedWallet);
+    setLookupWallet(normalizedWallet);
+    writeDashboardUrl({
+      filters: appliedFilters,
+      tab: activeTab,
+      wallet: normalizedWallet,
+    });
+  }
 
   function handleRefresh() {
     if (activeTab === "whales") {
@@ -1202,7 +1441,7 @@ export function TraderIntelligence() {
     const wallet = lookupWallet.trim();
 
     if (walletPattern.test(wallet)) {
-      void loadWalletProfile(wallet.toLowerCase());
+      handleSelectWallet(wallet);
     }
   }
 
@@ -1218,6 +1457,16 @@ export function TraderIntelligence() {
     (max, trader) => Math.max(max, trader.scores.alphaDogScore),
     0,
   ) ?? 0;
+  const hasUnappliedFilterChanges =
+    JSON.stringify(draftFilters) !== JSON.stringify(appliedFilters);
+  const leaderboardFilters = resultFilters.smart ?? appliedFilters;
+  const whaleFilters = resultFilters.whales ?? appliedFilters;
+  const sharpFilters = resultFilters.sharp ?? appliedFilters;
+  const visibleError = profileError && selectedWallet
+    ? profileError
+    : activeTab === "lookup"
+      ? null
+      : listError;
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#0b0c0d] text-zinc-100">
@@ -1225,7 +1474,7 @@ export function TraderIntelligence() {
         activeTab={activeTab}
         canRefresh={activeTab !== "lookup" || Boolean(selectedWallet)}
         onRefresh={handleRefresh}
-        onTabChange={setActiveTab}
+        onTabChange={handleTabChange}
         requestState={requestState}
       />
 
@@ -1233,17 +1482,25 @@ export function TraderIntelligence() {
         {activeTab !== "lookup" ? (
           <>
             <Filters
-              category={category}
-              limit={limit}
-              minValue={minValue}
-              onCategoryChange={setCategory}
-              onLimitChange={setLimit}
-              onMinValueChange={setMinValue}
-              onOrderByChange={setOrderBy}
-              onTimePeriodChange={setTimePeriod}
-              orderBy={orderBy}
+              appliedFilters={appliedFilters}
+              category={draftFilters.category}
+              hasUnappliedChanges={hasUnappliedFilterChanges}
+              limit={draftFilters.limit}
+              minValue={draftFilters.minValue}
+              onApply={handleApplyFilters}
+              onCategoryChange={(category) =>
+                setDraftFilters((current) => ({ ...current, category }))}
+              onLimitChange={(limit) =>
+                setDraftFilters((current) => ({ ...current, limit }))}
+              onMinValueChange={(minValue) =>
+                setDraftFilters((current) => ({ ...current, minValue }))}
+              onOrderByChange={(orderBy) =>
+                setDraftFilters((current) => ({ ...current, orderBy }))}
+              onTimePeriodChange={(timePeriod) =>
+                setDraftFilters((current) => ({ ...current, timePeriod }))}
+              orderBy={draftFilters.orderBy}
               showMinValue={activeTab === "whales"}
-              timePeriod={timePeriod}
+              timePeriod={draftFilters.timePeriod}
             />
             <SignalBriefing activeTab={activeTab} />
           </>
@@ -1266,7 +1523,7 @@ export function TraderIntelligence() {
             </label>
             <button
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-cyan-300 px-4 text-sm font-semibold text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60 md:self-end"
-              disabled={!walletPattern.test(lookupWallet.trim()) || profileLoading}
+              disabled={!walletPattern.test(lookupWallet.trim())}
               type="submit"
             >
               <Target className="size-4" />
@@ -1275,9 +1532,9 @@ export function TraderIntelligence() {
           </form>
         )}
 
-        {error ? (
+        {visibleError ? (
           <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-            {error}
+            {visibleError}
           </div>
         ) : null}
 
@@ -1294,12 +1551,13 @@ export function TraderIntelligence() {
                   <TrendingUp className="size-4 text-emerald-200" />
                   Smart Traders
                 </div>
-                <div className="text-xs text-zinc-500">
-                  {freshnessLabel(leaderboard)}
+                <div className="text-right text-xs text-zinc-500">
+                  <div>{freshnessLabel(leaderboard)}</div>
+                  <div>Generated with {appliedFilterLabel(leaderboardFilters)}</div>
                 </div>
               </div>
               <TraderRows
-                onSelectWallet={(wallet) => void loadWalletProfile(wallet)}
+                onSelectWallet={handleSelectWallet}
                 requestState={requestState}
                 traders={leaderboard?.traders ?? []}
               />
@@ -1314,12 +1572,13 @@ export function TraderIntelligence() {
                 <Waves className="size-4 text-cyan-200" />
                 Whale Edge
               </div>
-              <div className="text-xs text-zinc-500">
-                {freshnessLabel(whales)}
+              <div className="text-right text-xs text-zinc-500">
+                <div>{freshnessLabel(whales)}</div>
+                <div>Generated with {appliedFilterLabel(whaleFilters)}</div>
               </div>
             </div>
             <WhaleRows
-              onSelectWallet={(wallet) => void loadWalletProfile(wallet)}
+              onSelectWallet={handleSelectWallet}
               requestState={requestState}
               whales={whales?.whales ?? []}
             />
@@ -1333,12 +1592,13 @@ export function TraderIntelligence() {
                 <Crosshair className="size-4 text-cyan-200" />
                 Sharp Plays
               </div>
-              <div className="text-xs text-zinc-500">
-                {freshnessLabel(sharpPlays)}
+              <div className="text-right text-xs text-zinc-500">
+                <div>{freshnessLabel(sharpPlays)}</div>
+                <div>Generated with {appliedFilterLabel(sharpFilters)}</div>
               </div>
             </div>
             <SharpPlayRows
-              onSelectWallet={(wallet) => void loadWalletProfile(wallet)}
+              onSelectWallet={handleSelectWallet}
               plays={sharpPlays?.plays ?? []}
               requestState={requestState}
             />
@@ -1358,8 +1618,17 @@ export function TraderIntelligence() {
       <WalletDrawer
         loading={profileLoading}
         onClose={() => {
+          profileLifecycle.current.abort();
+          selectedWalletRef.current = null;
           setSelectedWallet(null);
           setSelectedProfile(null);
+          setProfileLoading(false);
+          setProfileError(null);
+          writeDashboardUrl({
+            filters: appliedFilters,
+            tab: activeTab,
+            wallet: "",
+          });
         }}
         profile={selectedProfile}
         wallet={selectedWallet}

@@ -30,6 +30,16 @@ import { CompanyInsightStrip } from "@/components/company-insights";
 import { CompanyResults } from "./wheel-dashboard/company-results";
 import { CompanyScreenerOverview } from "./wheel-dashboard/company-screener-overview";
 import { shouldAutoRefreshScreenerResponse } from "@/lib/wheel/screener-auto-refresh";
+import {
+  parseWheelDashboardState,
+  serializeWheelDashboardState,
+  type WheelDashboardUrlState,
+} from "@/lib/dashboard-url-state";
+import {
+  isAbortError,
+  LatestRequestLifecycle,
+  type RequestToken,
+} from "@/lib/request-lifecycle";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
 import {
@@ -97,14 +107,22 @@ function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
 function ScreenerStatusStrip({
   activePersona,
   error,
+  filters,
   response,
   screenerResponse,
+  strategy,
+  tab,
+  ticker,
   requestState,
 }: {
   activePersona: PersonaConfig;
   error: string | null;
+  filters: WheelFilters;
   response: WheelAnalysisResponse | null;
   screenerResponse: WheelScreenerResponse | null;
+  strategy: WheelCompanyStrategy;
+  tab: StrategyTab;
+  ticker: string;
   requestState: RequestState;
 }) {
   const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
@@ -172,10 +190,13 @@ function ScreenerStatusStrip({
         ))}
         <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 md:col-span-4">
           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
-            Active mandate
+            Results generated with
           </div>
           <div className="mt-1 text-sm text-zinc-300">
-            {activePersona.name}: {activePersona.motto}
+            {activePersona.name} · {ticker || strategy.replaceAll("_", " ")} ·
+            {" "}DTE {filters.dteMin}-{filters.dteMax} · Delta{" "}
+            {filters.deltaMin}-{filters.deltaMax} ·{" "}
+            {ticker ? tab : strategy.replaceAll("_", " ")}
           </div>
         </div>
       </div>
@@ -187,8 +208,11 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const defaultPersona = initialPersonas.find((persona) => persona.default) ??
     initialPersonas[0];
   const [ticker, setTicker] = useState(defaultTicker);
+  const [appliedTicker, setAppliedTicker] = useState(defaultTicker);
   const [personaId, setPersonaId] = useState<PersonaId>(defaultPersona.id);
   const [filters, setFilters] = useState<WheelFilters>(defaultPersona.filters);
+  const [draftFilters, setDraftFilters] =
+    useState<WheelFilters>(defaultPersona.filters);
   const [activeTab, setActiveTab] = useState<StrategyTab>("puts");
   const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
   const [screenerResponse, setScreenerResponse] =
@@ -210,8 +234,29 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const [presetOperation, setPresetOperation] =
     useState<PresetOperation>("loading");
   const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
-  const didLoadInitialScreener = useRef(false);
+  const [urlReady, setUrlReady] = useState(false);
+  const [resultIdentity, setResultIdentity] =
+    useState<WheelDashboardUrlState>({
+      filters: defaultPersona.filters,
+      personaId: defaultPersona.id,
+      screenerStrategy: defaultScreenerStrategy,
+      tab: "puts",
+      ticker: defaultTicker,
+    });
+  const didLoadPresets = useRef(false);
   const didAutoRefreshInitialScreener = useRef(false);
+  const requestLifecycle = useRef(new LatestRequestLifecycle());
+  const urlDefaults = useMemo<WheelDashboardUrlState>(() => ({
+    filters: defaultPersona.filters,
+    personaId: defaultPersona.id,
+    screenerStrategy: defaultScreenerStrategy,
+    tab: "puts",
+    ticker: defaultTicker,
+  }), [defaultPersona]);
+  const personaIds = useMemo(
+    () => initialPersonas.map((persona) => persona.id),
+    [initialPersonas],
+  );
   const activePersona = useMemo(
     () => personaById(initialPersonas, personaId, defaultPersona),
     [defaultPersona, initialPersonas, personaId],
@@ -265,19 +310,19 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     }
   }
 
-  function clearTickerResult() {
-    setResponse(null);
-    setError(null);
-    setRequestState(screenerResponse ? "successFresh" : "idle");
-  }
-
-  const pollScreenerRun = useCallback(async (runId: string) => {
+  const pollScreenerRun = useCallback(async (
+    runId: string,
+    token: RequestToken,
+  ) => {
     for (let attempt = 0; attempt < 40; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
       const apiResponse = await fetch(
         `/api/wheel/screener/runs/${encodeURIComponent(runId)}`,
-        { cache: "no-store" },
+        {
+          cache: "no-store",
+          signal: token.signal,
+        },
       );
       const payload = (await apiResponse.json()) as
         | WheelScreenerRunResponse
@@ -306,31 +351,28 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   const loadTopCompanies = useCallback(
     async ({
       forceRefresh = false,
-      nextFilters = filters,
-      nextPersonaId = personaId,
-      nextStrategy = screenerStrategy,
+      nextFilters,
+      nextPersonaId,
+      nextStrategy,
       showAsRefresh = false,
     }: {
       forceRefresh?: boolean;
-      nextFilters?: WheelFilters;
-      nextPersonaId?: PersonaId;
-      nextStrategy?: WheelCompanyStrategy;
+      nextFilters: WheelFilters;
+      nextPersonaId: PersonaId;
+      nextStrategy: WheelCompanyStrategy;
       showAsRefresh?: boolean;
-    } = {}) => {
-      await Promise.resolve();
+    }) => {
+      const token = requestLifecycle.current.begin();
 
-      const strategyChanged = nextStrategy !== screenerStrategy;
-      const filtersChanged = nextFilters !== filters;
-
-      setRequestState(
-        showAsRefresh || screenerResponse ? "refreshing" : "loading",
+      setRequestState((current) =>
+        showAsRefresh ||
+        current === "successFresh" ||
+        current === "successStale" ||
+        current === "refreshing"
+          ? "refreshing"
+          : "loading"
       );
       setError(null);
-      setScreenerStrategy(nextStrategy);
-
-      if (strategyChanged || filtersChanged || nextPersonaId !== personaId) {
-        setScreenerResponse(null);
-      }
 
       try {
         const apiResponse = await fetch("/api/wheel/screener", {
@@ -345,6 +387,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
             limit: 50,
             forceRefresh,
           }),
+          signal: token.signal,
         });
         const payload = (await apiResponse.json()) as
           | WheelScreenerResponse
@@ -360,59 +403,80 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         }
 
         const nextResponse = isScreenerRunResponse(payload)
-          ? payload.result ?? await pollScreenerRun(payload.runId)
+          ? payload.result ?? await pollScreenerRun(payload.runId, token)
           : payload;
 
-        setScreenerResponse(nextResponse);
-        setRequestState(
-          nextResponse.dataFreshness.cacheStatus === "stale"
-            ? "successStale"
-            : "successFresh",
-        );
+        const committed = requestLifecycle.current.commit(token, () => {
+          setResponse(null);
+          setScreenerResponse(nextResponse);
+          setResultIdentity({
+            filters: nextFilters,
+            personaId: nextPersonaId,
+            screenerStrategy: nextStrategy,
+            tab: tabForStrategy(nextStrategy),
+            ticker: "",
+          });
+          setRequestState(
+            nextResponse.dataFreshness.cacheStatus === "stale"
+              ? "successStale"
+              : "successFresh",
+          );
+        });
 
-        return nextResponse;
+        return committed ? nextResponse : null;
       } catch (caught) {
-        setRequestState("errorNoCache");
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Unable to load top companies.",
-        );
+        if (
+          isAbortError(caught) ||
+          !requestLifecycle.current.isActive(token)
+        ) {
+          return null;
+        }
+
+        requestLifecycle.current.commit(token, () => {
+          setRequestState("errorNoCache");
+          setError(
+            caught instanceof Error
+              ? caught.message
+              : "Unable to load top companies.",
+          );
+        });
 
         return null;
+      } finally {
+        requestLifecycle.current.finish(token);
       }
     },
-    [
-      filters,
-      personaId,
-      pollScreenerRun,
-      screenerResponse,
-      screenerStrategy,
-    ],
+    [pollScreenerRun],
   );
 
-  async function analyzeTicker({
+  const analyzeTicker = useCallback(async ({
     forceRefresh = false,
-    nextActiveTab = activeTab,
-    nextFilters = filters,
-    nextPersonaId = personaId,
-    nextTicker = ticker,
+    nextActiveTab,
+    nextFilters,
+    nextPersonaId,
+    nextTicker,
   }: {
     forceRefresh?: boolean;
-    nextActiveTab?: StrategyTab;
-    nextFilters?: WheelFilters;
-    nextPersonaId?: PersonaId;
-    nextTicker?: string;
-  } = {}) {
+    nextActiveTab: StrategyTab;
+    nextFilters: WheelFilters;
+    nextPersonaId: PersonaId;
+    nextTicker: string;
+  }) => {
     const symbol = nextTicker.trim().toUpperCase();
 
     if (!symbol) {
-      clearTickerResult();
-
       return;
     }
 
-    setRequestState(response ? "refreshing" : "loading");
+    const token = requestLifecycle.current.begin();
+
+    setRequestState((current) =>
+      current === "successFresh" ||
+      current === "successStale" ||
+      current === "refreshing"
+        ? "refreshing"
+        : "loading"
+    );
     setError(null);
 
     try {
@@ -436,6 +500,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           resultLimit: 25,
           forceRefresh,
         }),
+        signal: token.signal,
       });
       const payload = (await apiResponse.json()) as
         | WheelAnalysisResponse
@@ -447,19 +512,46 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         );
       }
 
-      setTicker(payload.ticker);
-      setActiveTab(nextActiveTab);
-      setResponse(payload);
-      setRequestState(
-        payload.dataFreshness.cacheStatus === "stale"
-          ? "successStale"
-          : "successFresh",
-      );
+      requestLifecycle.current.commit(token, () => {
+        setTicker(payload.ticker);
+        setScreenerResponse(null);
+        setResponse(payload);
+        setResultIdentity({
+          filters: nextFilters,
+          personaId: nextPersonaId,
+          screenerStrategy:
+            nextActiveTab === "calls"
+              ? "covered_call"
+              : nextActiveTab === "putSpreads"
+                ? "put_credit_spread"
+                : nextActiveTab === "callSpreads"
+                  ? "call_credit_spread"
+                  : "short_put",
+          tab: nextActiveTab,
+          ticker: payload.ticker,
+        });
+        setRequestState(
+          payload.dataFreshness.cacheStatus === "stale"
+            ? "successStale"
+            : "successFresh",
+        );
+      });
     } catch (caught) {
-      setRequestState("errorNoCache");
-      setError(caught instanceof Error ? caught.message : "Analysis failed.");
+      if (
+        isAbortError(caught) ||
+        !requestLifecycle.current.isActive(token)
+      ) {
+        return;
+      }
+
+      requestLifecycle.current.commit(token, () => {
+        setRequestState("errorNoCache");
+        setError(caught instanceof Error ? caught.message : "Analysis failed.");
+      });
+    } finally {
+      requestLifecycle.current.finish(token);
     }
-  }
+  }, []);
 
   async function savePreset() {
     if (presetAccessState.status !== "ready") {
@@ -595,20 +687,38 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     setDeletingPresetId(null);
   }
 
+  function writeDashboardUrl(
+    state: WheelDashboardUrlState,
+    mode: "push" | "replace" = "push",
+  ) {
+    const query = serializeWheelDashboardState(state).toString();
+    const nextUrl = `${window.location.pathname}?${query}`;
+
+    if (`${window.location.pathname}${window.location.search}` === nextUrl) {
+      return;
+    }
+
+    window.history[mode === "push" ? "pushState" : "replaceState"](
+      null,
+      "",
+      nextUrl,
+    );
+  }
+
   function loadPreset(preset: SavedPreset) {
     const nextFilters = mergePresetFilters(initialPersonas, preset, defaultPersona);
 
     setPersonaId(preset.basePersona);
     setFilters(nextFilters);
+    setDraftFilters(nextFilters);
     setPresetName(preset.name);
-    clearTickerResult();
-
-    if (!ticker.trim()) {
-      void loadTopCompanies({
-        nextFilters,
-        nextPersonaId: preset.basePersona,
-      });
-    }
+    writeDashboardUrl({
+      filters: nextFilters,
+      personaId: preset.basePersona,
+      screenerStrategy,
+      tab: activeTab,
+      ticker: appliedTicker,
+    });
   }
 
   function selectPersona(nextPersonaId: PersonaId) {
@@ -616,61 +726,85 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
     setPersonaId(nextPersona.id);
     setFilters(nextPersona.filters);
-    clearTickerResult();
-
-    if (!ticker.trim()) {
-      void loadTopCompanies({
-        nextFilters: nextPersona.filters,
-        nextPersonaId: nextPersona.id,
-      });
-    }
+    setDraftFilters(nextPersona.filters);
+    writeDashboardUrl({
+      filters: nextPersona.filters,
+      personaId: nextPersona.id,
+      screenerStrategy,
+      tab: activeTab,
+      ticker: appliedTicker,
+    });
   }
 
   function handleFiltersChange(nextFilters: WheelFilters) {
-    setFilters(nextFilters);
-    clearTickerResult();
+    setDraftFilters(nextFilters);
+  }
 
-    if (!ticker.trim()) {
-      void loadTopCompanies({ nextFilters });
-    }
+  function handleApplyFilters() {
+    setFilters(draftFilters);
+    writeDashboardUrl({
+      filters: draftFilters,
+      personaId,
+      screenerStrategy,
+      tab: activeTab,
+      ticker: appliedTicker,
+    });
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void analyzeTicker();
+    const nextTicker = ticker.trim().toUpperCase();
+
+    if (!nextTicker) {
+      return;
+    }
+
+    setScreenerResponse(null);
+    setAppliedTicker(nextTicker);
+    writeDashboardUrl({
+      filters,
+      personaId,
+      screenerStrategy,
+      tab: activeTab,
+      ticker: nextTicker,
+    });
   }
 
   function handleTickerChange(nextTicker: string) {
     setTicker(nextTicker);
 
-    if (!nextTicker.trim()) {
+    if (!nextTicker.trim() && appliedTicker) {
       setResponse(null);
-
-      if (!screenerResponse) {
-        void loadTopCompanies();
-      }
-
-      return;
-    }
-
-    if (
-      response &&
-      response.ticker !== nextTicker.trim().toUpperCase()
-    ) {
-      setResponse(null);
-      setRequestState("idle");
-      setError(null);
+      setAppliedTicker("");
+      writeDashboardUrl({
+        filters,
+        personaId,
+        screenerStrategy,
+        tab: activeTab,
+        ticker: "",
+      });
     }
   }
 
   function handleForceRefresh() {
-    if (ticker.trim()) {
-      void analyzeTicker({ forceRefresh: true });
+    if (appliedTicker) {
+      void analyzeTicker({
+        forceRefresh: true,
+        nextActiveTab: activeTab,
+        nextFilters: filters,
+        nextPersonaId: personaId,
+        nextTicker: appliedTicker,
+      });
 
       return;
     }
 
-    void loadTopCompanies({ forceRefresh: true });
+    void loadTopCompanies({
+      forceRefresh: true,
+      nextFilters: filters,
+      nextPersonaId: personaId,
+      nextStrategy: screenerStrategy,
+    });
   }
 
   function handleSelectCompanyTicker(
@@ -680,14 +814,38 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
     const nextActiveTab = tabForStrategy(strategy);
 
     setTicker(nextTicker);
-    void analyzeTicker({
-      nextActiveTab,
-      nextTicker,
+    setScreenerResponse(null);
+    setAppliedTicker(nextTicker);
+    setActiveTab(nextActiveTab);
+    writeDashboardUrl({
+      filters,
+      personaId,
+      screenerStrategy,
+      tab: nextActiveTab,
+      ticker: nextTicker,
     });
   }
 
   function handleScreenerStrategyChange(strategy: WheelCompanyStrategy) {
-    void loadTopCompanies({ nextStrategy: strategy });
+    setScreenerStrategy(strategy);
+    writeDashboardUrl({
+      filters,
+      personaId,
+      screenerStrategy: strategy,
+      tab: activeTab,
+      ticker: appliedTicker,
+    });
+  }
+
+  function handleAnalysisTabChange(tab: StrategyTab) {
+    setActiveTab(tab);
+    writeDashboardUrl({
+      filters,
+      personaId,
+      screenerStrategy,
+      tab,
+      ticker: appliedTicker,
+    });
   }
 
   function handleAccountSignedOut() {
@@ -702,78 +860,140 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   }
 
   useEffect(() => {
-    let cancelled = false;
+    const lifecycle = requestLifecycle.current;
 
-    async function loadInitialData() {
-      try {
-        if (!cancelled) {
-          await loadPresets();
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setRequestState("errorNoCache");
-          setError(caught instanceof Error ? caught.message : "Analysis failed.");
-        }
+    function restoreFromUrl() {
+      const restored = parseWheelDashboardState(
+        window.location.search,
+        urlDefaults,
+        personaIds,
+      );
+
+      lifecycle.abort();
+      if (restored.ticker) {
+        setScreenerResponse(null);
+      } else {
+        setResponse(null);
       }
+      setTicker(restored.ticker);
+      setAppliedTicker(restored.ticker);
+      setPersonaId(restored.personaId);
+      setFilters(restored.filters);
+      setDraftFilters(restored.filters);
+      setActiveTab(restored.tab);
+      setScreenerStrategy(restored.screenerStrategy);
+      setError(null);
+      setUrlReady(true);
     }
 
-    let screenerLoadTimer: number | null = null;
+    restoreFromUrl();
+    window.addEventListener("popstate", restoreFromUrl);
 
-    if (!didLoadInitialScreener.current) {
-      didLoadInitialScreener.current = true;
-      screenerLoadTimer = window.setTimeout(() => {
-        void (async () => {
-          const initialResponse = await loadTopCompanies();
+    return () => {
+      window.removeEventListener("popstate", restoreFromUrl);
+      lifecycle.abort();
+    };
+  }, [personaIds, urlDefaults]);
 
-          if (
-            !cancelled &&
-            shouldAutoRefreshScreenerResponse({
-              alreadyRefreshed: didAutoRefreshInitialScreener.current,
-              response: initialResponse,
-            })
-          ) {
-            didAutoRefreshInitialScreener.current = true;
-            void loadTopCompanies({
-              forceRefresh: true,
-              showAsRefresh: true,
-            });
-          }
-        })();
-      }, 0);
+  useEffect(() => {
+    if (!urlReady) {
+      return;
     }
 
-    void loadInitialData();
+    let cancelled = false;
+    const loadTimer = window.setTimeout(() => {
+      void (async () => {
+        if (appliedTicker) {
+          await analyzeTicker({
+            nextActiveTab: activeTab,
+            nextFilters: filters,
+            nextPersonaId: personaId,
+            nextTicker: appliedTicker,
+          });
+          return;
+        }
+
+        const nextResponse = await loadTopCompanies({
+          nextFilters: filters,
+          nextPersonaId: personaId,
+          nextStrategy: screenerStrategy,
+        });
+
+        if (
+          !cancelled &&
+          shouldAutoRefreshScreenerResponse({
+            alreadyRefreshed: didAutoRefreshInitialScreener.current,
+            response: nextResponse,
+          })
+        ) {
+          didAutoRefreshInitialScreener.current = true;
+          void loadTopCompanies({
+            forceRefresh: true,
+            nextFilters: filters,
+            nextPersonaId: personaId,
+            nextStrategy: screenerStrategy,
+            showAsRefresh: true,
+          });
+        }
+      })();
+    }, 0);
+
+    if (!didLoadPresets.current) {
+      didLoadPresets.current = true;
+      void loadPresets();
+    }
 
     return () => {
       cancelled = true;
-      if (screenerLoadTimer) {
-        window.clearTimeout(screenerLoadTimer);
-      }
+      window.clearTimeout(loadTimer);
     };
-  }, [loadTopCompanies]);
+  }, [
+    activeTab,
+    analyzeTicker,
+    appliedTicker,
+    filters,
+    loadTopCompanies,
+    personaId,
+    screenerStrategy,
+    urlReady,
+  ]);
 
-  const rows = activeTab === "puts"
+  const displayedTab = response ? resultIdentity.tab : activeTab;
+  const displayedStrategy = screenerResponse
+    ? resultIdentity.screenerStrategy
+    : screenerStrategy;
+  const displayedFilters = response || screenerResponse
+    ? resultIdentity.filters
+    : filters;
+  const displayedPersona = personaById(
+    initialPersonas,
+    response || screenerResponse ? resultIdentity.personaId : personaId,
+    defaultPersona,
+  );
+  const rows = displayedTab === "puts"
     ? response?.shortPuts ?? []
-    : activeTab === "calls"
+    : displayedTab === "calls"
       ? response?.coveredCalls ?? []
       : [];
-  const spreadRows = activeTab === "putSpreads"
+  const spreadRows = displayedTab === "putSpreads"
     ? response?.putCreditSpreads ?? []
-    : activeTab === "callSpreads"
+    : displayedTab === "callSpreads"
       ? response?.callCreditSpreads ?? []
       : [];
-  const hasTicker = ticker.trim().length > 0;
+  const hasTicker = appliedTicker.length > 0;
   const companyInsightState = useCompanyInsights(
-    hasTicker ? response?.ticker ?? ticker : null,
+    hasTicker ? response?.ticker ?? appliedTicker : null,
   );
   const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
   const isServerRefreshRunning =
     freshness?.refreshStatus === "refreshing" || requestState === "refreshing";
+  const hasUnappliedFilterChanges =
+    JSON.stringify(draftFilters) !== JSON.stringify(filters);
 
   return (
     <main className="min-h-screen bg-[#0b0c0d] text-zinc-100">
       <DashboardHeader
-        canAnalyze={hasTicker}
+        canAnalyze={ticker.trim().length > 0}
         canRefresh={
           hasTicker
             ? Boolean(response) && !isServerRefreshRunning
@@ -791,11 +1011,15 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         ticker={ticker}
       />
       <ScreenerStatusStrip
-        activePersona={activePersona}
+        activePersona={displayedPersona}
         error={error}
+        filters={displayedFilters}
         requestState={requestState}
         response={response}
         screenerResponse={screenerResponse}
+        strategy={displayedStrategy}
+        tab={displayedTab}
+        ticker={response?.ticker ?? (appliedTicker || resultIdentity.ticker)}
       />
 
       <div className="mx-auto grid max-w-[1600px] items-start gap-4 px-4 py-5 md:px-6 xl:grid-cols-[minmax(0,1fr)_320px] xl:px-8">
@@ -803,28 +1027,28 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           {hasTicker ? (
             <>
               <MarketOverview
-                activePersona={activePersona}
+                activePersona={displayedPersona}
                 error={error}
-                filters={filters}
+                filters={displayedFilters}
                 requestState={requestState}
                 response={response}
-                ticker={ticker}
+                ticker={response?.ticker ?? appliedTicker}
               />
               <CompanyInsightStrip state={companyInsightState} />
 
               {response ? (
                 <CandidateResults
-                  activeTab={activeTab}
+                  activeTab={displayedTab}
                   analysisContext={{
                     dataFreshness: response.dataFreshness,
-                    filters: filters as unknown as JsonValue,
+                    filters: displayedFilters as unknown as JsonValue,
                     persona: response.persona,
                     source: "wheel_dashboard",
                     ticker: response.ticker,
                     underlying: response.underlying,
                   }}
                   companyInsightState={companyInsightState}
-                  onTabChange={setActiveTab}
+                  onTabChange={handleAnalysisTabChange}
                   requestState={requestState}
                   rows={rows}
                   spreadRows={spreadRows}
@@ -835,15 +1059,15 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
           ) : (
             <>
               <CompanyScreenerOverview
-                activePersona={activePersona}
+                activePersona={displayedPersona}
                 error={error}
-                filters={filters}
+                filters={displayedFilters}
                 requestState={requestState}
                 response={screenerResponse}
-                strategy={screenerStrategy}
+                strategy={displayedStrategy}
               />
               <CompanyResults
-                activeStrategy={screenerStrategy}
+                activeStrategy={displayedStrategy}
                 companies={screenerResponse?.companies ?? []}
                 onSelectStrategy={handleScreenerStrategyChange}
                 onSelectTicker={handleSelectCompanyTicker}
@@ -855,7 +1079,9 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
 
         <aside className="order-first grid content-start gap-4 xl:order-none">
           <FilterPanel
-            filters={filters}
+            filters={draftFilters}
+            hasUnappliedChanges={hasUnappliedFilterChanges}
+            onApply={handleApplyFilters}
             onChange={handleFiltersChange}
             onReset={() => handleFiltersChange(activePersona.filters)}
           />

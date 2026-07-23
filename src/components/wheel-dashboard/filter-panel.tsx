@@ -84,10 +84,14 @@ function ToggleFilter({
 
 export function FilterPanel({
   filters,
+  hasUnappliedChanges,
+  onApply,
   onChange,
   onReset,
 }: {
   filters: WheelFilters;
+  hasUnappliedChanges: boolean;
+  onApply: () => void;
   onChange: (filters: WheelFilters) => void;
   onReset: () => void;
 }) {
@@ -128,8 +132,21 @@ export function FilterPanel({
           >
             Reset
           </button>
+          <button
+            className="rounded-md bg-emerald-300 px-3 py-1 text-xs font-semibold text-black transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!hasUnappliedChanges}
+            onClick={onApply}
+            type="button"
+          >
+            Apply
+          </button>
         </div>
       </div>
+      {hasUnappliedChanges ? (
+        <p className="mt-3 text-xs text-amber-200">
+          Draft changes are not applied to the visible results yet.
+        </p>
+      ) : null}
       <div className={`mt-4 gap-4 ${expanded ? "grid" : "hidden"} xl:grid`}>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <NumericFilter
