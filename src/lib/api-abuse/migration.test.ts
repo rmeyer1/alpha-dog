@@ -25,4 +25,8 @@ describe("API abuse protection migration", () => {
     expect(migration).toContain("to service_role");
     expect(migration).toContain("enable row level security");
   });
+
+  it("does not schema-qualify SQL conditional expressions", () => {
+    expect(migration).not.toMatch(/pg_catalog\.(?:coalesce|greatest)\s*\(/i);
+  });
 });

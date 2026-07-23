@@ -22,8 +22,6 @@ interface ManualAccountErrorPayload {
   };
 }
 
-const EMAIL_ALREADY_REGISTERED = "EMAIL_ALREADY_REGISTERED";
-
 function firstError(errors: Record<string, string[] | undefined> | undefined, key: string) {
   return errors?.[key]?.[0];
 }
@@ -51,29 +49,12 @@ export function validateManualAccountFields(
   return errors;
 }
 
-export function manualAccountConflictPath(nextPath: string) {
-  const params = new URLSearchParams({
-    auth_error: EMAIL_ALREADY_REGISTERED,
-    next: safeRedirectPath(nextPath),
-  });
-
-  return `/account?${params.toString()}`;
-}
-
 export function manualAccountCreatePath(nextPath: string) {
   const params = new URLSearchParams({
     next: safeRedirectPath(nextPath),
   });
 
   return `/account/manual?${params.toString()}`;
-}
-
-export function manualAccountRedirectTo(origin: string, nextPath: string) {
-  const url = new URL("/account", origin);
-  url.searchParams.set("profile", "complete");
-  url.searchParams.set("next", safeRedirectPath(nextPath));
-
-  return url.toString();
 }
 
 export function manualAccountErrorsFromPayload(
@@ -92,7 +73,6 @@ export function manualAccountErrorsFromPayload(
   );
 
   return {
-    conflict: payload?.error?.code === EMAIL_ALREADY_REGISTERED,
     fieldErrors: mappedFieldErrors,
     formError: hasFieldErrors
       ? null

@@ -120,18 +120,16 @@ The account UI recognizes these safe routing states:
 
 - `/account?auth_error=ACCOUNT_EMAIL_CONFLICT&next=/screeners`: OAuth provider
   email conflicts with another account and must show the account conflict state.
-- `/account?auth_error=EMAIL_ALREADY_REGISTERED&next=/account`: manual account
-  creation attempted an email that is already registered.
 - `/account?provider_link=required&provider=google&provider_email=desk@example.com&next=/screeners`:
   authenticated provider-link confirmation prompt. The client must show
   confirm/cancel actions and may submit confirmation to a backend provider-link
   endpoint when that endpoint exists.
 
 The manual account form posts to `POST /api/auth/manual-account` with
-`email`, `firstName`, `lastName`, and a safe `redirectTo` back to
-`/account?profile=complete&next=...`. A successful invite renders an
-invite-sent state. `EMAIL_ALREADY_REGISTERED` redirects back into the account
-conflict UI instead of leaving the user on a dead-end form error.
+`email`, `firstName`, `lastName`, a relative `nextPath`, and a Turnstile token.
+The server derives the absolute invite destination from trusted deployment
+configuration. New, existing, provider-linked, and throttled addresses receive
+the same accepted response.
 
 ### `POST /api/auth/manual-account`
 
@@ -145,7 +143,8 @@ Request:
   "email": "desk@example.com",
   "firstName": "Ryan",
   "lastName": "Meyer",
-  "redirectTo": "https://alpha-dog.vercel.app/account"
+  "nextPath": "/account",
+  "captchaToken": "turnstile-token"
 }
 ```
 
@@ -153,33 +152,39 @@ Field notes:
 
 - `email`, `firstName`, and `lastName` are required.
 - `email` is trimmed, lowercased, and validated before any Supabase Auth call.
-- `redirectTo` is optional and must be a URL if provided.
+- `nextPath` is optional and must be a same-application path. Absolute,
+  protocol-relative, and malformed values normalize to `/account`.
+- `captchaToken` is required when Turnstile protection is configured and in
+  every production deployment.
 - Password auth is intentionally out of scope; this route uses Supabase invite
   semantics for a passwordless/manual account start.
 
-Success response:
+Accepted response (`202`):
 
 ```json
 {
-  "status": "invite_sent",
-  "account": {
-    "id": "auth-user-id",
-    "email": "desk@example.com",
-    "firstName": "Ryan",
-    "lastName": "Meyer"
-  }
+  "status": "accepted",
+  "message": "If this email is eligible, an invitation will arrive shortly.",
+  "correlationId": "request-correlation-id"
 }
 ```
+
+The same response is returned when the normalized email already exists or its
+privacy-preserving invitation budget has been exhausted.
 
 Error codes:
 
 - `INVALID_MANUAL_ACCOUNT`: missing required fields or invalid email.
-- `EMAIL_ALREADY_REGISTERED`: normalized email already belongs to an account.
+- `BOT_CHALLENGE_FAILED`: the Turnstile token was missing, expired, replayed,
+  invalid, or issued for a different action.
+- `MANUAL_ACCOUNT_UNAVAILABLE`: trusted redirect, distributed limiter, or
+  Turnstile configuration/verification is unavailable.
 - `ACCOUNT_AUTH_NOT_CONFIGURED`: Supabase service-role auth is unavailable.
 - `ACCOUNT_INVITE_FAILED`: Supabase Auth invite failed before profile creation.
-- `ACCOUNT_PROFILE_CREATE_FAILED`: profile creation failed after auth user
-  creation. The server attempts to delete the newly created auth user as
-  compensating cleanup before returning this error.
+
+The database creates the manual account profile from invite metadata in the
+same transaction that inserts the auth user. The application never deletes a
+user after Supabase has sent an invitation.
 
 ### `PATCH /api/auth/profile`
 

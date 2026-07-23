@@ -89,9 +89,8 @@ or a matching wildcard pattern to Supabase Redirect URLs and retry.
 - Google duplicate normalized email: routes to
   `/account?auth_error=ACCOUNT_EMAIL_CONFLICT&next=...` and shows the account
   conflict state.
-- Manual account duplicate normalized email: routes to
-  `/account?auth_error=EMAIL_ALREADY_REGISTERED&next=...` and shows the manual
-  duplicate conflict state.
+- Manual account duplicate normalized email: remains on the form and shows the
+  same generic accepted state as a new eligible address.
 - Future provider private relay/direct email: keep disabled for MVP, then test
   only after provider support is explicitly enabled.
 
@@ -109,9 +108,8 @@ or a matching wildcard pattern to Supabase Redirect URLs and retry.
   renders the account conflict state instead of the generic sign-in failure.
 - Confirm the conflict state offers safe actions back to the account hub and
   dashboard without implying that the client can merge accounts.
-- Confirm a future manual account form can use
-  `/account?auth_error=EMAIL_ALREADY_REGISTERED` to render the manual duplicate
-  email state.
+- Confirm manual account requests never expose this conflict through their HTTP
+  status, response body, redirect, or visible copy.
 - Confirm the unique `normalized_email` constraint prevents a duplicate
   profile.
 

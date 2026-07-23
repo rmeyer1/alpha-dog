@@ -6,6 +6,7 @@ import {
   accountNextPathFromSearchParams,
   type AccountSearchParams,
 } from "@/lib/supabase/auth-ui";
+import { getManualAccountChallengeUiConfig } from "@/lib/supabase/manual-account-protection";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,7 @@ export default async function ManualAccountPage({
 }) {
   const resolvedSearchParams = await searchParams ?? {};
   const nextPath = accountNextPathFromSearchParams(resolvedSearchParams);
+  const challenge = getManualAccountChallengeUiConfig();
 
   return (
     <AccountShell
@@ -41,7 +43,11 @@ export default async function ManualAccountPage({
             invite to the email you enter and keep account-owned features tied
             to that address.
           </p>
-          <ManualAccountForm nextPath={nextPath} />
+          <ManualAccountForm
+            challengeRequired={challenge.required}
+            nextPath={nextPath}
+            turnstileSiteKey={challenge.siteKey}
+          />
         </section>
 
         <aside className="rounded-lg border border-white/10 bg-[#151718] p-5">

@@ -1,27 +1,42 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { getEnv } from "@/lib/env";
 import {
   manualDuplicateEmailResult,
+  safeRedirectPath,
 } from "./oauth";
 import { normalizeAccountEmail } from "./auth";
 
 export const ACCOUNT_AUTH_NOT_CONFIGURED = "ACCOUNT_AUTH_NOT_CONFIGURED";
 export const ACCOUNT_INVITE_FAILED = "ACCOUNT_INVITE_FAILED";
-export const ACCOUNT_PROFILE_CREATE_FAILED = "ACCOUNT_PROFILE_CREATE_FAILED";
 
 export const manualAccountInputSchema = z.object({
+  captchaToken: z.string().trim().min(1).max(2_048).optional(),
   email: z
     .string()
     .trim()
+    .max(320)
     .email()
     .transform((email) => normalizeAccountEmail(email)),
-  firstName: z.string().trim().min(1, "First name is required."),
-  lastName: z.string().trim().min(1, "Last name is required."),
-  redirectTo: z.string().url().optional(),
+  firstName: z.string().trim().min(1, "First name is required.").max(100),
+  lastName: z.string().trim().min(1, "Last name is required.").max(100),
+  nextPath: z
+    .string()
+    .trim()
+    .max(2_048)
+    .optional()
+    .transform((value) => safeRedirectPath(value ?? null)),
 });
 
 export type ManualAccountInput = z.input<typeof manualAccountInputSchema>;
 export type ManualAccountData = z.output<typeof manualAccountInputSchema>;
+
+export interface ManualAccountCreateData {
+  email: string;
+  firstName: string;
+  lastName: string;
+  redirectTo: string;
+}
 
 export interface ManualAccountSuccess {
   account: {
@@ -39,8 +54,7 @@ export type ManualAccountResult =
   | {
       code:
         | typeof ACCOUNT_AUTH_NOT_CONFIGURED
-        | typeof ACCOUNT_INVITE_FAILED
-        | typeof ACCOUNT_PROFILE_CREATE_FAILED;
+        | typeof ACCOUNT_INVITE_FAILED;
       status: "error";
     };
 
@@ -63,15 +77,78 @@ async function emailAlreadyRegistered(
   return Boolean(data);
 }
 
-async function cleanupAuthUser(
-  supabase: ManualAccountSupabaseClient,
-  userId: string,
+function inviteAlreadyExists(error: { code?: string; message?: string } | null) {
+  return error?.code === "email_exists" ||
+    error?.code === "user_already_exists" ||
+    Boolean(error?.message?.toLowerCase().includes("already"));
+}
+
+function normalizedOrigin(value: string | undefined, addHttps = false) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const candidate = addHttps && !value.startsWith("http")
+      ? `https://${value}`
+      : value;
+    const url = new URL(candidate);
+
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.origin
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function manualAccountInviteRedirectUrl(
+  requestUrl: string,
+  nextPath: string,
+  options?: {
+    appUrl?: string;
+    nodeEnv?: string;
+    vercelProjectProductionUrl?: string;
+    vercelUrl?: string;
+  },
 ) {
-  await supabase.auth.admin.deleteUser(userId).catch(() => null);
+  let configuredOptions = options;
+
+  if (!configuredOptions) {
+    try {
+      const env = getEnv();
+
+      configuredOptions = {
+        appUrl: env.ALPHA_DOG_APP_URL,
+        nodeEnv: process.env.NODE_ENV,
+        vercelProjectProductionUrl:
+          process.env.VERCEL_PROJECT_PRODUCTION_URL,
+        vercelUrl: process.env.VERCEL_URL,
+      };
+    } catch {
+      return null;
+    }
+  }
+  const trustedOrigin = normalizedOrigin(configuredOptions.appUrl) ??
+    normalizedOrigin(configuredOptions.vercelProjectProductionUrl, true) ??
+    normalizedOrigin(configuredOptions.vercelUrl, true) ??
+    (configuredOptions.nodeEnv === "production"
+      ? null
+      : normalizedOrigin(new URL(requestUrl).origin));
+
+  if (!trustedOrigin) {
+    return null;
+  }
+
+  const redirect = new URL("/account", trustedOrigin);
+  redirect.searchParams.set("profile", "complete");
+  redirect.searchParams.set("next", safeRedirectPath(nextPath));
+
+  return redirect.toString();
 }
 
 export async function createManualAccount(
-  input: ManualAccountData,
+  input: ManualAccountCreateData,
   supabase: ManualAccountSupabaseClient | null,
 ): Promise<ManualAccountResult> {
   if (!supabase) {
@@ -89,12 +166,13 @@ export async function createManualAccount(
     data: {
       first_name: input.firstName,
       last_name: input.lastName,
+      manual_account_invite: true,
     },
-    ...(input.redirectTo ? { redirectTo: input.redirectTo } : {}),
+    redirectTo: input.redirectTo,
   });
 
   if (invite.error || !invite.data.user) {
-    return invite.error?.message?.toLowerCase().includes("already")
+    return inviteAlreadyExists(invite.error)
       ? manualDuplicateEmailResult(input.email)
       : {
           code: ACCOUNT_INVITE_FAILED,
@@ -103,24 +181,6 @@ export async function createManualAccount(
   }
 
   const userId = invite.data.user.id;
-  const profile = await supabase.from("account_profiles").insert({
-    email: input.email,
-    first_name: input.firstName,
-    id: userId,
-    last_name: input.lastName,
-    primary_provider: "email",
-  });
-
-  if (profile.error) {
-    await cleanupAuthUser(supabase, userId);
-
-    return profile.error.code === "23505"
-      ? manualDuplicateEmailResult(input.email)
-      : {
-          code: ACCOUNT_PROFILE_CREATE_FAILED,
-          status: "error",
-        };
-  }
 
   return {
     account: {

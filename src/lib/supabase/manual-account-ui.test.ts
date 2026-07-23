@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  manualAccountConflictPath,
   manualAccountCreatePath,
   manualAccountErrorsFromPayload,
-  manualAccountRedirectTo,
   validateManualAccountFields,
 } from "./manual-account-ui";
 
@@ -28,17 +26,11 @@ describe("manual account UI helpers", () => {
     })).toEqual({});
   });
 
-  it("builds safe conflict and invite redirect destinations", () => {
-    expect(manualAccountConflictPath("/screeners"))
-      .toBe("/account?auth_error=EMAIL_ALREADY_REGISTERED&next=%2Fscreeners");
-    expect(manualAccountConflictPath("https://evil.example"))
-      .toBe("/account?auth_error=EMAIL_ALREADY_REGISTERED&next=%2Faccount");
+  it("builds safe manual-account destinations", () => {
     expect(manualAccountCreatePath("/screeners"))
       .toBe("/account/manual?next=%2Fscreeners");
     expect(manualAccountCreatePath("https://evil.example"))
       .toBe("/account/manual?next=%2Faccount");
-    expect(manualAccountRedirectTo("https://alpha.example", "/screeners"))
-      .toBe("https://alpha.example/account?profile=complete&next=%2Fscreeners");
   });
 
   it("maps backend validation payloads to field errors", () => {
@@ -54,7 +46,6 @@ describe("manual account UI helpers", () => {
         message: "Manual account payload is invalid.",
       },
     })).toEqual({
-      conflict: false,
       fieldErrors: {
         email: "Invalid email address.",
         firstName: "First name is required.",
@@ -71,7 +62,6 @@ describe("manual account UI helpers", () => {
         message: "An account already exists for this email.",
       },
     })).toEqual({
-      conflict: true,
       fieldErrors: {
         email: undefined,
         firstName: undefined,
