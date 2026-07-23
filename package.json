@@ -5,7 +5,7 @@
   "packageManager": "npm@10.9.4",
   "engines": {
     "node": ">=22.22.0 <23",
-    "npm": "10.9.4"
+    "npm": ">=10.9.4 <11"
   },
   "overrides": {
     "postcss": "8.5.22",

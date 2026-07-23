@@ -7,9 +7,9 @@ options-trading workflows.
 
 ## Reproducible setup
 
-The supported local and CI toolchain is Node.js 22.22.0 with npm 10.9.4.
-Version managers can read `.nvmrc`; `package.json` declares the matching
-package manager and supported engines.
+The local and pull-request CI toolchain is pinned to Node.js 22.22.0 with npm
+10.9.4. Version managers can read `.nvmrc`; `package.json` declares the exact
+package manager and compatible Node 22/npm 10 deployment engines.
 
 ```bash
 nvm use

@@ -6,7 +6,7 @@ const packageJson = JSON.parse(
 const nodeVersion = (
   await readFile(new URL("../.nvmrc", import.meta.url), "utf8")
 ).trim();
-const expectedPackageManager = `npm@${packageJson.engines.npm}`;
+const expectedPackageManager = packageJson.packageManager;
 const npmUserAgent = process.env.npm_config_user_agent ?? "";
 const actualPackageManager = npmUserAgent.split(" ")[0].replace("/", "@");
 
@@ -16,9 +16,9 @@ if (process.version !== `v${nodeVersion}`) {
   mismatches.push(`Node ${nodeVersion} is required; found ${process.version}.`);
 }
 
-if (packageJson.packageManager !== expectedPackageManager) {
+if (expectedPackageManager !== "npm@10.9.4") {
   mismatches.push(
-    `packageManager must be ${expectedPackageManager}; found ${packageJson.packageManager}.`,
+    `packageManager must be npm@10.9.4; found ${expectedPackageManager}.`,
   );
 }
 
