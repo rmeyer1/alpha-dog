@@ -167,7 +167,7 @@ describe("wheel company screener", () => {
   });
 
   it("delegates live first-page scans to the staged universe scanner", async () => {
-    vi.stubEnv("USE_DEMO_DATA", "false");
+    vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
     vi.stubEnv("APCA_API_KEY_ID", "key");
     vi.stubEnv("APCA_API_SECRET_KEY", "secret");
     vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");

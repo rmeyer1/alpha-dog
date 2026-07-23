@@ -1,4 +1,4 @@
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { getEnv, isDemoMode } from "@/lib/env";
 import { requestSupabaseRest } from "@/lib/supabase/rest";
 import { getPersona, mergeFilters } from "./personas";
 import type {
@@ -25,6 +25,8 @@ const DEEP_SCAN_CANDIDATE_SELECT =
   "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_received,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
 const LEGACY_DEEP_SCAN_CANDIDATE_SELECT =
   "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
+const SNAPSHOT_SELECT =
+  "id,persona,strategy,filter_key,filters,feed,data_source_mode,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at";
 
 export interface WheelScreenerSnapshotRow {
   id: string;
@@ -41,6 +43,7 @@ export interface WheelScreenerSnapshotRow {
   skipped_count: number;
   error: string | null;
   created_at: string;
+  data_source_mode: "demo" | "live";
 }
 
 export interface MaterializedWheelScreenerRefreshStatus {
@@ -115,12 +118,13 @@ function stableStringify(value: unknown): string {
 
 function getRequestContext(request: WheelScreenerRequest) {
   const env = getEnv();
-  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const useDemoData = isDemoMode(env);
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
   const filters = mergeFilters(request.persona, request.filters);
 
   return {
     feed,
+    sourceMode: useDemoData ? "demo" as const : "live" as const,
     filters,
     filterKey: stableStringify(filters),
     persona: getPersona(request.persona),
@@ -397,22 +401,23 @@ function companyScoreToCandidateRow(
 export async function getMaterializedWheelScreenerResponse(
   request: WheelScreenerRequest,
 ): Promise<WheelScreenerResponse | null> {
-  if (request.forceRefresh) {
+  if (request.forceRefresh || isDemoMode()) {
     return null;
   }
 
-  const { feed, filterKey, persona, strategy } = getRequestContext(request);
+  const { feed, filterKey, persona, sourceMode, strategy } =
+    getRequestContext(request);
   const offset = request.cursor ?? 0;
   const snapshots = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
     "wheel_screener_snapshots",
     {
       query: {
-        select:
-          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        select: SNAPSHOT_SELECT,
         persona: `eq.${request.persona}`,
         strategy: `eq.${strategy}`,
         filter_key: `eq.${filterKey}`,
         feed: `eq.${feed}`,
+        data_source_mode: `eq.${sourceMode}`,
         status: "eq.complete",
         order: "completed_at.desc",
         limit: 1,
@@ -536,17 +541,17 @@ async function getRecentDeepScanCandidateRows({
 export async function getLatestMaterializedWheelScreenerSnapshot(
   request: WheelScreenerRequest,
 ) {
-  const { feed, filterKey, strategy } = getRequestContext(request);
+  const { feed, filterKey, sourceMode, strategy } = getRequestContext(request);
   const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
     "wheel_screener_snapshots",
     {
       query: {
-        select:
-          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        select: SNAPSHOT_SELECT,
         persona: `eq.${request.persona}`,
         strategy: `eq.${strategy}`,
         filter_key: `eq.${filterKey}`,
         feed: `eq.${feed}`,
+        data_source_mode: `eq.${sourceMode}`,
         status: "in.(running,complete)",
         order: "created_at.desc",
         limit: 1,
@@ -560,17 +565,17 @@ export async function getLatestMaterializedWheelScreenerSnapshot(
 export async function getMaterializedWheelScreenerRefreshStatus(
   request: WheelScreenerRequest,
 ): Promise<MaterializedWheelScreenerRefreshStatus> {
-  const { feed, filterKey, strategy } = getRequestContext(request);
+  const { feed, filterKey, sourceMode, strategy } = getRequestContext(request);
   const rows = await requestSupabaseRest<WheelScreenerSnapshotRow[]>(
     "wheel_screener_snapshots",
     {
       query: {
-        select:
-          "id,persona,strategy,filter_key,filters,feed,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at",
+        select: SNAPSHOT_SELECT,
         persona: `eq.${request.persona}`,
         strategy: `eq.${strategy}`,
         filter_key: `eq.${filterKey}`,
         feed: `eq.${feed}`,
+        data_source_mode: `eq.${sourceMode}`,
         status: "in.(running,complete,failed)",
         order: "created_at.desc",
         limit: 20,
@@ -619,7 +624,8 @@ export async function getMaterializedWheelScreenerRefreshStatus(
 export async function createMaterializedWheelScreenerSnapshot(
   request: WheelScreenerRequest,
 ) {
-  const { feed, filterKey, filters, strategy } = getRequestContext(request);
+  const { feed, filterKey, filters, sourceMode, strategy } =
+    getRequestContext(request);
   const rows = await requestSupabaseRest<Pick<WheelScreenerSnapshotRow, "id">[]>(
     "wheel_screener_snapshots",
     {
@@ -631,6 +637,7 @@ export async function createMaterializedWheelScreenerSnapshot(
           filter_key: filterKey,
           filters,
           feed,
+          data_source_mode: sourceMode,
           status: "running",
         },
       ],

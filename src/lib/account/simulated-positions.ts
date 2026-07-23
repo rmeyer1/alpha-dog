@@ -16,6 +16,39 @@ const optionalSnapshotSchema = snapshotSchema.optional().default({});
 const optionalNonNegativeNumber = z.number().finite().min(0).optional();
 const optionalGreek = z.number().finite().optional();
 
+const dataProvenanceSchema = z.object({
+  asOf: z.string().datetime().optional(),
+  cacheSource: z.enum([
+    "demo",
+    "live",
+    "materialized",
+    "memory_cache",
+    "runtime_cache",
+  ]).optional(),
+  cacheStatus: z.enum(["demo", "fresh", "stale"]).optional(),
+  feed: z.enum(["demo", "indicative", "opra"]).optional(),
+  sourceMode: z.enum(["demo", "live", "unknown"]).default("unknown"),
+}).superRefine((provenance, ctx) => {
+  if (provenance.sourceMode === "demo" && provenance.feed !== "demo") {
+    ctx.addIssue({
+      code: "custom",
+      message: "Demo positions must retain the demo feed provenance.",
+      path: ["feed"],
+    });
+  }
+
+  if (
+    provenance.sourceMode === "live" &&
+    !["indicative", "opra"].includes(provenance.feed ?? "")
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Live positions must retain a live feed provenance.",
+      path: ["feed"],
+    });
+  }
+});
+
 const simulatedPositionLegInputSchema = z.object({
   askPrice: optionalNonNegativeNumber,
   bidPrice: optionalNonNegativeNumber,
@@ -44,6 +77,7 @@ const simulatedPositionLegInputSchema = z.object({
 export const simulatedPositionInputSchema = z.object({
   candidateSnapshot: optionalSnapshotSchema,
   contracts: z.number().int().positive().max(1000),
+  dataProvenance: dataProvenanceSchema.optional(),
   expirationDate: dateSchema.optional(),
   legs: z.array(simulatedPositionLegInputSchema).min(1).max(4),
   netCredit: z.number().finite().positive().optional(),
@@ -114,10 +148,15 @@ interface PaperAccountRow {
 }
 
 export interface SimulatedPositionRow {
+  candidate_as_of: string | null;
+  candidate_cache_source: string | null;
+  candidate_cache_status: string | null;
+  candidate_feed: string | null;
   closed_at: string | null;
   contracts_opened: number;
   contracts_remaining: number;
   created_at: string;
+  data_source_mode: "demo" | "live" | "unknown";
   expiration_date: string | null;
   id: string;
   net_credit: number;
@@ -203,6 +242,11 @@ const positionColumns = [
   "user_id",
   "paper_account_id",
   "source",
+  "data_source_mode",
+  "candidate_feed",
+  "candidate_cache_status",
+  "candidate_cache_source",
+  "candidate_as_of",
   "status",
   "strategy_type",
   "symbol",
@@ -456,6 +500,10 @@ export async function createSimulatedPosition(
   input: SimulatedPositionInput,
   now = new Date(),
 ) {
+  const dataProvenance = input.dataProvenance ?? {
+    sourceMode: "unknown" as const,
+  };
+
   if (hasRpc(supabase)) {
     const netCredit = calculateNetCredit(input);
 
@@ -492,6 +540,11 @@ export async function createSimulatedPosition(
     .insert({
       contracts_opened: input.contracts,
       contracts_remaining: input.contracts,
+      data_source_mode: dataProvenance.sourceMode,
+      candidate_feed: dataProvenance.feed ?? null,
+      candidate_cache_status: dataProvenance.cacheStatus ?? null,
+      candidate_cache_source: dataProvenance.cacheSource ?? null,
+      candidate_as_of: dataProvenance.asOf ?? null,
       expiration_date: input.expirationDate ?? null,
       net_credit: netCredit,
       notes: input.notes ?? null,
@@ -559,6 +612,7 @@ export async function createSimulatedPosition(
         margin_delta: 0,
         metadata: {
           candidateSnapshot: input.candidateSnapshot,
+          dataProvenance,
           multiplier,
           strategyType: input.strategyType,
         },

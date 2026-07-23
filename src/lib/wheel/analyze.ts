@@ -1,4 +1,4 @@
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { getEnv, isDemoMode } from "@/lib/env";
 import { getLiveWheelMarketData } from "@/lib/alpaca/client";
 import {
   buildAnalysisCacheKey,
@@ -295,12 +295,14 @@ function prepareWheelAnalysis(request: WheelAnalysisRequest) {
   const personaId: PersonaId = request.persona;
   const filters: WheelFilters = mergeFilters(personaId, request.filters);
   const resultLimit = request.resultLimit ?? 25;
-  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const useDemoData = isDemoMode(env);
+  const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
   const cacheKey = buildAnalysisCacheKey({
-    feed: env.ALPACA_OPTIONS_FEED,
+    feed,
     filters,
     personaId,
     resultLimit,
+    sourceMode: useDemoData ? "demo" : "live",
     strategy: request.strategy,
     ticker,
   });

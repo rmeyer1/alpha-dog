@@ -14,7 +14,7 @@ beforeEach(() => {
   vi.resetModules();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  vi.stubEnv("USE_DEMO_DATA", "false");
+  vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
   vi.stubEnv("POLYMARKET_DATA_API_BASE_URL", "https://data-api.polymarket.com");
 });
 
@@ -88,7 +88,7 @@ describe("polymarket client", () => {
 
   it("aggregates sharp plays in demo mode", async () => {
     vi.resetModules();
-    vi.stubEnv("USE_DEMO_DATA", "true");
+    vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "demo");
 
     const { fetchPolymarketSharpPlays } = await import("./client");
     const response = await fetchPolymarketSharpPlays({

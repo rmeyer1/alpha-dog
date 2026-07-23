@@ -157,6 +157,21 @@ function asSnapshot(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function candidateDataProvenance(
+  analysisContext: CandidateAnalysisContext,
+): SimulatedPositionInput["dataProvenance"] {
+  const freshness = analysisContext.dataFreshness;
+
+  return {
+    asOf: freshness.asOf,
+    cacheSource:
+      freshness.source ?? (freshness.feed === "demo" ? "demo" : "live"),
+    cacheStatus: freshness.cacheStatus,
+    feed: freshness.feed,
+    sourceMode: freshness.feed === "demo" ? "demo" : "live",
+  };
+}
+
 export function buildSimulatedPositionInput({
   analysisContext,
   contracts,
@@ -185,6 +200,7 @@ export function buildSimulatedPositionInput({
         source: analysisContext.source,
       }),
       contracts,
+      dataProvenance: candidateDataProvenance(analysisContext),
       expirationDate: candidate.expirationDate,
       legs: [{
         askPrice: candidate.ask,
@@ -223,6 +239,7 @@ export function buildSimulatedPositionInput({
       source: analysisContext.source,
     }),
     contracts,
+    dataProvenance: candidateDataProvenance(analysisContext),
     expirationDate: candidate.expirationDate,
     legs: [
       {

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
-import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
+import {
+  getEnv,
+  getMarketDataConfigurationError,
+  isDemoMode,
+} from "@/lib/env";
 import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import { analyzeTopWheelCompanies } from "@/lib/wheel/screener";
 import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh";
@@ -26,6 +29,24 @@ export async function POST(request: Request) {
     );
   }
 
+  const env = getEnv();
+  const configurationError = getMarketDataConfigurationError(
+    { requireSupabase: !isDemoMode(env) },
+    env,
+  );
+
+  if (configurationError) {
+    return NextResponse.json(
+      {
+        error: {
+          ...configurationError,
+          retryable: false,
+        },
+      },
+      { status: 503 },
+    );
+  }
+
   try {
     if (!parsed.data.forceRefresh) {
       const materialized = await getMaterializedWheelScreenerResponse(
@@ -37,24 +58,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const env = getEnv();
-    const liveUniverse = !env.USE_DEMO_DATA && hasAlpacaCredentials();
+    const liveUniverse = !isDemoMode(env);
 
     if (liveUniverse) {
-      if (!getSupabaseServiceConfig()) {
-        return NextResponse.json(
-          {
-            error: {
-              code: "ALPHA_DOG_SUPABASE_NOT_CONFIGURED",
-              message:
-                "Alpha Dog Supabase service-role configuration is required before running a live universe scan.",
-              retryable: false,
-            },
-          },
-          { status: 503 },
-        );
-      }
-
       const runningFallback = await getRunningScreenerRefreshFallback(
         parsed.data,
       );

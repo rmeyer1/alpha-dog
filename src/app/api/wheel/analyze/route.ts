@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import {
+  getEnv,
+  getMarketDataConfigurationError,
+  isDemoMode,
+} from "@/lib/env";
 import { persistAuthenticatedAnalysisRequest } from "@/lib/wheel/analysis-audit";
 import {
   analyzeWheelCandidates,
@@ -39,7 +43,21 @@ export async function POST(request: NextRequest) {
   }
 
   const env = getEnv();
-  const usesPaidProvider = !env.USE_DEMO_DATA && hasAlpacaCredentials();
+  const configurationError = getMarketDataConfigurationError({}, env);
+
+  if (configurationError) {
+    return NextResponse.json(
+      {
+        error: {
+          ...configurationError,
+          retryable: false,
+        },
+      },
+      { status: 503 },
+    );
+  }
+
+  const usesPaidProvider = !isDemoMode(env);
 
   if (!usesPaidProvider) {
     try {

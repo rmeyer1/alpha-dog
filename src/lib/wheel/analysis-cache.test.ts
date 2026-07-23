@@ -63,6 +63,7 @@ describe("analysis cache", () => {
       filters,
       personaId: "balanced_wheel",
       resultLimit: 25,
+      sourceMode: "live",
       ticker: " aapl ",
     });
     const right = buildAnalysisCacheKey({
@@ -84,6 +85,7 @@ describe("analysis cache", () => {
       },
       personaId: "balanced_wheel",
       resultLimit: 25,
+      sourceMode: "live",
       ticker: "AAPL",
     });
 
@@ -96,6 +98,7 @@ describe("analysis cache", () => {
       filters,
       personaId: "balanced_wheel",
       resultLimit: 25,
+      sourceMode: "live",
       ticker: "AAPL",
     });
 
@@ -105,6 +108,7 @@ describe("analysis cache", () => {
         filters,
         personaId: "balanced_wheel",
         resultLimit: 25,
+        sourceMode: "live",
         ticker: "AAPL",
       }),
     ).not.toBe(base);
@@ -114,6 +118,7 @@ describe("analysis cache", () => {
         filters,
         personaId: "conservative_wheel",
         resultLimit: 25,
+        sourceMode: "live",
         ticker: "AAPL",
       }),
     ).not.toBe(base);
@@ -123,6 +128,7 @@ describe("analysis cache", () => {
         filters,
         personaId: "balanced_wheel",
         resultLimit: 10,
+        sourceMode: "live",
         ticker: "AAPL",
       }),
     ).not.toBe(base);
@@ -132,6 +138,7 @@ describe("analysis cache", () => {
         filters: { ...filters, deltaMax: 0.35 },
         personaId: "balanced_wheel",
         resultLimit: 25,
+        sourceMode: "live",
         ticker: "AAPL",
       }),
     ).not.toBe(base);
@@ -141,7 +148,18 @@ describe("analysis cache", () => {
         filters,
         personaId: "balanced_wheel",
         resultLimit: 25,
+        sourceMode: "live",
         strategy: "short_put",
+        ticker: "AAPL",
+      }),
+    ).not.toBe(base);
+    expect(
+      buildAnalysisCacheKey({
+        feed: "indicative",
+        filters,
+        personaId: "balanced_wheel",
+        resultLimit: 25,
+        sourceMode: "demo",
         ticker: "AAPL",
       }),
     ).not.toBe(base);

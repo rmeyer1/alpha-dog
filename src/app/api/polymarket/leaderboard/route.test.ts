@@ -29,7 +29,7 @@ beforeEach(() => {
     withAuthCookies: (response: Response) => response,
   });
   vi.stubGlobal("fetch", fetchMock);
-  vi.stubEnv("USE_DEMO_DATA", "false");
+  vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
   vi.stubEnv("POLYMARKET_DATA_API_BASE_URL", "https://data-api.polymarket.com");
 });
 

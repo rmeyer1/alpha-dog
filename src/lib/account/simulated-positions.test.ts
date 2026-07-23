@@ -136,6 +136,13 @@ describe("simulated position store", () => {
       {
         candidateSnapshot: { score: 82 },
         contracts: 2,
+        dataProvenance: {
+          asOf: "2026-07-02T20:00:00.000Z",
+          cacheSource: "runtime_cache",
+          cacheStatus: "stale",
+          feed: "opra",
+          sourceMode: "live",
+        },
         expirationDate: "2026-08-21",
         legs: [{
           askPrice: 1.3,
@@ -158,6 +165,12 @@ describe("simulated position store", () => {
     expect(rpc).toHaveBeenCalledWith("open_simulated_position_atomic", {
       p_input: expect.objectContaining({
         contracts: 2,
+        dataProvenance: expect.objectContaining({
+          cacheSource: "runtime_cache",
+          cacheStatus: "stale",
+          feed: "opra",
+          sourceMode: "live",
+        }),
         netCredit: 1.25,
         strategyType: "short_put",
         symbol: "AAPL",
@@ -172,6 +185,13 @@ describe("simulated position store", () => {
     const result = await createSimulatedPosition(client, userId, {
       candidateSnapshot: { score: 82 },
       contracts: 2,
+      dataProvenance: {
+        asOf: "2026-07-02T20:00:00.000Z",
+        cacheSource: "runtime_cache",
+        cacheStatus: "stale",
+        feed: "opra",
+        sourceMode: "live",
+      },
       expirationDate: "2026-08-21",
       legs: [{
         askPrice: 1.3,
@@ -194,6 +214,11 @@ describe("simulated position store", () => {
     expect(calls.positionInsert).toHaveBeenCalledWith(expect.objectContaining({
       contracts_opened: 2,
       contracts_remaining: 2,
+      candidate_as_of: "2026-07-02T20:00:00.000Z",
+      candidate_cache_source: "runtime_cache",
+      candidate_cache_status: "stale",
+      candidate_feed: "opra",
+      data_source_mode: "live",
       net_credit: 1.25,
       opened_at: "2026-07-02T20:15:00.000Z",
       paper_account_id: account.id,
@@ -219,6 +244,12 @@ describe("simulated position store", () => {
       price: 1.25,
       quantity: 2,
       user_id: userId,
+      metadata: expect.objectContaining({
+        dataProvenance: expect.objectContaining({
+          feed: "opra",
+          sourceMode: "live",
+        }),
+      }),
     }));
     expect(result.position).toBe(position);
   });

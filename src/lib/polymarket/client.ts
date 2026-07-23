@@ -1,4 +1,4 @@
-import { getEnv } from "@/lib/env";
+import { getEnv, isDemoMode } from "@/lib/env";
 import { withProviderTimeout } from "@/lib/provider-timeout";
 import {
   demoActivityByWallet,
@@ -224,7 +224,8 @@ export async function fetchPolymarketLeaderboard(
   signal?: AbortSignal,
 ): Promise<PolymarketLeaderboardResponse> {
   const env = getEnv();
-  const rows = env.USE_DEMO_DATA
+  const useDemoData = isDemoMode(env);
+  const rows = useDemoData
     ? sortDemoLeaderboard(request)
     : (await requestPolymarket<unknown[]>("/v1/leaderboard", {
         category: request.category,
@@ -235,7 +236,7 @@ export async function fetchPolymarketLeaderboard(
       }, signal)).map(normalizeLeaderboardRow);
 
   return {
-    dataFreshness: dataFreshness(env.USE_DEMO_DATA ? "demo" : "polymarket", cachedUntil),
+    dataFreshness: dataFreshness(useDemoData ? "demo" : "polymarket", cachedUntil),
     traders: rows.map(leaderboardRowToTrader),
   };
 }
@@ -248,7 +249,7 @@ export async function fetchPolymarketWalletProfile(
   const env = getEnv();
   const wallet = request.wallet.toLowerCase();
 
-  if (env.USE_DEMO_DATA) {
+  if (isDemoMode(env)) {
     const openPositions = demoPositionsByWallet[wallet] ?? [];
     const closedPositions = demoClosedPositionsByWallet[wallet] ?? [];
     const activity = demoActivityByWallet[wallet] ?? [];
@@ -321,7 +322,7 @@ async function fetchPolymarketOpenPositions(
   const env = getEnv();
   const normalizedWallet = wallet.toLowerCase();
 
-  if (env.USE_DEMO_DATA) {
+  if (isDemoMode(env)) {
     return demoPositionsByWallet[normalizedWallet] ?? [];
   }
 

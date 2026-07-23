@@ -10,7 +10,7 @@ import {
   setRuntimeCacheValue,
 } from "./vercel-runtime-cache";
 
-export const ANALYSIS_CACHE_VERSION = "v2";
+export const ANALYSIS_CACHE_VERSION = "v3";
 export const ANALYSIS_CACHE_FRESH_TTL_MS = 2 * 60 * 1000;
 export const ANALYSIS_CACHE_STALE_TTL_MS = 30 * 60 * 1000;
 
@@ -22,10 +22,11 @@ export interface AnalysisCacheEntry {
 }
 
 interface AnalysisCacheKeyInput {
-  feed: Exclude<DataFeed, "demo">;
+  feed: DataFeed;
   filters: WheelFilters;
   personaId: PersonaId;
   resultLimit: number;
+  sourceMode: "demo" | "live";
   strategy?: WheelCompanyStrategy;
   ticker: string;
 }
@@ -72,6 +73,7 @@ export function buildAnalysisCacheKey(input: AnalysisCacheKeyInput) {
   return [
     "wheel-analysis",
     ANALYSIS_CACHE_VERSION,
+    input.sourceMode,
     input.feed,
     input.ticker.trim().toUpperCase(),
     input.personaId,

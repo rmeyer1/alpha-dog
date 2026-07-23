@@ -30,10 +30,15 @@ interface PaperAccountRow {
 }
 
 interface PositionRow {
+  candidate_as_of: string | null;
+  candidate_cache_source: string | null;
+  candidate_cache_status: string | null;
+  candidate_feed: string | null;
   closed_at: string | null;
   contracts_opened: number;
   contracts_remaining: number;
   created_at: string;
+  data_source_mode: "demo" | "live" | "unknown";
   expiration_date: string | null;
   id: string;
   net_credit: number | string;
@@ -107,6 +112,11 @@ const positionColumns = [
   "user_id",
   "paper_account_id",
   "source",
+  "data_source_mode",
+  "candidate_feed",
+  "candidate_cache_status",
+  "candidate_cache_source",
+  "candidate_as_of",
   "status",
   "strategy_type",
   "symbol",
@@ -361,6 +371,13 @@ function toPositionSummary(
     contractsOpened: row.contracts_opened,
     contractsRemaining: row.contracts_remaining,
     createdAt: row.created_at,
+    dataProvenance: {
+      asOf: row.candidate_as_of,
+      cacheSource: row.candidate_cache_source,
+      cacheStatus: row.candidate_cache_status,
+      feed: row.candidate_feed,
+      sourceMode: row.data_source_mode,
+    },
     expirationDate: row.expiration_date,
     id: row.id,
     lifecycle: lifecycleSummary(row, events),
