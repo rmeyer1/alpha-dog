@@ -24,6 +24,14 @@ type PositionValuation = {
   unrealizedPnl: number | null;
 };
 
+type PositionDataProvenance = {
+  asOf: string | null;
+  cacheSource: string | null;
+  cacheStatus: string | null;
+  feed: string | null;
+  sourceMode: "demo" | "live" | "unknown";
+};
+
 type PositionLifecycleOutcome =
   | "assigned"
   | "called_away"
@@ -47,6 +55,7 @@ type PositionSummary = {
   closedAt: string | null;
   contractsOpened: number;
   contractsRemaining: number;
+  dataProvenance: PositionDataProvenance;
   expirationDate: string | null;
   id: string;
   lifecycle: PositionLifecycleSummary | null;
@@ -307,6 +316,21 @@ function positionKind(value: string) {
   return value === "simulated" ? "Paper" : labelize(value);
 }
 
+function provenanceLabel(provenance: PositionDataProvenance) {
+  if (provenance.sourceMode === "unknown") {
+    return "Provenance unavailable";
+  }
+
+  return [
+    provenance.sourceMode === "demo" ? "Demo" : "Live",
+    provenance.feed ? labelize(provenance.feed) : null,
+    provenance.cacheStatus
+      ? `${labelize(provenance.cacheStatus)} cache`
+      : null,
+    provenance.cacheSource ? labelize(provenance.cacheSource) : null,
+  ].filter(Boolean).join(" · ");
+}
+
 function LoadingState() {
   return (
     <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-zinc-400">
@@ -422,7 +446,8 @@ function DesktopPositionTable({
                     {position.symbol}
                   </span>
                   <span className="text-xs text-zinc-500">
-                    {strategyLabel(position.strategyType)} · {positionKind(position.source)}
+                    {strategyLabel(position.strategyType)} · {positionKind(position.source)} ·{" "}
+                    {provenanceLabel(position.dataProvenance)}
                   </span>
                 </button>
               </td>
@@ -482,7 +507,8 @@ function MobilePositionCards({
             <div>
               <div className="font-semibold text-white">{position.symbol}</div>
               <div className="mt-1 text-xs text-zinc-500">
-                {strategyLabel(position.strategyType)} · {positionKind(position.source)}
+                {strategyLabel(position.strategyType)} · {positionKind(position.source)} ·{" "}
+                {provenanceLabel(position.dataProvenance)}
               </div>
             </div>
             <StatusPill
@@ -1187,6 +1213,13 @@ function PositionDetailContent({
           <span className="inline-flex rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs font-semibold text-zinc-200">
             {positionKind(position.source)}
           </span>
+          <span
+            className={position.dataProvenance.sourceMode === "demo"
+              ? "inline-flex rounded-md border border-amber-300/25 bg-amber-300/10 px-2 py-1 text-xs font-semibold text-amber-100"
+              : "inline-flex rounded-md border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-xs font-semibold text-cyan-100"}
+          >
+            {provenanceLabel(position.dataProvenance)}
+          </span>
         </div>
         {canClose ? (
           <button
@@ -1217,6 +1250,10 @@ function PositionDetailContent({
       </dl>
 
       <dl className="grid sm:grid-cols-3">
+        <PositionMetric
+          label="Candidate as of"
+          value={formatDate(position.dataProvenance.asOf)}
+        />
         <PositionMetric
           label="Mark to close"
           value={formatCurrency(position.valuation.markToClose)}

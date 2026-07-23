@@ -5,7 +5,8 @@ const acquirePaidRouteGuardMock = vi.hoisted(() => vi.fn());
 const analyzeWheelCandidatesMock = vi.hoisted(() => vi.fn());
 const getCachedWheelAnalysisMock = vi.hoisted(() => vi.fn());
 const getEnvMock = vi.hoisted(() => vi.fn());
-const hasAlpacaCredentialsMock = vi.hoisted(() => vi.fn());
+const getMarketDataConfigurationErrorMock = vi.hoisted(() => vi.fn());
+const isDemoModeMock = vi.hoisted(() => vi.fn());
 const persistAuthenticatedAnalysisRequestMock = vi.hoisted(() => vi.fn());
 const releaseGuardMock = vi.hoisted(() => vi.fn());
 
@@ -15,7 +16,8 @@ vi.mock("@/lib/api-abuse/guard", () => ({
 
 vi.mock("@/lib/env", () => ({
   getEnv: getEnvMock,
-  hasAlpacaCredentials: hasAlpacaCredentialsMock,
+  getMarketDataConfigurationError: getMarketDataConfigurationErrorMock,
+  isDemoMode: isDemoModeMock,
 }));
 
 vi.mock("@/lib/wheel/analysis-audit", () => ({
@@ -47,11 +49,13 @@ beforeEach(() => {
   analyzeWheelCandidatesMock.mockReset();
   getCachedWheelAnalysisMock.mockReset();
   getEnvMock.mockReset();
-  hasAlpacaCredentialsMock.mockReset();
+  getMarketDataConfigurationErrorMock.mockReset();
+  isDemoModeMock.mockReset();
   persistAuthenticatedAnalysisRequestMock.mockReset();
   releaseGuardMock.mockReset();
-  getEnvMock.mockReturnValue({ USE_DEMO_DATA: false });
-  hasAlpacaCredentialsMock.mockReturnValue(true);
+  getEnvMock.mockReturnValue({ ALPHA_DOG_DEPLOYMENT_MODE: "live" });
+  getMarketDataConfigurationErrorMock.mockReturnValue(null);
+  isDemoModeMock.mockReturnValue(false);
   getCachedWheelAnalysisMock.mockResolvedValue(null);
   persistAuthenticatedAnalysisRequestMock.mockResolvedValue(null);
   acquirePaidRouteGuardMock.mockResolvedValue({
@@ -64,6 +68,25 @@ beforeEach(() => {
 });
 
 describe("POST /api/wheel/analyze", () => {
+  it("fails closed before reading cache or demo data when live credentials are missing", async () => {
+    getMarketDataConfigurationErrorMock.mockReturnValue({
+      code: "ALPACA_CREDENTIALS_NOT_CONFIGURED",
+      message: "Set APCA_API_KEY_ID and APCA_API_SECRET_KEY.",
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error).toMatchObject({
+      code: "ALPACA_CREDENTIALS_NOT_CONFIGURED",
+      retryable: false,
+    });
+    expect(getCachedWheelAnalysisMock).not.toHaveBeenCalled();
+    expect(analyzeWheelCandidatesMock).not.toHaveBeenCalled();
+  });
+
   it("returns a cache hit without consuming a paid quota", async () => {
     getCachedWheelAnalysisMock.mockResolvedValue({ ticker: "AAPL" });
 

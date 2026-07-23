@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { connection } from "next/server";
 import {
   Activity,
   BarChart3,
@@ -10,6 +11,7 @@ import {
   UserRoundSearch,
 } from "lucide-react";
 import { AccountNavControl } from "@/components/account/account-nav-control";
+import { getDeploymentHealth, type DeploymentHealth } from "@/lib/env";
 
 const destinations = [
   {
@@ -38,7 +40,16 @@ const destinations = [
   },
 ];
 
-const statusTiles = [
+function statusTiles(health: DeploymentHealth) {
+  const dataPosture = health.status === "ready"
+    ? "Live providers verified"
+    : health.status === "demo"
+      ? "Demo sample data"
+      : health.status === "invalid"
+        ? "Configuration required"
+        : "Development / partial";
+
+  return [
   {
     label: "Primary desk",
     value: "Wheel Screener",
@@ -47,7 +58,7 @@ const statusTiles = [
   },
   {
     label: "Data posture",
-    value: "OPRA / cache aware",
+    value: dataPosture,
     icon: Database,
     tone: "text-cyan-200",
   },
@@ -63,9 +74,39 @@ const statusTiles = [
     icon: Clock3,
     tone: "text-zinc-200",
   },
-];
+  ];
+}
 
-export default function Home() {
+function healthBadge(health: DeploymentHealth) {
+  switch (health.status) {
+    case "ready":
+      return {
+        label: "Live ready",
+        tone: "border-emerald-300/25 bg-emerald-400/10 text-emerald-100",
+      };
+    case "demo":
+      return {
+        label: "Demo mode",
+        tone: "border-amber-300/25 bg-amber-400/10 text-amber-100",
+      };
+    case "invalid":
+      return {
+        label: "Configuration required",
+        tone: "border-red-300/25 bg-red-400/10 text-red-100",
+      };
+    case "degraded":
+      return {
+        label: "Development setup",
+        tone: "border-cyan-300/25 bg-cyan-400/10 text-cyan-100",
+      };
+  }
+}
+
+export default async function Home() {
+  await connection();
+  const health = getDeploymentHealth();
+  const badge = healthBadge(health);
+
   return (
     <main className="min-h-dvh overflow-hidden bg-[#080a0c] text-white">
       <div className="mx-auto flex min-h-dvh max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
@@ -101,7 +142,7 @@ export default function Home() {
               Sell-side derivatives desk
             </div>
             <h1 className="mt-5 max-w-xl text-4xl font-semibold tracking-normal text-white sm:text-5xl">
-              Risk-aware option screens, ready at the open.
+              Risk-aware option screens with provenance attached.
             </h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-zinc-400">
               Rank structures, inspect liquidity, and keep stale data or
@@ -137,12 +178,15 @@ export default function Home() {
                     Fast checks before opening a strategy view.
                   </div>
                 </div>
-                <span className="rounded-md border border-emerald-300/25 bg-emerald-400/10 px-2 py-1 text-xs font-medium text-emerald-100">
-                  Ready
+                <span
+                  className={`rounded-md border px-2 py-1 text-xs font-medium ${badge.tone}`}
+                  data-testid="desk-health-status"
+                >
+                  {badge.label}
                 </span>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                {statusTiles.map((tile) => (
+                {statusTiles(health).map((tile) => (
                   <div
                     className="rounded-lg border border-white/10 bg-black/20 p-3"
                     key={tile.label}

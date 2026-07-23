@@ -65,7 +65,7 @@ function liveMarketData(asOf = "2026-05-27T16:00:00.000Z") {
 }
 
 function stubLiveEnv() {
-  vi.stubEnv("USE_DEMO_DATA", "false");
+  vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
   vi.stubEnv("EARNINGS_PROVIDER_ENABLED", "true");
   vi.stubEnv("APCA_API_KEY_ID", "key");
   vi.stubEnv("APCA_API_SECRET_KEY", "secret");
@@ -90,7 +90,7 @@ beforeEach(() => {
 
 describe("wheel analysis", () => {
   it("returns deterministic demo-mode result groups without Alpaca credentials", async () => {
-    vi.stubEnv("USE_DEMO_DATA", "true");
+    vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "demo");
     vi.stubEnv("EARNINGS_PROVIDER_ENABLED", "false");
 
     const analyzeWheelCandidates = await importAnalyze();
@@ -246,7 +246,7 @@ describe("wheel analysis", () => {
   });
 
   it("does not cache demo-mode responses", async () => {
-    vi.stubEnv("USE_DEMO_DATA", "true");
+    vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "demo");
     vi.stubEnv("EARNINGS_PROVIDER_ENABLED", "false");
 
     const analyzeWheelCandidates = await importAnalyze();

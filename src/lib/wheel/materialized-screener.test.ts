@@ -7,6 +7,7 @@ const snapshotRow = {
   filter_key: "{}",
   filters: {},
   feed: "indicative",
+  data_source_mode: "live",
   status: "complete",
   started_at: "2026-06-07T13:00:00.000Z",
   completed_at: "2026-06-07T13:03:00.000Z",
@@ -52,7 +53,7 @@ const candidateRow = {
 };
 
 function stubSupabaseEnv() {
-  vi.stubEnv("USE_DEMO_DATA", "false");
+  vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
   vi.stubEnv("APCA_API_KEY_ID", "alpaca-key");
   vi.stubEnv("APCA_API_SECRET_KEY", "alpaca-secret");
   vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");
@@ -151,6 +152,7 @@ describe("materialized wheel screener", () => {
     const snapshotUrl = new URL(String(vi.mocked(fetch).mock.calls[0][0]));
     const candidateUrl = new URL(String(vi.mocked(fetch).mock.calls[1][0]));
     expect(snapshotUrl.origin).toBe("https://alpha-dog.supabase.co");
+    expect(snapshotUrl.searchParams.get("data_source_mode")).toBe("eq.live");
     expect(candidateUrl.pathname).toBe("/rest/v1/wheel_option_candidates");
     expect(candidateUrl.searchParams.get("snapshot_id")).toBe(
       `eq.${snapshotRow.id}`,
@@ -543,6 +545,12 @@ describe("materialized wheel screener", () => {
         Prefer: "return=representation",
       }),
     });
+    expect(JSON.parse(String(createCall[1]?.body))).toMatchObject([
+      {
+        data_source_mode: "live",
+        feed: "indicative",
+      },
+    ]);
     expect(JSON.parse(String(upsertCall[1]?.body))).toMatchObject([
       {
         snapshot_id: snapshotRow.id,
@@ -561,5 +569,22 @@ describe("materialized wheel screener", () => {
         Prefer: "return=minimal",
       }),
     });
+  });
+
+  it("never reads or writes materialized live rows while demo mode is active", async () => {
+    stubSupabaseEnv();
+    vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "demo");
+    vi.resetModules();
+
+    const { getMaterializedWheelScreenerResponse } =
+      await importMaterializedScreener();
+
+    await expect(
+      getMaterializedWheelScreenerResponse({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).resolves.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

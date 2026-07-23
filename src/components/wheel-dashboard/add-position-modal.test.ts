@@ -10,7 +10,13 @@ import {
 } from "./add-position-modal";
 
 const analysisContext: CandidateAnalysisContext = {
-  dataFreshness: { status: "fresh" },
+  dataFreshness: {
+    asOf: "2026-07-03T20:00:00.000Z",
+    cacheStatus: "stale",
+    feed: "opra",
+    nextSuggestedRefreshAt: null,
+    source: "runtime_cache",
+  },
   filters: { dteMin: 20 },
   persona: {
     id: "balanced_wheel",
@@ -138,6 +144,13 @@ describe("buildSimulatedPositionInput", () => {
       underlyingPriceAtOpen: 201.25,
     });
     expect(input.legs).toHaveLength(1);
+    expect(input.dataProvenance).toEqual({
+      asOf: "2026-07-03T20:00:00.000Z",
+      cacheSource: "runtime_cache",
+      cacheStatus: "stale",
+      feed: "opra",
+      sourceMode: "live",
+    });
     expect(input.legs[0]).toMatchObject({
       contractSymbol: "AAPL260821P00190000",
       openPrice: 1.35,

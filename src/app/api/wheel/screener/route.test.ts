@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const startMock = vi.hoisted(() => vi.fn());
 const getEnvMock = vi.hoisted(() => vi.fn());
-const hasAlpacaCredentialsMock = vi.hoisted(() => vi.fn());
-const getSupabaseServiceConfigMock = vi.hoisted(() => vi.fn());
+const getMarketDataConfigurationErrorMock = vi.hoisted(() => vi.fn());
+const isDemoModeMock = vi.hoisted(() => vi.fn());
 const getMaterializedWheelScreenerResponseMock = vi.hoisted(() => vi.fn());
 const analyzeTopWheelCompaniesMock = vi.hoisted(() => vi.fn());
 const getRunningScreenerRefreshFallbackMock = vi.hoisted(() => vi.fn());
@@ -20,11 +20,8 @@ vi.mock("workflow/api", () => ({
 
 vi.mock("@/lib/env", () => ({
   getEnv: getEnvMock,
-  hasAlpacaCredentials: hasAlpacaCredentialsMock,
-}));
-
-vi.mock("@/lib/supabase/rest", () => ({
-  getSupabaseServiceConfig: getSupabaseServiceConfigMock,
+  getMarketDataConfigurationError: getMarketDataConfigurationErrorMock,
+  isDemoMode: isDemoModeMock,
 }));
 
 vi.mock("@/lib/wheel/materialized-screener", () => ({
@@ -93,8 +90,8 @@ beforeEach(() => {
   vi.resetModules();
   startMock.mockReset();
   getEnvMock.mockReset();
-  hasAlpacaCredentialsMock.mockReset();
-  getSupabaseServiceConfigMock.mockReset();
+  getMarketDataConfigurationErrorMock.mockReset();
+  isDemoModeMock.mockReset();
   getMaterializedWheelScreenerResponseMock.mockReset();
   analyzeTopWheelCompaniesMock.mockReset();
   getRunningScreenerRefreshFallbackMock.mockReset();
@@ -107,15 +104,27 @@ beforeEach(() => {
     userId: "user-123",
     withAuthCookies: (response: Response) => response,
   });
-  getEnvMock.mockReturnValue({ USE_DEMO_DATA: false });
-  hasAlpacaCredentialsMock.mockReturnValue(true);
-  getSupabaseServiceConfigMock.mockReturnValue({
-    serviceRoleKey: "service-role-key",
-    url: "https://alpha-dog.supabase.co",
-  });
+  getEnvMock.mockReturnValue({ ALPHA_DOG_DEPLOYMENT_MODE: "live" });
+  getMarketDataConfigurationErrorMock.mockReturnValue(null);
+  isDemoModeMock.mockReturnValue(false);
 });
 
 describe("POST /api/wheel/screener", () => {
+  it("does not return stored or demo candidates when live configuration is invalid", async () => {
+    getMarketDataConfigurationErrorMock.mockReturnValue({
+      code: "ALPACA_CREDENTIALS_NOT_CONFIGURED",
+      message: "Set APCA_API_KEY_ID and APCA_API_SECRET_KEY.",
+    });
+
+    const { POST } = await import("./route");
+    const response = await POST(screenerRequest());
+
+    expect(response.status).toBe(503);
+    expect(getMaterializedWheelScreenerResponseMock).not.toHaveBeenCalled();
+    expect(analyzeTopWheelCompaniesMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
   it("serves a materialized cache hit without consuming a paid quota", async () => {
     getMaterializedWheelScreenerResponseMock.mockResolvedValue(fallbackResponse);
 

@@ -26,7 +26,7 @@ const completeSnapshot = {
 };
 
 function stubLiveEnv() {
-  vi.stubEnv("USE_DEMO_DATA", "false");
+  vi.stubEnv("ALPHA_DOG_DEPLOYMENT_MODE", "development");
   vi.stubEnv("APCA_API_KEY_ID", "alpaca-key");
   vi.stubEnv("APCA_API_SECRET_KEY", "alpaca-secret");
   vi.stubEnv("ALPACA_OPTIONS_FEED", "indicative");

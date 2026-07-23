@@ -1,5 +1,5 @@
 import { getWheelAssetUniverse } from "@/lib/alpaca/client";
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import { getEnv, isDemoMode } from "@/lib/env";
 import { analyzeWheelCandidates } from "./analyze";
 import { getPersona, mergeFilters } from "./personas";
 import { analyzeStagedUniverseWheelCompanies } from "./universe-scanner";
@@ -502,7 +502,7 @@ function screenerCacheKeyForRequest(request: WheelScreenerRequest) {
   const strategy = request.strategy ?? "short_put";
   const filters = mergeFilters(personaId, request.filters);
   const limit = request.limit ?? 50;
-  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const useDemoData = isDemoMode(env);
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
 
   return buildScreenerCacheKey({
@@ -551,7 +551,7 @@ export async function analyzeTopWheelCompanies(
   const filters = mergeFilters(personaId, request.filters);
   const limit = request.limit ?? 50;
   const cursor = request.cursor ?? 0;
-  const useDemoData = env.USE_DEMO_DATA || !hasAlpacaCredentials();
+  const useDemoData = isDemoMode(env);
   const feed: DataFeed = useDemoData ? "demo" : env.ALPACA_OPTIONS_FEED;
   const requestedBatchSize =
     request.batchSize ?? (useDemoData ? demoAssets.length : liveBatchSize());

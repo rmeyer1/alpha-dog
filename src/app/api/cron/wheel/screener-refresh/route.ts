@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
-import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import {
+  getEnv,
+  getMarketDataConfigurationError,
+  isDemoMode,
+} from "@/lib/env";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   getEasternMarketHoursState,
@@ -90,12 +94,13 @@ async function handleRefresh(request: Request) {
     );
   }
 
-  if (!env.USE_DEMO_DATA && !hasAlpacaCredentials()) {
+  const configurationError = getMarketDataConfigurationError({}, env);
+
+  if (!isDemoMode(env) && configurationError) {
     return NextResponse.json(
       {
         error: {
-          code: "ALPACA_CREDENTIALS_NOT_CONFIGURED",
-          message: "Alpaca credentials are required for live screener refresh.",
+          ...configurationError,
         },
       },
       { status: 503 },

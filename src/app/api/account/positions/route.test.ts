@@ -101,6 +101,13 @@ describe("POST /api/account/positions", () => {
     const response = await POST(positionRequest({
       candidateSnapshot: { score: 82 },
       contracts: 2,
+      dataProvenance: {
+        asOf: "2026-07-03T20:00:00.000Z",
+        cacheSource: "materialized",
+        cacheStatus: "stale",
+        feed: "opra",
+        sourceMode: "live",
+      },
       expirationDate: "2026-08-21",
       legs: [{
         openPrice: 1.25,
@@ -121,6 +128,12 @@ describe("POST /api/account/positions", () => {
       "user-1",
       expect.objectContaining({
         contracts: 2,
+        dataProvenance: expect.objectContaining({
+          cacheSource: "materialized",
+          cacheStatus: "stale",
+          feed: "opra",
+          sourceMode: "live",
+        }),
         openedAt: "2026-07-03",
         strategyType: "short_put",
         symbol: "AAPL",

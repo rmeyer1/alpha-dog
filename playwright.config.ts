@@ -14,6 +14,16 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
+    env: {
+      ALPHA_DOG_DEPLOYMENT_MODE: "live",
+      ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY: "",
+      ALPHA_DOG_SUPABASE_URL: "",
+      APCA_API_KEY_ID: "",
+      APCA_API_SECRET_KEY: "",
+      NEXT_PUBLIC_ALPHA_DOG_SUPABASE_ANON_KEY: "",
+      NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: "",
+      OPENAI_API_KEY: "",
+    },
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     url: "http://127.0.0.1:3000",

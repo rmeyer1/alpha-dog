@@ -5,6 +5,7 @@ import type {
 import type {
   PersonaConfig,
   UnderlyingContext,
+  WheelAnalysisResponse,
   WheelCompanyStrategy,
 } from "@/lib/wheel/types";
 
@@ -19,7 +20,7 @@ export type RequestState =
 export type StrategyTab = "puts" | "calls" | "putSpreads" | "callSpreads";
 
 export interface CandidateAnalysisContext {
-  dataFreshness: JsonValue;
+  dataFreshness: WheelAnalysisResponse["dataFreshness"];
   filters: JsonValue;
   persona: Pick<PersonaConfig, "id" | "name" | "motto">;
   source: "wheel_dashboard" | "company_dashboard";
