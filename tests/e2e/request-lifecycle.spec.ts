@@ -47,6 +47,40 @@ function screenerResponse(filters: Record<string, unknown>) {
   };
 }
 
+function analysisResponse(ticker: string) {
+  return {
+    ticker,
+    underlying: {
+      symbol: ticker,
+      price: 100,
+      asOf: "2026-07-23T18:00:00.000Z",
+      trend: "bullish",
+      rsi14: 55,
+      movingAverages: {
+        ma20: 98,
+        ma50: 95,
+        ma200: 90,
+      },
+    },
+    persona: {
+      id: "balanced_wheel",
+      name: "Balanced Wheel",
+      motto: "Balanced risk and income.",
+    },
+    dataFreshness: {
+      ...freshness(),
+      feed: "demo",
+      nextSuggestedRefreshAt: null,
+    },
+    shortPuts: [],
+    coveredCalls: [],
+    putCreditSpreads: [],
+    callCreditSpreads: [],
+    warnings: [],
+    errors: [],
+  };
+}
+
 async function mockSharedDashboardRequests(page: Page) {
   await page.route("**/api/auth/account-state", async (route) => {
     await route.fulfill({
@@ -135,6 +169,49 @@ test("Wheel applies rapid edits once and restores applied state through history 
   await page.reload();
   await expect(page.getByLabel("DTE min slider")).toHaveValue("9");
   await expect(page.getByText("DTE 9-30", { exact: true }).first())
+    .toBeVisible();
+});
+
+test("Wheel submits the first typed ticker for analysis", async ({ page }) => {
+  await mockSharedDashboardRequests(page);
+  let analyzedTicker: string | null = null;
+
+  await page.route("**/api/wheel/screener", async (route) => {
+    const requestBody = route.request().postDataJSON() as {
+      filters: Record<string, unknown>;
+    };
+
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(screenerResponse(requestBody.filters)),
+    });
+  });
+  await page.route("**/api/wheel/analyze", async (route) => {
+    const requestBody = route.request().postDataJSON() as {
+      ticker: string;
+    };
+    analyzedTicker = requestBody.ticker;
+
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(analysisResponse(requestBody.ticker)),
+    });
+  });
+
+  await page.goto("/screeners");
+  const analyzeButton = page.getByRole("button", {
+    name: "Analyze",
+    exact: true,
+  });
+  await expect(analyzeButton).toBeDisabled();
+
+  await page.getByLabel("Ticker symbol").fill("AAPL");
+  await expect(analyzeButton).toBeEnabled();
+  await analyzeButton.click();
+
+  await expect.poll(() => analyzedTicker).toBe("AAPL");
+  await expect(page).toHaveURL(/ticker=AAPL/);
+  await expect(page.getByText(/Balanced Wheel · AAPL · DTE 21-30/))
     .toBeVisible();
 });
 

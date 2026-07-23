@@ -993,7 +993,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
   return (
     <main className="min-h-screen bg-[#0b0c0d] text-zinc-100">
       <DashboardHeader
-        canAnalyze={hasTicker}
+        canAnalyze={ticker.trim().length > 0}
         canRefresh={
           hasTicker
             ? Boolean(response) && !isServerRefreshRunning
