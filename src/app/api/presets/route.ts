@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "saved presets");
+    return accountSessionErrorResponse(auth.code, "saved presets", authResponse);
   }
 
   const presets = await listSavedPresets(auth.supabase, auth.user.id);
@@ -28,22 +28,25 @@ export async function POST(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "saved presets");
+    return accountSessionErrorResponse(auth.code, "saved presets", authResponse);
   }
 
   const json = await request.json().catch(() => null);
   const parsed = savedPresetInputSchema.safeParse(json);
 
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "INVALID_PRESET",
-          message: "Preset payload is invalid.",
-          details: parsed.error.flatten(),
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "INVALID_PRESET",
+            message: "Preset payload is invalid.",
+            details: parsed.error.flatten(),
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 

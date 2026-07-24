@@ -3,6 +3,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
 import {
   accountSessionErrorResponse,
+  copyAuthCookies,
   PROFILE_INCOMPLETE,
   resolveAccountSession,
   UNAUTHENTICATED,
@@ -120,5 +121,49 @@ describe("account session guards", () => {
       },
     });
     expect(incomplete.status).toBe(403);
+  });
+
+  it("copies refreshed cookies and cache-safety headers onto protected responses", () => {
+    const source = NextResponse.next();
+    source.cookies.set("sb-project-ref-auth-token.0", "refreshed");
+    source.headers.set(
+      "Cache-Control",
+      "private, no-cache, no-store, must-revalidate, max-age=0",
+    );
+    source.headers.set("Expires", "0");
+    source.headers.set("Pragma", "no-cache");
+    source.headers.set("X-Internal-Auth-Trace", "do-not-copy");
+
+    const response = copyAuthCookies(
+      source,
+      NextResponse.json({ status: "ok" }),
+    );
+
+    expect(response.cookies.get("sb-project-ref-auth-token.0")?.value)
+      .toBe("refreshed");
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect(response.headers.get("expires")).toBe("0");
+    expect(response.headers.get("pragma")).toBe("no-cache");
+    expect(response.headers.get("x-internal-auth-trace")).toBeNull();
+  });
+
+  it("preserves cleared auth cookies and safety headers on auth errors", () => {
+    const source = NextResponse.next();
+    source.cookies.set("sb-project-ref-auth-token", "", { maxAge: 0 });
+    source.headers.set("Cache-Control", "private, no-store");
+    source.headers.set("Expires", "0");
+    source.headers.set("Pragma", "no-cache");
+
+    const response = accountSessionErrorResponse(
+      UNAUTHENTICATED,
+      "saved presets",
+      source,
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.cookies.get("sb-project-ref-auth-token")?.value).toBe("");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("expires")).toBe("0");
+    expect(response.headers.get("pragma")).toBe("no-cache");
   });
 });

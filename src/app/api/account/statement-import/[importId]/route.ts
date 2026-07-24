@@ -15,7 +15,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "statement import");
+    return accountSessionErrorResponse(
+      auth.code,
+      "statement import",
+      authResponse,
+    );
   }
 
   const { importId } = await context.params;

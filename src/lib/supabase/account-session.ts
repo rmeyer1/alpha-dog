@@ -60,8 +60,9 @@ export async function getRequiredAccountSession(
 export function accountSessionErrorResponse(
   code: typeof UNAUTHENTICATED | typeof PROFILE_INCOMPLETE,
   feature = "this account feature",
+  authResponse?: NextResponse,
 ) {
-  return NextResponse.json(
+  const response = NextResponse.json(
     {
       error: {
         code,
@@ -72,6 +73,8 @@ export function accountSessionErrorResponse(
     },
     { status: code === UNAUTHENTICATED ? 401 : 403 },
   );
+
+  return authResponse ? copyAuthCookies(authResponse, response) : response;
 }
 
 export function copyAuthCookies(
@@ -81,6 +84,14 @@ export function copyAuthCookies(
   source.cookies.getAll().forEach((cookie) => {
     target.cookies.set(cookie);
   });
+
+  for (const name of ["cache-control", "expires", "pragma"]) {
+    const value = source.headers.get(name);
+
+    if (value !== null) {
+      target.headers.set(name, value);
+    }
+  }
 
   return target;
 }

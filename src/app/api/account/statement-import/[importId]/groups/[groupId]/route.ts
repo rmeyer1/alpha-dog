@@ -22,7 +22,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "statement import");
+    return accountSessionErrorResponse(
+      auth.code,
+      "statement import",
+      authResponse,
+    );
   }
 
   const body = await request.json().catch(() => null) as { decision?: unknown } | null;

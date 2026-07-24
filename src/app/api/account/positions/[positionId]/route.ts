@@ -18,7 +18,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "simulated positions");
+    return accountSessionErrorResponse(
+      auth.code,
+      "simulated positions",
+      authResponse,
+    );
   }
 
   const position = await loadAccountPositionDetail(
@@ -28,14 +32,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
   );
 
   if (!position) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "SIMULATED_POSITION_NOT_FOUND",
-          message: "Simulated position was not found.",
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "SIMULATED_POSITION_NOT_FOUND",
+            message: "Simulated position was not found.",
+          },
         },
-      },
-      { status: 404 },
+        { status: 404 },
+      ),
     );
   }
 

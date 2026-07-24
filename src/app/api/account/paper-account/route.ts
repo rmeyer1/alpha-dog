@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "paper account");
+    return accountSessionErrorResponse(auth.code, "paper account", authResponse);
   }
 
   const portfolio = await loadAccountPortfolio(auth.supabase, auth.user.id);

@@ -16,7 +16,11 @@ export async function GET(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "simulated positions");
+    return accountSessionErrorResponse(
+      auth.code,
+      "simulated positions",
+      authResponse,
+    );
   }
 
   const portfolio = await loadAccountPortfolio(auth.supabase, auth.user.id);
@@ -34,22 +38,29 @@ export async function POST(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "simulated positions");
+    return accountSessionErrorResponse(
+      auth.code,
+      "simulated positions",
+      authResponse,
+    );
   }
 
   const json = await request.json().catch(() => null);
   const parsed = simulatedPositionInputSchema.safeParse(json);
 
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "INVALID_SIMULATED_POSITION",
-          message: "Simulated position payload is invalid.",
-          details: parsed.error.flatten(),
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "INVALID_SIMULATED_POSITION",
+            message: "Simulated position payload is invalid.",
+            details: parsed.error.flatten(),
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 
@@ -66,14 +77,17 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     if (error instanceof SimulatedPositionValidationError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: error.code,
-            message: error.message,
+      return copyAuthCookies(
+        auth.response,
+        NextResponse.json(
+          {
+            error: {
+              code: error.code,
+              message: error.message,
+            },
           },
-        },
-        { status: 400 },
+          { status: 400 },
+        ),
       );
     }
 

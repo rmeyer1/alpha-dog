@@ -97,18 +97,27 @@ Error codes:
 
 ### Session Refresh and Route Guards
 
-The app includes middleware that refreshes Supabase browser sessions across page
-reloads without using client-only auth state as the source of truth. Middleware
-does not block OAuth or cron routes:
+The app includes a narrowly matched Next.js proxy that refreshes Supabase
+browser sessions on account pages and account-owned API requests without using
+client-only auth state as the source of truth. Requests without a Supabase
+session cookie skip the Auth client. Public data routes, OAuth routes, and cron
+routes are not matched:
 
 - `/auth/callback`
 - `/api/auth/oauth/{provider}`
 - `/api/cron/*`
+- `/api/logos/*`
+- `/api/wheel/*`
+- `/api/finnhub/*`
+- `/api/polymarket/*`
 - static assets and Next.js internals
 
 Account-required route handlers must resolve the current user server-side with
-the shared account session guard. Missing or expired sessions return
-`UNAUTHENTICATED`. Authenticated sessions whose `account_profiles` row is
+the shared account session guard and authoritative `getUser()` validation.
+They preserve refreshed auth cookies plus Supabase SSR `Cache-Control`,
+`Expires`, and `Pragma` safety headers on every protected response. Proxy state
+is never sufficient authorization. Missing or expired sessions return
+`UNAUTHENTICATED`; authenticated sessions whose `account_profiles` row is
 missing `email`, `first_name`, or `last_name` return `PROFILE_INCOMPLETE`.
 
 Manual account creation should use `EMAIL_ALREADY_REGISTERED` when a requested
