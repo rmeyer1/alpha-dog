@@ -37,11 +37,11 @@ security invoker
 set search_path = ''
 as $$
 begin
-  if p_scope not in ('open', 'history') then
+  if p_scope is null or p_scope not in ('open', 'history') then
     raise exception 'INVALID_POSITION_SCOPE: Position scope is invalid.';
   end if;
 
-  if p_page_size < 1 or p_page_size > 101 then
+  if p_page_size is null or p_page_size < 1 or p_page_size > 101 then
     raise exception 'INVALID_POSITION_PAGE: Position page must contain 1 to 101 rows.';
   end if;
 
@@ -96,7 +96,7 @@ security invoker
 set search_path = ''
 as $$
 begin
-  if p_page_size < 1 or p_page_size > 101 then
+  if p_page_size is null or p_page_size < 1 or p_page_size > 101 then
     raise exception 'INVALID_EVENT_PAGE: Event page must contain 1 to 101 rows.';
   end if;
 

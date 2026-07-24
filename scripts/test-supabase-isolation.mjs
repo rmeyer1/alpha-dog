@@ -630,6 +630,66 @@ async function verifyPaginationRpcIsolation(
     "oversized position page is rejected",
   );
 
+  const nullPositionPageSize = await clientA.rpc(
+    "get_paper_account_position_page",
+    {
+      p_page_size: null,
+      p_position_id: null,
+      p_scope: "history",
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullPositionPageSize.error?.message,
+    "INVALID_POSITION_PAGE: Position page must contain 1 to 101 rows.",
+    "null position page size returns the stable boundary error",
+  );
+  assert.equal(
+    nullPositionPageSize.data,
+    null,
+    "null position page size returns no data",
+  );
+
+  const nullPositionScope = await clientA.rpc(
+    "get_paper_account_position_page",
+    {
+      p_page_size: 1,
+      p_position_id: null,
+      p_scope: null,
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullPositionScope.error?.message,
+    "INVALID_POSITION_SCOPE: Position scope is invalid.",
+    "null position scope returns the stable boundary error",
+  );
+  assert.equal(
+    nullPositionScope.data,
+    null,
+    "null position scope returns no data",
+  );
+
+  const nullEventPageSize = await clientA.rpc(
+    "get_simulated_position_event_page",
+    {
+      p_event_id: null,
+      p_page_size: null,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullEventPageSize.error?.message,
+    "INVALID_EVENT_PAGE: Event page must contain 1 to 101 rows.",
+    "null event page size returns the stable boundary error",
+  );
+  assert.equal(
+    nullEventPageSize.data,
+    null,
+    "null event page size returns no data",
+  );
+
   const incompleteEventTuple = await clientA.rpc(
     "get_simulated_position_event_page",
     {
