@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { loadAccountPortfolio } from "@/lib/account/simulated-account-portfolio";
+import { loadPaperAccountOverview } from "@/lib/account/simulated-account-portfolio";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -14,12 +14,12 @@ export async function GET(request: NextRequest) {
     return accountSessionErrorResponse(auth.code, "paper account", authResponse);
   }
 
-  const portfolio = await loadAccountPortfolio(auth.supabase, auth.user.id);
+  const portfolio = await loadPaperAccountOverview(auth.supabase, auth.user.id);
 
   return copyAuthCookies(auth.response, NextResponse.json({
     account: portfolio.account,
-    historyPositionCount: portfolio.historyPositions.length,
-    openPositionCount: portfolio.openPositions.length,
+    historyPositionCount: portfolio.historyPositionCount,
+    openPositionCount: portfolio.openPositionCount,
     summary: portfolio.summary,
   }));
 }

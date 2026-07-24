@@ -77,8 +77,29 @@ describe("GET /api/account/positions/[positionId]", () => {
       supabase,
       "user-1",
       "position-1",
+      {
+        eventCursor: null,
+        eventLimit: 50,
+      },
     );
     expect(json.position.legs).toHaveLength(1);
     expect(json.position.events).toHaveLength(1);
+  });
+
+  it("rejects malformed event cursors before loading position data", async () => {
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    });
+
+    const response = await GET(new Request(
+      "https://alpha-dog.test/api/account/positions/position-1?eventCursor=not%2Bbase64",
+    ), context);
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.error.code).toBe("INVALID_EVENT_CURSOR");
+    expect(loadAccountPositionDetail).not.toHaveBeenCalled();
   });
 });

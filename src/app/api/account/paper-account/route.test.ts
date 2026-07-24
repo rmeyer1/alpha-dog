@@ -4,7 +4,7 @@ import { UNAUTHENTICATED } from "@/lib/supabase/account-session";
 import { GET } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
-const loadAccountPortfolio = vi.hoisted(() => vi.fn());
+const loadPaperAccountOverview = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -16,16 +16,16 @@ vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
 });
 
 vi.mock("@/lib/account/simulated-account-portfolio", () => ({
-  loadAccountPortfolio,
+  loadPaperAccountOverview,
 }));
 
 describe("GET /api/account/paper-account", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    loadAccountPortfolio.mockResolvedValue({
+    loadPaperAccountOverview.mockResolvedValue({
       account: { id: "paper-account-1", startingCash: 1_000 },
-      historyPositions: [{ id: "position-2" }, { id: "position-3" }],
-      openPositions: [{ id: "position-1" }],
+      historyPositionCount: 2,
+      openPositionCount: 1,
       summary: { cashBalance: 1_250, marginBalance: 0 },
     });
   });
@@ -38,7 +38,7 @@ describe("GET /api/account/paper-account", () => {
 
     expect(response.status).toBe(401);
     expect(json.error.code).toBe(UNAUTHENTICATED);
-    expect(loadAccountPortfolio).not.toHaveBeenCalled();
+    expect(loadPaperAccountOverview).not.toHaveBeenCalled();
   });
 
   it("returns paper account and summary for the authenticated user", async () => {
@@ -53,7 +53,7 @@ describe("GET /api/account/paper-account", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(loadAccountPortfolio).toHaveBeenCalledWith(supabase, "user-1");
+    expect(loadPaperAccountOverview).toHaveBeenCalledWith(supabase, "user-1");
     expect(json.account.id).toBe("paper-account-1");
     expect(json.openPositionCount).toBe(1);
     expect(json.historyPositionCount).toBe(2);

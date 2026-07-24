@@ -3,7 +3,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_catalog;
 
-select plan(262);
+select plan(298);
 
 select ok(
   has_schema_privilege('anon', 'public', 'USAGE'),
@@ -542,6 +542,193 @@ from lifecycle_functions
 join pg_proc p on p.oid = lifecycle_functions.function_oid
 order by signature;
 
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select ok(
+  not has_function_privilege('public', function_oid, 'EXECUTE'),
+  format('PUBLIC lacks EXECUTE on %s', signature)
+)
+from pagination_functions
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select ok(
+  not has_function_privilege('anon', function_oid, 'EXECUTE'),
+  format('anon lacks EXECUTE on %s', signature)
+)
+from pagination_functions
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select ok(
+  has_function_privilege('authenticated', function_oid, 'EXECUTE'),
+  format('authenticated has EXECUTE on %s', signature)
+)
+from pagination_functions
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select ok(
+  not has_function_privilege('service_role', function_oid, 'EXECUTE'),
+  format('service_role lacks account-pagination EXECUTE on %s', signature)
+)
+from pagination_functions
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select ok(
+  not procedure.prosecdef,
+  format('%s is SECURITY INVOKER', signature)
+)
+from pagination_functions
+join pg_proc procedure on procedure.oid = pagination_functions.function_oid
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select is(
+  procedure.proconfig,
+  array['search_path=""'],
+  format('%s has an empty fixed search_path', signature)
+)
+from pagination_functions
+join pg_proc procedure on procedure.oid = pagination_functions.function_oid
+order by signature;
+
+with pagination_functions(function_oid, signature) as (
+  values
+    (
+      'public.get_latest_simulated_position_lifecycle_events(uuid[])'::regprocedure,
+      'get_latest_simulated_position_lifecycle_events(uuid[])'
+    ),
+    (
+      'public.get_paper_account_portfolio_summary()'::regprocedure,
+      'get_paper_account_portfolio_summary()'
+    ),
+    (
+      'public.get_paper_account_position_page(text,integer,timestamptz,uuid)'::regprocedure,
+      'get_paper_account_position_page(text,integer,timestamptz,uuid)'
+    ),
+    (
+      'public.get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'::regprocedure,
+      'get_simulated_position_event_page(uuid,integer,timestamptz,uuid)'
+    )
+)
+select is(
+  procedure.provolatile,
+  's'::"char",
+  format('%s is marked STABLE', signature)
+)
+from pagination_functions
+join pg_proc procedure on procedure.oid = pagination_functions.function_oid
+order by signature;
+
 with lifecycle_functions(function_oid, signature) as (
   values
     (
@@ -622,6 +809,60 @@ select has_index(
   'statement_import_review_audit',
   'statement_import_review_audit_user_idx',
   'statement review user ownership lookup is indexed'
+);
+
+select has_index(
+  'public',
+  'simulated_positions',
+  'simulated_positions_open_page_idx',
+  'open-position keyset pagination is indexed'
+);
+select has_index(
+  'public',
+  'simulated_positions',
+  'simulated_positions_history_page_idx',
+  'history-position keyset pagination is indexed'
+);
+select has_index(
+  'public',
+  'simulated_position_events',
+  'simulated_position_events_detail_page_idx',
+  'position-event keyset pagination is indexed'
+);
+select has_index(
+  'public',
+  'simulated_position_events',
+  'simulated_position_events_lifecycle_page_idx',
+  'bounded lifecycle lookup is indexed'
+);
+
+select is(
+  pg_get_indexdef(
+    'public.simulated_positions_open_page_idx'::regclass
+  ),
+  'CREATE INDEX simulated_positions_open_page_idx ON public.simulated_positions USING btree (user_id, opened_at DESC, id DESC) WHERE (status = ANY (ARRAY[''open''::text, ''partially_closed''::text]))',
+  'open-position index matches the production predicate and full order tuple'
+);
+select is(
+  pg_get_indexdef(
+    'public.simulated_positions_history_page_idx'::regclass
+  ),
+  'CREATE INDEX simulated_positions_history_page_idx ON public.simulated_positions USING btree (user_id, opened_at DESC, id DESC) WHERE (status = ANY (ARRAY[''assigned''::text, ''called_away''::text, ''closed''::text, ''expired''::text, ''manual_review''::text]))',
+  'history-position index matches the production predicate and full order tuple'
+);
+select is(
+  pg_get_indexdef(
+    'public.simulated_position_events_detail_page_idx'::regclass
+  ),
+  'CREATE INDEX simulated_position_events_detail_page_idx ON public.simulated_position_events USING btree (position_id, created_at DESC, id DESC)',
+  'event-detail index matches the full position timestamp and UUID tuple'
+);
+select is(
+  pg_get_indexdef(
+    'public.simulated_position_events_lifecycle_page_idx'::regclass
+  ),
+  'CREATE INDEX simulated_position_events_lifecycle_page_idx ON public.simulated_position_events USING btree (position_id, created_at DESC, id DESC) WHERE (event_type = ANY (ARRAY[''assigned''::text, ''called_away''::text, ''expired''::text, ''manual_adjustment''::text]))',
+  'lifecycle index matches the bounded event predicate and order tuple'
 );
 
 select is(
