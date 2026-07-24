@@ -2,7 +2,12 @@ name: Wheel Deep Scan Coverage
 
 on:
   schedule:
-    - cron: "0 * * * 1-5"
+    # Bound scheduled coverage to the UTC hours that overlap the guarded
+    # 8 a.m.-8 p.m. New York window and avoid the top-of-hour boundary.
+    - cron: "10 12-23 * * 1-5"
+    # Midnight UTC belongs to the prior New York market day. This second
+    # window preserves 7-8 p.m. ET coverage across EST and EDT.
+    - cron: "10 0-1 * * 2-6"
   workflow_dispatch:
 
 jobs:

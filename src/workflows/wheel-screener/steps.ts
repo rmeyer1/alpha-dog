@@ -7,6 +7,7 @@ import {
   completeMaterializedWheelScreenerSnapshot,
   createMaterializedWheelScreenerSnapshot,
   failMaterializedWheelScreenerSnapshot,
+  heartbeatMaterializedWheelScreenerSnapshot,
   upsertMaterializedWheelScreenerCandidates,
 } from "@/lib/wheel/materialized-screener";
 import type {
@@ -77,6 +78,15 @@ export async function completeScreenerSnapshot(
   "use step";
 
   await completeMaterializedWheelScreenerSnapshot(snapshotId, response);
+}
+
+export async function heartbeatScreenerSnapshot(
+  snapshotId: string | null,
+  response: WheelScreenerResponse,
+) {
+  "use step";
+
+  await heartbeatMaterializedWheelScreenerSnapshot(snapshotId, response);
 }
 
 export async function failScreenerSnapshot(

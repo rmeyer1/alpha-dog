@@ -29,6 +29,12 @@ The cron route skips outside US market hours unless the request is explicitly
 forced. This avoids spending option-data calls on overnight data that can look
 fresh while the market is closed.
 
+The GitHub schedule is also bounded to the weekday UTC hours that overlap the
+guarded market window. Invocations run at minutes `7`, `22`, `37`, and `52`
+instead of clock-quarter boundaries to avoid contention with market-data
+publication and the deep-scan trigger. The route-level New York time check
+remains authoritative across daylight-saving changes.
+
 Weekend prewarm is controlled separately by
 `WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS`, which also defaults to `4`.
 
@@ -38,6 +44,11 @@ Weekend prewarm is controlled separately by
 configured strategy count, due/recent/running counts, max snapshot age, and a
 per-strategy decision summary. Use this before changing cadence or freshness
 thresholds so cron tuning stays tied to live snapshot data.
+
+Trigger responses report enqueue acceptance separately from publication
+completion. `enqueueSucceeded: true` means Vercel accepted the Workflow run;
+`publicationCompleted: false` remains accurate until the durable Workflow
+finishes and the materialized snapshot row becomes `complete`.
 
 ## Follow-Up Tuning
 
