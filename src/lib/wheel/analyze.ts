@@ -1,5 +1,6 @@
 import { getEnv, isDemoMode } from "@/lib/env";
 import { getLiveWheelMarketData } from "@/lib/alpaca/client";
+import { getNextUsEquitiesRefreshAt } from "@/lib/market/us-equities-calendar";
 import {
   buildAnalysisCacheKey,
   cachedEntryNextRefresh,
@@ -33,10 +34,6 @@ import type {
 
 function normalizeTicker(ticker: string) {
   return ticker.trim().toUpperCase();
-}
-
-function addMinutes(date: Date, minutes: number) {
-  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
 }
 
 function globalWarnings(feed: DataFeed, earningsEnabled: boolean): Warning[] {
@@ -273,7 +270,10 @@ async function computeWheelCandidates(
       feed,
       cacheStatus: feed === "demo" ? "demo" : "fresh",
       asOf: marketData.asOf,
-      nextSuggestedRefreshAt: addMinutes(now, 2),
+      nextSuggestedRefreshAt:
+        feed === "demo"
+          ? null
+          : getNextUsEquitiesRefreshAt(now, 2 * 60 * 1000),
     },
     shortPuts,
     coveredCalls,

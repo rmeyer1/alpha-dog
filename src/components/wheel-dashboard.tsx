@@ -6,8 +6,14 @@ import {
   ListChecks,
   ShieldAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ComponentType, FormEvent, ReactNode } from "react";
 import type {
   PersonaConfig,
   PersonaId,
@@ -18,6 +24,7 @@ import type {
   WheelScreenerResponse,
   WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
+import type { UsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import type { JsonValue } from "@/lib/trade-analysis/types";
 import {
   isPresetAccessError,
@@ -46,6 +53,9 @@ import {
   FreshnessStatusPill,
   getFreshnessView,
 } from "./wheel-dashboard/freshness-status";
+import {
+  MarketSessionStatusTile,
+} from "./wheel-dashboard/market-session-status";
 import { MarketOverview } from "./wheel-dashboard/market-overview";
 import {
   mergePresetFilters,
@@ -56,6 +66,7 @@ import type { RequestState, StrategyTab } from "./wheel-dashboard/types";
 import { useCompanyInsights } from "./wheel-dashboard/use-company-insights";
 
 interface WheelDashboardProps {
+  initialMarketState: UsEquitiesMarketState;
   initialPersonas: PersonaConfig[];
 }
 
@@ -104,10 +115,37 @@ function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
   }
 }
 
-function ScreenerStatusStrip({
+function ScreenerStatusTile({
+  icon: Icon,
+  label,
+  tone,
+  value,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  tone: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-12 items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-3">
+      <Icon className={`size-4 shrink-0 ${tone}`} />
+      <div className="min-w-0">
+        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+          {label}
+        </div>
+        <div className="truncate text-sm font-medium text-zinc-100">
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ScreenerStatusStrip({
   activePersona,
   error,
   filters,
+  marketState,
   response,
   screenerResponse,
   strategy,
@@ -118,6 +156,7 @@ function ScreenerStatusStrip({
   activePersona: PersonaConfig;
   error: string | null;
   filters: WheelFilters;
+  marketState: UsEquitiesMarketState;
   response: WheelAnalysisResponse | null;
   screenerResponse: WheelScreenerResponse | null;
   strategy: WheelCompanyStrategy;
@@ -137,58 +176,46 @@ function ScreenerStatusStrip({
     : screenerResponse?.companies.length ?? 0;
   const feed = freshness?.feed.toUpperCase() ?? "Pending";
   const freshnessView = getFreshnessView(freshness, requestState);
-
-  const tiles = [
-    {
-      label: "Feed",
-      value: feed,
-      icon: Database,
-      tone: "text-cyan-200",
-    },
-    {
-      label: "Freshness",
-      value: <FreshnessStatusPill className="w-full" view={freshnessView} />,
-      icon: freshnessView.icon,
-      tone: freshnessView.tone.icon,
-    },
-    {
-      label: "Ranked",
-      value: `${rankedCount} candidates`,
-      icon: ListChecks,
-      tone: "text-zinc-200",
-    },
-    {
-      label: "Risk flags",
-      value: error ? "Action needed" : warningCount ? `${warningCount} warning${warningCount === 1 ? "" : "s"}` : "None",
-      icon: warningCount || error ? AlertTriangle : ShieldAlert,
-      tone: error
-        ? "text-red-200"
-        : warningCount
-          ? "text-amber-200"
-          : "text-emerald-200",
-    },
-  ];
+  const riskValue = error
+    ? "Action needed"
+    : warningCount
+      ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
+      : "None";
+  const riskTone = error
+    ? "text-red-200"
+    : warningCount
+      ? "text-amber-200"
+      : "text-emerald-200";
 
   return (
     <section className="border-b border-white/10 bg-[#0f1112]">
-      <div className="mx-auto grid max-w-[1600px] gap-2 px-4 py-3 md:grid-cols-4 md:px-6 xl:px-8">
-        {tiles.map((tile) => (
-          <div
-            className="flex min-h-12 items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-3"
-            key={tile.label}
-          >
-            <tile.icon className={`size-4 shrink-0 ${tile.tone}`} />
-            <div className="min-w-0">
-              <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
-                {tile.label}
-              </div>
-              <div className="truncate text-sm font-medium text-zinc-100">
-                {tile.value}
-              </div>
-            </div>
-          </div>
-        ))}
-        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 md:col-span-4">
+      <div className="mx-auto grid max-w-[1600px] gap-2 px-4 py-3 md:grid-cols-5 md:px-6 xl:px-8">
+        <ScreenerStatusTile
+          icon={Database}
+          label="Feed"
+          tone="text-cyan-200"
+          value={feed}
+        />
+        <ScreenerStatusTile
+          icon={freshnessView.icon}
+          label="Freshness"
+          tone={freshnessView.tone.icon}
+          value={<FreshnessStatusPill className="w-full" view={freshnessView} />}
+        />
+        <MarketSessionStatusTile initialState={marketState} />
+        <ScreenerStatusTile
+          icon={ListChecks}
+          label="Ranked"
+          tone="text-zinc-200"
+          value={`${rankedCount} candidates`}
+        />
+        <ScreenerStatusTile
+          icon={warningCount || error ? AlertTriangle : ShieldAlert}
+          label="Risk flags"
+          tone={riskTone}
+          value={riskValue}
+        />
+        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 md:col-span-5">
           <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
             Results generated with
           </div>
@@ -204,7 +231,10 @@ function ScreenerStatusStrip({
   );
 }
 
-export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
+export function WheelDashboard({
+  initialMarketState,
+  initialPersonas,
+}: WheelDashboardProps) {
   const defaultPersona = initialPersonas.find((persona) => persona.default) ??
     initialPersonas[0];
   const [ticker, setTicker] = useState(defaultTicker);
@@ -1014,6 +1044,7 @@ export function WheelDashboard({ initialPersonas }: WheelDashboardProps) {
         activePersona={displayedPersona}
         error={error}
         filters={displayedFilters}
+        marketState={initialMarketState}
         requestState={requestState}
         response={response}
         screenerResponse={screenerResponse}

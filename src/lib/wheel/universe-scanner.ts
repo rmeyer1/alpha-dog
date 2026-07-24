@@ -9,6 +9,7 @@ import {
   type AlpacaStockSnapshot,
 } from "@/lib/alpaca/client";
 import { getEnv } from "@/lib/env";
+import { getNextUsEquitiesRefreshAt } from "@/lib/market/us-equities-calendar";
 import {
   getSupabaseServiceConfig,
   requestSupabaseRest,
@@ -1488,10 +1489,6 @@ function globalWarnings(feed: DataFeed): Warning[] {
   return warnings;
 }
 
-function addMinutes(date: Date, minutes: number) {
-  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
-}
-
 export async function analyzeStagedUniverseWheelCompanies(
   request: WheelScreenerRequest,
 ): Promise<WheelScreenerResponse> {
@@ -1690,7 +1687,10 @@ export async function analyzeStagedUniverseWheelCompanies(
         feed,
         cacheStatus: "fresh",
         asOf: now.toISOString(),
-        nextSuggestedRefreshAt: addMinutes(now, 15),
+        nextSuggestedRefreshAt: getNextUsEquitiesRefreshAt(
+          now,
+          15 * 60 * 1000,
+        ),
       },
       companies,
       screenedCount: ranked.length,

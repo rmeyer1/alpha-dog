@@ -21,6 +21,7 @@
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/e2e/configuration-safety.spec.ts",
     "test:watch": "vitest",
+    "verify:market-calendar": "node scripts/verify-market-calendar.mjs",
     "verify:toolchain": "node scripts/verify-toolchain.mjs"
   },
   "dependencies": {
@@ -42,6 +43,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.7"

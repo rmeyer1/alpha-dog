@@ -82,4 +82,34 @@ describe("scheduled deep scan coverage", () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([
+    ["holiday", "2026-07-03T15:10:00.000Z"],
+    ["after an early close", "2026-11-27T18:10:00.000Z"],
+  ])("skips provider work on %s", async (_label, instant) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(instant);
+
+    try {
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request(
+          "https://alpha-dog.vercel.app/api/cron/wheel/deep-scan-coverage",
+          { headers: { Authorization: "Bearer cron-secret" } },
+        ),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        ok: true,
+        skippedCoverageHours: true,
+        started: [],
+      });
+      expect(body.coverageHours.marketSession.isOpen).toBe(false);
+      expect(startMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

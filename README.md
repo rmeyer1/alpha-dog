@@ -16,6 +16,7 @@ nvm use
 npm --version
 npm ci
 npm run verify:toolchain
+npm run verify:market-calendar
 ```
 
 `npm ci` is the only supported clean-install command. It fails if
@@ -36,6 +37,7 @@ Run the same commands required by pull-request CI:
 
 ```bash
 npm run verify:toolchain
+npm run verify:market-calendar
 npm run lint
 npm run typecheck
 npm test

@@ -3,8 +3,10 @@ name: Wheel Screener Refresh
 on:
   schedule:
     # Offset from the top of the hour to avoid colliding with market-data
-    # publication boundaries. The route still enforces New York market hours.
-    - cron: "7,22,37,52 13-21 * * 1-5"
+    # publication boundaries. The route enforces versioned New York sessions,
+    # holidays, early closes, DST, and the final-day prewarm window.
+    - cron: "7,22,37,52 13-23 * * 1-5"
+    - cron: "7,22,37,52 20-23 * * 0"
   workflow_dispatch:
 
 jobs:

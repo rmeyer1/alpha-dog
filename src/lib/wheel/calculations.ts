@@ -8,6 +8,7 @@ import type {
   WheelCandidate,
   WheelFilters,
 } from "./types";
+import { getEquityOptionExpirationAt } from "@/lib/market/us-equities-calendar";
 
 const dayMs = 24 * 60 * 60 * 1000;
 
@@ -22,9 +23,10 @@ export function round(value: number, decimals = 2) {
 }
 
 export function getDte(expirationDate: string, now = new Date()) {
-  const expiry = new Date(`${expirationDate}T16:00:00-04:00`);
+  const expiry = getEquityOptionExpirationAt(expirationDate);
+  const dte = Math.ceil((expiry.getTime() - now.getTime()) / dayMs);
 
-  return Math.ceil((expiry.getTime() - now.getTime()) / dayMs);
+  return Object.is(dte, -0) ? 0 : dte;
 }
 
 export function midpoint(bid: number, ask: number) {
