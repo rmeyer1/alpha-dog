@@ -49,7 +49,7 @@ recommendations.
 
 Apply `20260720224500_create_api_abuse_protection.sql` before deploying the
 paid-route changes and
-`20260721150739_harden_manual_account_invitations.sql` before deploying manual
+`20260723182159_harden_manual_account_invitations.sql` before deploying manual
 account hardening. Old rate windows, expired leases, and old usage aggregates
 can be deleted by a maintenance job after the desired observability retention
 period.

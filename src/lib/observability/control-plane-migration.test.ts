@@ -1,17 +1,32 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ALERT_RULES } from "./alerts";
 
-const migration = readFileSync(
-  "supabase/migrations/20260724111354_add_observability_control_plane.sql",
+const baseMigration = readFileSync(
+  "supabase/migrations/20260724121005_add_observability_control_plane.sql",
   "utf8",
 );
+const heartbeatMigration = readFileSync(
+  "supabase/migrations/20260724124304_add_observability_cron_heartbeat_detection.sql",
+  "utf8",
+);
+const migration = `${baseMigration}\n${heartbeatMigration}`;
 const vitestConfig = readFileSync("vitest.config.ts", "utf8");
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as {
   crons?: Array<{ path: string; schedule: string }>;
 };
 
 describe("observability control-plane migration", () => {
+  it("preserves the exact production control-plane migration identity", () => {
+    expect(createHash("sha256").update(baseMigration).digest("hex")).toBe(
+      "75841dc9b506d506959de52f9a3f5ce479f41a7115637f193ca2defdea5fff46",
+    );
+    expect(baseMigration).not.toContain(
+      "v_rule.alert_key = 'cron_refresh_missing'",
+    );
+  });
+
   it("coordinates readiness refreshes across instances", () => {
     expect(migration).toContain("observability_readiness_state");
     expect(migration).toContain("claim_observability_readiness_refresh");
@@ -33,18 +48,29 @@ describe("observability control-plane migration", () => {
     expect(migration).toContain("observability_alert_events");
   });
 
-  it("detects an absent durable readiness cron heartbeat", () => {
-    expect(migration).toContain(
+  it("adds heartbeat detection and privilege normalization forward-only", () => {
+    expect(heartbeatMigration).toContain(
       "v_rule.alert_key = 'cron_refresh_missing'",
     );
-    expect(migration).toContain(
+    expect(heartbeatMigration).toContain(
       "from public.observability_readiness_state as r",
     );
-    expect(migration).toContain(
+    expect(heartbeatMigration).toContain(
       "p_now - pg_catalog.make_interval(secs => v_rule.window_seconds)",
     );
-    expect(migration).toContain(
+    expect(heartbeatMigration).toContain(
       "v_metric_value := greatest(v_metric_value, 1::numeric)",
+    );
+    expect(heartbeatMigration).not.toContain("create table");
+    expect(heartbeatMigration).not.toContain("cron.schedule");
+    expect(heartbeatMigration).not.toContain(
+      "record_observability_alert_sample",
+    );
+    expect(heartbeatMigration).toContain(
+      "from public, anon, authenticated, service_role",
+    );
+    expect(heartbeatMigration).toContain(
+      "revoke all on sequence public.observability_alert_samples_id_seq",
     );
   });
 

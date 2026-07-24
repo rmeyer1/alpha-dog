@@ -88,6 +88,86 @@ select ok(
 from observability_tables
 order by table_name;
 
+with expected_table_privileges(table_name, privileges) as (
+  values
+    (
+      'observability_readiness_state',
+      array['INSERT', 'SELECT', 'UPDATE']::text[]
+    ),
+    (
+      'observability_alert_rules',
+      array['SELECT']::text[]
+    ),
+    (
+      'observability_alert_samples',
+      array['DELETE', 'INSERT', 'SELECT']::text[]
+    ),
+    (
+      'observability_alert_state',
+      array['INSERT', 'SELECT', 'UPDATE']::text[]
+    ),
+    (
+      'observability_alert_events',
+      array['INSERT', 'SELECT']::text[]
+    )
+)
+select is(
+  coalesce(
+    (
+      select array_agg(a.privilege_type order by a.privilege_type)
+      from aclexplode(c.relacl) as a
+      join pg_roles as grantee on grantee.oid = a.grantee
+      where grantee.rolname = 'service_role'
+    ),
+    array[]::text[]
+  ),
+  expected_table_privileges.privileges,
+  format(
+    'service_role has only the intended public.%I privileges',
+    expected_table_privileges.table_name
+  )
+)
+from expected_table_privileges
+join pg_class c
+  on c.relname = expected_table_privileges.table_name
+join pg_namespace n
+  on n.oid = c.relnamespace
+ and n.nspname = 'public'
+order by expected_table_privileges.table_name;
+
+with untrusted_roles(role_name) as (
+  values ('anon'), ('authenticated')
+)
+select ok(
+  not has_sequence_privilege(
+    role_name,
+    'public.observability_alert_samples_id_seq',
+    'USAGE, SELECT, UPDATE'
+  ),
+  format(
+    '%s has no public.observability_alert_samples_id_seq privilege',
+    role_name
+  )
+)
+from untrusted_roles
+order by role_name;
+
+select is(
+  (
+    select array_agg(a.privilege_type order by a.privilege_type)
+    from pg_class c
+    join pg_namespace n
+      on n.oid = c.relnamespace
+     and n.nspname = 'public'
+    cross join lateral aclexplode(c.relacl) as a
+    join pg_roles as grantee on grantee.oid = a.grantee
+    where c.relname = 'observability_alert_samples_id_seq'
+      and grantee.rolname = 'service_role'
+  ),
+  array['SELECT', 'USAGE']::text[],
+  'service_role has only SELECT and USAGE on the alert sample sequence'
+);
+
 with
 functions(signature) as (
   values

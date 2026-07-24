@@ -81,11 +81,14 @@ fail-closed for required dependencies.
 
 ## Alert definitions
 
-The migration
-`supabase/migrations/20260724111354_add_observability_control_plane.sql`
+The production-history migration
+`supabase/migrations/20260724121005_add_observability_control_plane.sql`
 installs these rules in the shared database and schedules the evaluator every
-minute with Supabase Cron/`pg_cron`. The TypeScript rule definitions are kept
-in source-controlled parity:
+minute with Supabase Cron/`pg_cron`. The strictly later
+`supabase/migrations/20260724124304_add_observability_cron_heartbeat_detection.sql`
+adds absence detection and normalizes service-role-only table and sequence
+privileges without rewriting the already-applied migration. The TypeScript
+rule definitions are kept in source-controlled parity:
 
 | Alert | Threshold and window | Minimum samples | Severity | Cooldown / recovery |
 | --- | --- | --- | --- | --- |
