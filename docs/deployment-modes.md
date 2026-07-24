@@ -25,10 +25,19 @@ Configure these variables for a healthy live deployment:
 - Trade analysis: `OPENAI_API_KEY`
 - Earnings, when enabled: `FINNHUB_API_KEY`
 
-`GET /api/health/configuration` returns the active mode and provider readiness
-without secret values. Invalid live configuration returns HTTP 503. Market-data
-routes also return an actionable HTTP 503 before reading a cache or invoking a
-provider, so an invalid live deployment cannot silently serve demo data.
+`GET /api/health/live` is the process liveness signal. It returns HTTP 200
+without contacting dependencies. `GET /api/health/ready` runs cached,
+coalesced, concurrent, read-only dependency checks with explicit timeouts and
+returns HTTP 503 when a required dependency is unavailable.
+`GET /api/health/configuration` reports only aggregate mode/readiness state.
+Health responses expose no credential, provider hostname, account, table, or
+per-dependency topology detail. See
+[`observability-runbook.md`](./observability-runbook.md) for probe and alert
+operations.
+
+Invalid live configuration returns HTTP 503. Market-data routes also return an
+actionable HTTP 503 before reading a cache or invoking a provider, so an
+invalid live deployment cannot silently serve demo data.
 
 Apply the Supabase migrations before enabling the release. The provenance
 migration stores the candidate source mode, feed, cache status/source, and

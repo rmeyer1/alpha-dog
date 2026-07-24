@@ -1,12 +1,19 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  "supabase/migrations/20260723205141_add_data_source_provenance.sql",
+  "supabase/migrations/20260723222155_add_data_source_provenance.sql",
   "utf8",
 );
 
 describe("data-source provenance migration", () => {
+  it("preserves the exact applied production migration", () => {
+    expect(createHash("sha256").update(migration).digest("hex")).toBe(
+      "4b6c742ba30da4526cd54afc41cfb35216e0bf24d9a2bf3c45463c64a34f7525",
+    );
+  });
+
   it("separates materialized screener rows by explicit source mode", () => {
     expect(migration).toContain(
       "add column if not exists data_source_mode text not null default 'live'",

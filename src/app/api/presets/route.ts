@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createSavedPreset,
@@ -10,7 +11,7 @@ import {
 } from "@/lib/supabase/account-session";
 import { savedPresetInputSchema } from "@/lib/wheel/validation";
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
   return copyAuthCookies(auth.response, NextResponse.json({ presets }));
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -61,3 +62,13 @@ export async function POST(request: NextRequest) {
     NextResponse.json({ preset }, { status: 201 }),
   );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/presets" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/presets" },
+  POSTHandler,
+);

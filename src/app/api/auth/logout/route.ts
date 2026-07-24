@@ -1,8 +1,9 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import { LOGOUT_FAILED, signOutSupabaseSession } from "@/lib/supabase/logout";
 import { createSupabaseRouteClient } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const response = NextResponse.json({ status: "signed_out" });
   const supabase = createSupabaseRouteClient(request, response);
   const result = await signOutSupabaseSession(supabase);
@@ -21,3 +22,8 @@ export async function POST(request: NextRequest) {
 
   return response;
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/auth/logout" },
+  POSTHandler,
+);

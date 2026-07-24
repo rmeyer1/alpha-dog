@@ -1,12 +1,19 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(
-  "supabase/migrations/20260721150739_harden_manual_account_invitations.sql",
+  "supabase/migrations/20260723182159_harden_manual_account_invitations.sql",
   "utf8",
 );
 
 describe("manual account invitation migration", () => {
+  it("preserves the exact applied production migration", () => {
+    expect(createHash("sha256").update(migration).digest("hex")).toBe(
+      "248522fe22ddedecc069091509a1efe090985e88198e5da4edbe8c43453833f6",
+    );
+  });
+
   it("repairs the general limiter for already-migrated environments", () => {
     expect(migration).toContain("pg_get_functiondef");
     expect(migration).toContain(

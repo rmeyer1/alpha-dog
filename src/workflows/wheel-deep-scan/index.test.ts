@@ -3,11 +3,13 @@ import type { UniverseDeepScanCoverageResult } from "@/lib/wheel/universe-scanne
 
 const completeDeepScanCoverageBatchMock = vi.hoisted(() => vi.fn());
 const failDeepScanCoverageBatchMock = vi.hoisted(() => vi.fn());
+const recordDeepScanWorkflowLifecycleMock = vi.hoisted(() => vi.fn());
 const stageDeepScanCoverageBatchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./steps", () => ({
   completeDeepScanCoverageBatch: completeDeepScanCoverageBatchMock,
   failDeepScanCoverageBatch: failDeepScanCoverageBatchMock,
+  recordDeepScanWorkflowLifecycle: recordDeepScanWorkflowLifecycleMock,
   stageDeepScanCoverageBatch: stageDeepScanCoverageBatchMock,
 }));
 
@@ -27,10 +29,16 @@ const result: UniverseDeepScanCoverageResult = {
   strategy: "short_put",
   totalEligibleCount: 1,
 };
+const telemetryContext = {
+  correlationId: "workflow-correlation-1",
+  logicalOperationId: "workflow-operation-1",
+  startedAtEpochMs: Date.now(),
+};
 
 beforeEach(() => {
   completeDeepScanCoverageBatchMock.mockReset();
   failDeepScanCoverageBatchMock.mockReset();
+  recordDeepScanWorkflowLifecycleMock.mockReset();
   stageDeepScanCoverageBatchMock.mockReset();
 });
 
@@ -48,7 +56,7 @@ describe("wheel deep scan workflow", () => {
         persona: "balanced_wheel",
         strategy: "short_put",
         workflowIdempotencyKey: "wrun_ad017_test",
-      }),
+      }, telemetryContext),
     ).resolves.toEqual(result);
 
     expect(stageDeepScanCoverageBatchMock).toHaveBeenCalledOnce();
@@ -58,9 +66,17 @@ describe("wheel deep scan workflow", () => {
         strategy: "short_put",
       }),
       expect.any(String),
+      expect.objectContaining({
+        correlationId: expect.any(String),
+        logicalOperationId: expect.any(String),
+      }),
     );
     expect(completeDeepScanCoverageBatchMock).toHaveBeenCalledWith(
       result.runId,
+      expect.objectContaining({
+        correlationId: expect.any(String),
+        logicalOperationId: expect.any(String),
+      }),
     );
     expect(failDeepScanCoverageBatchMock).not.toHaveBeenCalled();
   });
@@ -81,7 +97,7 @@ describe("wheel deep scan workflow", () => {
         persona: "balanced_wheel",
         strategy: "short_put",
         workflowIdempotencyKey: "wrun_ad017_test",
-      }),
+      }, telemetryContext),
     ).rejects.toThrow("publication failed");
 
     expect(stageDeepScanCoverageBatchMock).toHaveBeenCalledOnce();
@@ -89,6 +105,10 @@ describe("wheel deep scan workflow", () => {
     expect(failDeepScanCoverageBatchMock).toHaveBeenCalledWith(
       result.runId,
       "publication failed",
+      expect.objectContaining({
+        correlationId: expect.any(String),
+        logicalOperationId: expect.any(String),
+      }),
     );
   });
 
@@ -113,7 +133,7 @@ describe("wheel deep scan workflow", () => {
         persona: "balanced_wheel",
         strategy: "short_put",
         workflowIdempotencyKey: "wrun_ad017_test",
-      }),
+      }, telemetryContext),
     ).resolves.toEqual(skipped);
     expect(completeDeepScanCoverageBatchMock).not.toHaveBeenCalled();
   });

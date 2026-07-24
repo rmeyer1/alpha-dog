@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   loadAccountPositionPage,
@@ -22,7 +23,7 @@ import {
   getRequiredAccountSession,
 } from "@/lib/supabase/account-session";
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const searchParams = new URL(request.url).searchParams;
   let historyLimit: number;
   let openLimit: number;
@@ -145,7 +146,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -206,3 +207,13 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/account/positions" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/account/positions" },
+  POSTHandler,
+);

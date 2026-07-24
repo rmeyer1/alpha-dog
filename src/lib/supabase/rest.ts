@@ -1,4 +1,10 @@
 import { getEnv } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 
 interface SupabaseRequestOptions {
   body?: unknown;
@@ -76,33 +82,50 @@ export async function requestSupabaseRest<T>(
     return null;
   }
 
-  const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? 10_000);
-  const signal = options.signal && timeoutSignal
-    ? AbortSignal.any([options.signal, timeoutSignal])
-    : options.signal ?? timeoutSignal;
+  const operation = table
+    .replaceAll("/", "_")
+    .replace(/[^a-zA-Z0-9_.:-]/g, "_")
+    .slice(0, 64) || "rest_request";
 
-  const response = await fetch(buildRestUrl(config, table, options.query), {
-    method: options.method ?? "GET",
-    headers: {
-      apikey: config.serviceRoleKey,
-      Authorization: `Bearer ${config.serviceRoleKey}`,
-      "Content-Type": "application/json",
-      ...(options.prefer ? { Prefer: options.prefer } : {}),
-    },
-    body: options.body == null ? undefined : JSON.stringify(options.body),
-    cache: "no-store",
-    signal,
+  return observeProviderCall("supabase", operation, async () => {
+    const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? 10_000);
+    const signal = options.signal && timeoutSignal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : options.signal ?? timeoutSignal;
+    const response = await fetch(buildRestUrl(config, table, options.query), {
+      method: options.method ?? "GET",
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        "Content-Type": "application/json",
+        ...(options.prefer ? { Prefer: options.prefer } : {}),
+      },
+      body: options.body == null ? undefined : JSON.stringify(options.body),
+      cache: "no-store",
+      opentelemetry: privateProviderFetchTracing,
+      signal,
+    });
+
+    if (!response.ok) {
+      throw providerHttpError(
+        response.status,
+        await parseSupabaseError(response),
+      );
+    }
+
+    const responseText = await response.text();
+
+    if (!responseText) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(responseText) as T;
+    } catch (error) {
+      throw providerMalformedResponse(
+        "Supabase returned a malformed response.",
+        error,
+      );
+    }
   });
-
-  if (!response.ok) {
-    throw new Error(await parseSupabaseError(response));
-  }
-
-  const responseText = await response.text();
-
-  if (!responseText) {
-    return null;
-  }
-
-  return JSON.parse(responseText) as T;
 }

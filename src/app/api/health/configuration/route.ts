@@ -1,12 +1,12 @@
-import { NextResponse } from "next/server";
-import { getDeploymentHealth } from "@/lib/env";
+import { getConfigurationSummary } from "@/lib/observability/health";
+import { instrumentApiRoute } from "@/lib/observability/route";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const health = getDeploymentHealth();
+async function GETHandler() {
+  const health = getConfigurationSummary();
 
-  return NextResponse.json(
+  return Response.json(
     health,
     {
       headers: {
@@ -16,3 +16,8 @@ export async function GET() {
     },
   );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/health/configuration" },
+  GETHandler,
+);

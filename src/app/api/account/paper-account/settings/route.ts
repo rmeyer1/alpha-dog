@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   paperAccountSettingsSchema,
@@ -9,7 +10,7 @@ import {
   getRequiredAccountSession,
 } from "@/lib/supabase/account-session";
 
-export async function PATCH(request: NextRequest) {
+async function PATCHHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -44,3 +45,8 @@ export async function PATCH(request: NextRequest) {
 
   return copyAuthCookies(auth.response, NextResponse.json({ account }));
 }
+
+export const PATCH = instrumentApiRoute(
+  { method: "PATCH", route: "/api/account/paper-account/settings" },
+  PATCHHandler,
+);

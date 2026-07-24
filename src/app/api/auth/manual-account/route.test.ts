@@ -30,10 +30,16 @@ vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdminClient: getAdminClientMock,
 }));
 
-vi.mock("@/lib/supabase/auth-observability", () => ({
-  authCorrelationIdFromRequest: () => "correlation-1",
-  logAuthAccountFailure: logFailureMock,
-}));
+vi.mock("@/lib/supabase/auth-observability", async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import("@/lib/supabase/auth-observability")
+  >();
+
+  return {
+    ...original,
+    logAuthAccountFailure: logFailureMock,
+  };
+});
 
 import { POST } from "./route";
 
@@ -98,10 +104,13 @@ describe("POST /api/auth/manual-account", () => {
 
   it("derives the redirect and returns only a generic accepted response", async () => {
     const response = await POST(request(validBody));
+    const correlationId = response.headers.get(
+      "x-alpha-dog-correlation-id",
+    );
 
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({
-      correlationId: "correlation-1",
+      correlationId,
       message: "If this email is eligible, an invitation will arrive shortly.",
       status: "accepted",
     });
@@ -143,8 +152,16 @@ describe("POST /api/auth/manual-account", () => {
 
     expect(existingResponse.status).toBe(newResponse.status);
     expect(limitedResponse.status).toBe(newResponse.status);
-    expect(existingPayload).toEqual(newPayload);
-    expect(limitedPayload).toEqual(newPayload);
+    expect(existingPayload).toMatchObject({
+      message: newPayload.message,
+      status: newPayload.status,
+    });
+    expect(limitedPayload).toMatchObject({
+      message: newPayload.message,
+      status: newPayload.status,
+    });
+    expect(existingPayload.correlationId).not.toBe(newPayload.correlationId);
+    expect(limitedPayload.correlationId).not.toBe(newPayload.correlationId);
   });
 
   it("does not accept caller-controlled absolute destinations", async () => {
@@ -203,15 +220,21 @@ describe("POST /api/auth/manual-account", () => {
     });
 
     const response = await POST(request(validBody));
+    const correlationId = response.headers.get(
+      "x-alpha-dog-correlation-id",
+    );
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       error: {
         code: "ACCOUNT_INVITE_FAILED",
-        correlationId: "correlation-1",
+        correlationId,
         message: "Manual account creation failed.",
       },
     });
+    expect(logFailureMock).toHaveBeenCalledWith(
+      expect.objectContaining({ correlationId }),
+    );
     expect(releaseMock).toHaveBeenCalledOnce();
   });
 });

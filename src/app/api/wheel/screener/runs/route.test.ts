@@ -160,4 +160,24 @@ describe("POST /api/wheel/screener/runs", () => {
     expect(startMock).toHaveBeenCalledTimes(1);
     expect(releaseGuardMock).toHaveBeenCalledTimes(1);
   });
+
+  it("records enqueue failure without an orphan workflow start", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    getRunningScreenerRefreshFallbackMock.mockResolvedValue(null);
+    startMock.mockRejectedValue(new Error("workflow payload secret canary"));
+
+    const { POST } = await import("./route");
+    const response = await POST(runRequest());
+    const serialized = error.mock.calls.flat().join("\n");
+
+    expect(response.status).toBe(502);
+    expect(serialized).toContain('"event":"workflow.lifecycle"');
+    expect(serialized).toContain('"outcome":"failed"');
+    expect(serialized).not.toContain('"outcome":"started"');
+    expect(serialized).not.toContain("workflow payload secret canary");
+    expect(releaseGuardMock).toHaveBeenCalledOnce();
+
+    error.mockRestore();
+  });
 });

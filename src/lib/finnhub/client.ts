@@ -1,4 +1,10 @@
 import { getEnv } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 import { withProviderTimeout } from "@/lib/provider-timeout";
 
 export type FinnhubEarningsHour = "bmo" | "amc" | "dmh" | string;
@@ -203,41 +209,55 @@ async function requestFinnhubJson<T>(
   params: Record<string, string | number | boolean | null | undefined>,
   signal?: AbortSignal,
 ) {
-  const { baseUrl, token } = baseFinnhubUrl();
-  const providerSignal = withProviderTimeout(signal, 10_000);
-  const url = new URL(path, baseUrl);
+  const operation = path.replaceAll("/", "_").slice(0, 64);
 
-  for (const [key, value] of Object.entries(params)) {
-    if (value != null) {
-      url.searchParams.set(key, String(value));
+  return observeProviderCall("finnhub", operation, async () => {
+    const { baseUrl, token } = baseFinnhubUrl();
+    const providerSignal = withProviderTimeout(signal, 10_000);
+    const url = new URL(path, baseUrl);
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value != null) {
+        url.searchParams.set(key, String(value));
+      }
     }
-  }
 
-  url.searchParams.set("token", token);
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: {
+        "X-Finnhub-Token": token,
+      },
+      opentelemetry: privateProviderFetchTracing,
+      signal: providerSignal,
+    });
+    let body: { error?: string } | T | null;
 
-  const response = await fetch(url, {
-    cache: "no-store",
-    signal: providerSignal,
+    try {
+      body = await response.json() as { error?: string } | T;
+    } catch (error) {
+      throw providerMalformedResponse(
+        "Finnhub returned a malformed response.",
+        error,
+      );
+    }
+
+    if (!response.ok) {
+      const errorMessage = body &&
+          typeof body === "object" &&
+          "error" in body &&
+          typeof body.error === "string"
+        ? body.error
+        : `Finnhub returned HTTP ${response.status}.`;
+
+      throw providerHttpError(response.status, errorMessage);
+    }
+
+    if (body == null) {
+      throw providerMalformedResponse("Finnhub returned an empty response.");
+    }
+
+    return body as T;
   });
-  const body = await response.json().catch(() => null) as
-    | { error?: string }
-    | T
-    | null;
-
-  if (!response.ok) {
-    const errorMessage = body &&
-        typeof body === "object" &&
-        "error" in body &&
-        typeof body.error === "string"
-      ? body.error
-      : `Finnhub returned HTTP ${response.status}.`;
-
-    throw new Error(
-      errorMessage,
-    );
-  }
-
-  return body as T;
 }
 
 export function normalizeFinnhubEarningsEvent(

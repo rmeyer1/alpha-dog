@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { getFinnhubCompanyInsights } from "@/lib/finnhub/client";
 import {
   dateParam,
@@ -10,7 +11,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, context: SymbolRouteContext) {
+async function GETHandler(request: Request, context: SymbolRouteContext) {
   const symbol = await symbolFromContext(context);
 
   if (!symbol) {
@@ -33,3 +34,8 @@ export async function GET(request: Request, context: SymbolRouteContext) {
     });
   });
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/finnhub/company/[symbol]" },
+  GETHandler,
+);

@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import { loadStatementImport } from "@/lib/account/statement-import-staging";
 import {
@@ -10,7 +11,7 @@ interface RouteContext {
   params: Promise<{ importId: string }>;
 }
 
-export async function GET(request: NextRequest, context: RouteContext) {
+async function GETHandler(request: NextRequest, context: RouteContext) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -39,3 +40,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   return copyAuthCookies(auth.response, NextResponse.json(statementImport));
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/account/statement-import/[importId]" },
+  GETHandler,
+);

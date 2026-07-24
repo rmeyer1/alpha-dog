@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { getFinnhubRecommendationTrends } from "@/lib/finnhub/client";
 import {
   invalidSymbolResponse,
@@ -8,7 +9,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, context: SymbolRouteContext) {
+async function GETHandler(request: Request, context: SymbolRouteContext) {
   const symbol = await symbolFromContext(context);
 
   if (!symbol) {
@@ -24,3 +25,8 @@ export async function GET(request: Request, context: SymbolRouteContext) {
     return { recommendations, symbol };
   });
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/finnhub/company/[symbol]/recommendations" },
+  GETHandler,
+);

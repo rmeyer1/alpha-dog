@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
@@ -29,7 +30,7 @@ function withCachedFreshness(
   };
 }
 
-export async function GET(request: Request) {
+async function GETHandler(request: Request) {
   const url = new URL(request.url);
   const parsed = whaleQuerySchema.safeParse(parseSearchParams(url.searchParams));
 
@@ -94,3 +95,8 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/polymarket/whales" },
+  GETHandler,
+);

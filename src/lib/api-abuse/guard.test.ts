@@ -4,6 +4,7 @@ const getRequiredAccountSessionMock = vi.hoisted(() => vi.fn());
 const requestSupabaseRestMock = vi.hoisted(() => vi.fn());
 const getSupabaseServiceConfigMock = vi.hoisted(() => vi.fn());
 const createSupabaseRouteClientMock = vi.hoisted(() => vi.fn());
+const scheduleAlertSampleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/env", () => ({
   getEnv: () => ({ API_ABUSE_HMAC_SECRET: "a".repeat(32) }),
@@ -26,6 +27,9 @@ vi.mock("@/lib/supabase/rest", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseRouteClient: createSupabaseRouteClientMock,
 }));
+vi.mock("@/lib/observability/alert-control-plane", () => ({
+  scheduleAlertSample: scheduleAlertSampleMock,
+}));
 
 function request() {
   return new Request("https://alpha-dog.test/api/trade/analyze", {
@@ -40,6 +44,7 @@ beforeEach(() => {
   requestSupabaseRestMock.mockReset();
   getSupabaseServiceConfigMock.mockReset();
   createSupabaseRouteClientMock.mockReset();
+  scheduleAlertSampleMock.mockReset();
   getSupabaseServiceConfigMock.mockReturnValue({
     serviceRoleKey: "service-role-key",
     url: "https://alpha-dog.supabase.co",
@@ -92,6 +97,10 @@ describe("paid route abuse guard", () => {
         }),
       }),
     );
+    expect(scheduleAlertSampleMock).toHaveBeenCalledWith(
+      "paid_usage_anomaly",
+      0,
+    );
     expect(requestSupabaseRestMock).toHaveBeenNthCalledWith(
       2,
       "rpc/release_api_abuse_lease",
@@ -123,6 +132,10 @@ describe("paid route abuse guard", () => {
       expect(result.response.headers.get("Retry-After")).toBe("17");
       expect(await result.response.json()).toMatchObject({ error: { code } });
     }
+    expect(scheduleAlertSampleMock).toHaveBeenCalledWith(
+      "paid_usage_anomaly",
+      1,
+    );
   });
 
   it("fails closed when the distributed limiter is unavailable", async () => {
@@ -138,6 +151,10 @@ describe("paid route abuse guard", () => {
         error: { code: "ABUSE_PROTECTION_UNAVAILABLE" },
       });
     }
+    expect(scheduleAlertSampleMock).toHaveBeenCalledWith(
+      "paid_usage_anomaly",
+      1,
+    );
   });
 
   it("fails closed when authentication cannot be verified", async () => {
@@ -154,6 +171,10 @@ describe("paid route abuse guard", () => {
       });
     }
     expect(requestSupabaseRestMock).not.toHaveBeenCalled();
+    expect(scheduleAlertSampleMock).toHaveBeenCalledWith(
+      "paid_usage_anomaly",
+      1,
+    );
   });
 
   it("hides diagnostics in production before calling providers", async () => {

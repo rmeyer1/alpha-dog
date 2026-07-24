@@ -1,4 +1,10 @@
 import { getEnv } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 import { withProviderTimeout } from "@/lib/provider-timeout";
 import { tradeAnalysisJsonSchema } from "./prompt";
 import type { TradeAnalysisChartSource, TradeAnalysisResult } from "./types";
@@ -66,53 +72,66 @@ export async function runTradeAnalysisProvider({
   }
 
   const model = env.OPENAI_TRADE_ANALYSIS_MODEL;
-  const providerSignal = withProviderTimeout(signal, 45_000);
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      input: messages,
-      model,
-      text: {
-        format: {
-          type: "json_schema",
-          name: "trade_analysis_verdict",
-          strict: true,
-          schema: tradeAnalysisJsonSchema,
-        },
+  return observeProviderCall("openai", "trade_analysis", async () => {
+    const providerSignal = withProviderTimeout(signal, 45_000);
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
       },
-    }),
-    signal: providerSignal,
+      body: JSON.stringify({
+        input: messages,
+        model,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "trade_analysis_verdict",
+            strict: true,
+            schema: tradeAnalysisJsonSchema,
+          },
+        },
+      }),
+      opentelemetry: privateProviderFetchTracing,
+      signal: providerSignal,
+    });
+    let body: OpenAIResponseBody | null;
+
+    try {
+      body = await response.json() as OpenAIResponseBody;
+    } catch (error) {
+      throw providerMalformedResponse(
+        "OpenAI returned a malformed response.",
+        error,
+      );
+    }
+
+    if (!response.ok) {
+      throw providerHttpError(
+        response.status,
+        body?.error?.message ?? `OpenAI returned HTTP ${response.status}.`,
+      );
+    }
+
+    const outputText = body ? extractOutputText(body) : null;
+
+    if (!outputText) {
+      throw providerMalformedResponse(
+        "OpenAI returned an empty trade analysis response.",
+      );
+    }
+
+    const parsedJson = JSON.parse(outputText) as unknown;
+    const parsed = tradeAnalysisResultSchema.parse(parsedJson);
+
+    return {
+      model,
+      provider: env.TRADE_ANALYSIS_PROVIDER,
+      rawResponse: body,
+      result: {
+        ...parsed,
+        chartSource,
+      },
+    };
   });
-  const body = (await response.json().catch(() => null)) as
-    | OpenAIResponseBody
-    | null;
-
-  if (!response.ok) {
-    throw new Error(
-      body?.error?.message ?? `OpenAI returned HTTP ${response.status}.`,
-    );
-  }
-
-  const outputText = body ? extractOutputText(body) : null;
-
-  if (!outputText) {
-    throw new Error("OpenAI returned an empty trade analysis response.");
-  }
-
-  const parsedJson = JSON.parse(outputText) as unknown;
-  const parsed = tradeAnalysisResultSchema.parse(parsedJson);
-
-  return {
-    model,
-    provider: env.TRADE_ANALYSIS_PROVIDER,
-    rawResponse: body,
-    result: {
-      ...parsed,
-      chartSource,
-    },
-  };
 }

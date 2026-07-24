@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import { parseBrokerStatementCsv, StatementImportAdapterError } from "@/lib/account/statement-import-adapters";
 import { reconcileImportedOptionRows } from "@/lib/account/statement-import-reconciliation";
@@ -7,6 +8,7 @@ import {
 import {
   StatementImportFinalizeError,
 } from "@/lib/account/statement-import-write";
+import { emitStatementImportTelemetry } from "@/lib/observability/import";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -19,7 +21,7 @@ import {
 
 const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const correlationId = authCorrelationIdFromRequest(request);
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
@@ -68,6 +70,7 @@ export async function POST(request: NextRequest) {
   const csv = await file.text();
 
   try {
+    await emitStatementImportTelemetry({ outcome: "started" });
     const parsed = parseBrokerStatementCsv(csv);
     const groups = reconcileImportedOptionRows(parsed.rows);
     const result = await createStatementImport(
@@ -79,10 +82,23 @@ export async function POST(request: NextRequest) {
       parsed.rows,
       groups,
     );
+    await emitStatementImportTelemetry({
+      alert: result.status === "imported" && !result.isDuplicate,
+      operation:
+        result.status === "imported" && !result.isDuplicate
+          ? "statement_import_finalize"
+          : "statement_import",
+      outcome: "finalized",
+    });
 
     return copyAuthCookies(auth.response, NextResponse.json(result));
   } catch (error) {
     if (error instanceof StatementImportAdapterError) {
+      await emitStatementImportTelemetry({
+        error,
+        errorCode: error.code,
+        outcome: "failed",
+      });
       return copyAuthCookies(
         auth.response,
         NextResponse.json(
@@ -99,6 +115,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof StatementImportFinalizeError) {
+      await emitStatementImportTelemetry({
+        alert: true,
+        error,
+        errorCode: error.code,
+        operation: "statement_import_finalize",
+        outcome: "failed",
+      });
       logAuthAccountFailure({
         code: error.code,
         correlationId,
@@ -120,6 +143,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await emitStatementImportTelemetry({
+      error,
+      errorCode: "STATEMENT_IMPORT_FAILED",
+      outcome: "failed",
+    });
     throw error;
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/account/statement-import" },
+  POSTHandler,
+);

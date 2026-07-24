@@ -1,4 +1,10 @@
 import { getEnv } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 
 export interface SupabaseAuthConfig {
   anonKey: string;
@@ -65,23 +71,36 @@ export async function getAuthenticatedSupabaseUser(request: Request) {
     return null;
   }
 
-  const response = await fetch(new URL("/auth/v1/user", config.url), {
-    headers: {
-      apikey: config.anonKey,
-      Authorization: `Bearer ${token}`,
-    },
-    cache: "no-store",
+  return observeProviderCall("supabase", "auth_user", async () => {
+    const response = await fetch(new URL("/auth/v1/user", config.url), {
+      headers: {
+        apikey: config.anonKey,
+        Authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      opentelemetry: privateProviderFetchTracing,
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw providerHttpError(
+        response.status,
+        `Supabase Auth returned HTTP ${response.status}.`,
+      );
+    }
+
+    try {
+      return await response.json() as SupabaseAuthUser;
+    } catch (error) {
+      throw providerMalformedResponse(
+        "Supabase Auth returned a malformed response.",
+        error,
+      );
+    }
   });
-
-  if (response.status === 401 || response.status === 403) {
-    return null;
-  }
-
-  if (!response.ok) {
-    throw new Error(`Supabase Auth returned HTTP ${response.status}.`);
-  }
-
-  return await response.json() as SupabaseAuthUser;
 }
 
 export function isAccountProfileComplete(profile: {

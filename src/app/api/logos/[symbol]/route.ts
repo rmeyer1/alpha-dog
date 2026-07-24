@@ -1,3 +1,5 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
+import { privateProviderFetchTracing } from "@/lib/observability/provider";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv } from "@/lib/env";
@@ -47,7 +49,7 @@ function getLogoDevToken() {
   return env.LOGO_DEV_PUBLISHABLE_KEY;
 }
 
-export async function GET(
+async function GETHandler(
   request: Request,
   { params }: { params: Promise<{ symbol: string }> },
 ) {
@@ -82,6 +84,7 @@ export async function GET(
   try {
     const response = await fetch(logoUrl, {
       cache: "no-store",
+      opentelemetry: privateProviderFetchTracing,
       signal: guard.signal,
     });
 
@@ -104,3 +107,8 @@ export async function GET(
     await guard.release();
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/logos/[symbol]" },
+  GETHandler,
+);

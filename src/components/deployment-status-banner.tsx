@@ -2,13 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, FlaskConical } from "lucide-react";
-import type { DeploymentHealth } from "@/lib/env-types";
+
+interface ConfigurationHealth {
+  mode: "demo" | "development" | "live";
+  status: "degraded" | "demo" | "invalid" | "ready";
+}
 
 type BannerState =
   | { status: "hidden" }
-  | { health: DeploymentHealth; status: "visible" };
+  | { health: ConfigurationHealth; status: "visible" };
 
-function bannerContent(health: DeploymentHealth) {
+function bannerContent(health: ConfigurationHealth) {
   if (health.status === "demo") {
     return {
       detail:
@@ -19,11 +23,8 @@ function bannerContent(health: DeploymentHealth) {
     };
   }
 
-  const firstIssue = health.issues[0];
-
   return {
     detail:
-      firstIssue?.message ??
       "Live providers are not fully configured for this environment.",
     icon: AlertTriangle,
     label: health.status === "invalid"
@@ -45,7 +46,7 @@ export function DeploymentStatusBanner() {
       cache: "no-store",
       signal: controller.signal,
     })
-      .then(async (response) => await response.json() as DeploymentHealth)
+      .then(async (response) => await response.json() as ConfigurationHealth)
       .then((health) => {
         if (health.status !== "ready") {
           setState({ health, status: "visible" });

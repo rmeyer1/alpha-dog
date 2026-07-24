@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import {
   accountAuthErrorUrl,
@@ -13,7 +14,7 @@ interface RouteContext {
   }>;
 }
 
-export async function GET(request: NextRequest, context: RouteContext) {
+async function GETHandler(request: NextRequest, context: RouteContext) {
   const { provider: rawProvider } = await context.params;
   const provider = parseOAuthProvider(rawProvider);
   const nextPath = safeRedirectPath(request.nextUrl.searchParams.get("next"));
@@ -60,3 +61,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   return response;
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/auth/oauth/[provider]" },
+  GETHandler,
+);

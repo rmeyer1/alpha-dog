@@ -1,16 +1,22 @@
-export const AUTH_CORRELATION_HEADER = "x-alpha-dog-correlation-id";
+import {
+  CORRELATION_HEADER,
+  activeTelemetryContext,
+  correlationIdFromRequest,
+  createCorrelationId,
+} from "@/lib/observability/context";
+
+export const AUTH_CORRELATION_HEADER = CORRELATION_HEADER;
 
 const SAFE_CODE_PATTERN = /^[A-Z0-9_:-]+$/;
 const SAFE_PROVIDER_PATTERN = /^[a-z0-9_:-]+$/;
 
 export function createAuthCorrelationId() {
-  return crypto.randomUUID();
+  return createCorrelationId();
 }
 
 export function authCorrelationIdFromRequest(request: Request) {
-  const value = request.headers.get(AUTH_CORRELATION_HEADER);
-
-  return value?.trim() || createAuthCorrelationId();
+  return activeTelemetryContext()?.correlationId ??
+    correlationIdFromRequest(request);
 }
 
 export function safeAuthLogCode(code: string) {

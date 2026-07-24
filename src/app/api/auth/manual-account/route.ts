@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import {
   createManualAccount,
@@ -38,7 +39,7 @@ function errorResponse(
   );
 }
 
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const correlationId = authCorrelationIdFromRequest(request);
   const json = await request.json().catch(() => null);
   const parsed = manualAccountInputSchema.safeParse(json);
@@ -183,3 +184,8 @@ export async function POST(request: Request) {
     await guard.release();
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/auth/manual-account" },
+  POSTHandler,
+);

@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import {
   copyAuthCookies,
@@ -22,7 +23,7 @@ function errorStatus(code: string) {
   return code === "ACCOUNT_EMAIL_CONFLICT" ? 409 : 502;
 }
 
-export async function PATCH(request: NextRequest) {
+async function PATCHHandler(request: NextRequest) {
   const json = await request.json().catch(() => null);
   const parsed = profileCompletionInputSchema.safeParse(json);
 
@@ -61,3 +62,8 @@ export async function PATCH(request: NextRequest) {
 
   return copyAuthCookies(response, NextResponse.json(result));
 }
+
+export const PATCH = instrumentApiRoute(
+  { method: "PATCH", route: "/api/auth/profile" },
+  PATCHHandler,
+);

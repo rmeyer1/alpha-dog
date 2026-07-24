@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   decideStatementImportGroup,
@@ -17,7 +18,7 @@ function isDecision(value: unknown): value is "confirmed" | "rejected" {
   return value === "confirmed" || value === "rejected";
 }
 
-export async function PATCH(request: NextRequest, context: RouteContext) {
+async function PATCHHandler(request: NextRequest, context: RouteContext) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -70,3 +71,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     throw error;
   }
 }
+
+export const PATCH = instrumentApiRoute(
+  { method: "PATCH", route: "/api/account/statement-import/[importId]/groups/[groupId]" },
+  PATCHHandler,
+);

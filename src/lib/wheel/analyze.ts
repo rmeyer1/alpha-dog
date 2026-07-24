@@ -9,6 +9,7 @@ import {
   getStaleRuntimeAnalysisCache,
   setRuntimeAnalysisCache,
 } from "./analysis-cache";
+import { emitCacheTelemetry } from "@/lib/observability/cache";
 import { buildCandidate, buildVerticalSpreads } from "./calculations";
 import {
   emptyEarningsRiskContext,
@@ -323,6 +324,7 @@ export async function getCachedWheelAnalysis(
   const prepared = prepareWheelAnalysis(request);
 
   if (prepared.useDemoData || request.forceRefresh) {
+    emitCacheTelemetry("wheel_analysis", "bypass");
     return null;
   }
 
@@ -330,6 +332,9 @@ export async function getCachedWheelAnalysis(
   const freshEntry = cache.getFresh(prepared.cacheKey);
 
   if (freshEntry) {
+    emitCacheTelemetry("wheel_analysis", "fresh_hit", {
+      ageMs: Date.now() - freshEntry.writtenAtMs,
+    });
     return applyCacheFreshness(
       freshEntry.response,
       "fresh",
@@ -390,6 +395,8 @@ export async function analyzeWheelCandidates(
     if (cached) {
       return cached;
     }
+  } else {
+    emitCacheTelemetry("wheel_analysis", "bypass");
   }
 
   try {
@@ -413,6 +420,9 @@ export async function analyzeWheelCandidates(
     const staleEntry = cache.getStale(cacheKey);
 
     if (staleEntry) {
+      emitCacheTelemetry("wheel_analysis", "stale_fallback", {
+        ageMs: Date.now() - staleEntry.writtenAtMs,
+      });
       return applyCacheFreshness(
         staleEntry.response,
         "stale",

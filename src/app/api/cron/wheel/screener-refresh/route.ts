@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import {
@@ -5,6 +6,9 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
+import { observeCronOperation } from "@/lib/observability/cron";
+import { startObservedWorkflow } from "@/lib/observability/workflow";
+import { scheduleAlertSample } from "@/lib/observability/alert-control-plane";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   getEasternMarketHoursState,
@@ -161,12 +165,14 @@ async function handleRefresh(request: Request) {
       continue;
     }
 
-    const run = await start(wheelScreenerWorkflow, [
+    const run = await startObservedWorkflow(
+      "wheel_screener",
       {
         ...decision.request,
         forceRefresh: true,
       },
-    ]);
+      (args) => start(wheelScreenerWorkflow, args),
+    );
     const workflowStatus = await run.status;
 
     started.push({
@@ -180,6 +186,13 @@ async function handleRefresh(request: Request) {
     });
   }
 
+  const health = summarizeScreenerRefreshDecisions(decisions);
+
+  scheduleAlertSample(
+    "stale_screener_snapshot",
+    health.maxAgeMinutes ?? (health.notConfiguredCount > 0 ? 31 : 0),
+  );
+
   return NextResponse.json({
     ok: true,
     enqueueSucceeded: true,
@@ -188,7 +201,7 @@ async function handleRefresh(request: Request) {
       started.every((run) => run.completionStatus === "complete"),
     dryRun,
     force,
-    health: summarizeScreenerRefreshDecisions(decisions),
+    health,
     marketHours,
     maxRuns,
     configuredCount: configuredRequests.length,
@@ -198,10 +211,26 @@ async function handleRefresh(request: Request) {
   });
 }
 
-export async function GET(request: Request) {
-  return handleRefresh(request);
+async function GETHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_screener_refresh",
+    () => handleRefresh(request),
+  );
 }
 
-export async function POST(request: Request) {
-  return handleRefresh(request);
+async function POSTHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_screener_refresh",
+    () => handleRefresh(request),
+  );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/cron/wheel/screener-refresh" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/cron/wheel/screener-refresh" },
+  POSTHandler,
+);

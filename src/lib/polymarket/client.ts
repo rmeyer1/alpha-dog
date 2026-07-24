@@ -1,4 +1,10 @@
 import { getEnv, isDemoMode } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 import { withProviderTimeout } from "@/lib/provider-timeout";
 import {
   demoActivityByWallet,
@@ -97,20 +103,38 @@ async function requestPolymarket<T>(
   query?: Record<string, string | number | boolean | null | undefined>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const providerSignal = withProviderTimeout(signal, 15_000);
-  const response = await fetch(buildDataApiUrl(path, query), {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-    },
-    signal: providerSignal,
+  const operation = path
+    .replace(/^\/+/, "")
+    .replaceAll("/", "_")
+    .slice(0, 64) || "request";
+
+  return observeProviderCall("polymarket", operation, async () => {
+    const providerSignal = withProviderTimeout(signal, 15_000);
+    const response = await fetch(buildDataApiUrl(path, query), {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+      opentelemetry: privateProviderFetchTracing,
+      signal: providerSignal,
+    });
+
+    if (!response.ok) {
+      throw providerHttpError(
+        response.status,
+        await parsePolymarketError(response),
+      );
+    }
+
+    try {
+      return await response.json() as T;
+    } catch (error) {
+      throw providerMalformedResponse(
+        "Polymarket returned a malformed response.",
+        error,
+      );
+    }
   });
-
-  if (!response.ok) {
-    throw new Error(await parsePolymarketError(response));
-  }
-
-  return await response.json() as T;
 }
 
 function normalizePosition(row: unknown): PolymarketPosition {
