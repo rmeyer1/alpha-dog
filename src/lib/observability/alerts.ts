@@ -1,9 +1,10 @@
 import { emitTelemetry, type TelemetrySeverity } from "./telemetry";
+import { scheduleAlertSample } from "./alert-control-plane";
 
 export const ALERT_RULES = {
   cron_refresh_missing: {
     cooldownSeconds: 900,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 1,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 1,
@@ -13,7 +14,7 @@ export const ALERT_RULES = {
   },
   import_finalization_failure: {
     cooldownSeconds: 300,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 1,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 1,
@@ -23,7 +24,7 @@ export const ALERT_RULES = {
   },
   paid_usage_anomaly: {
     cooldownSeconds: 900,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 20,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 3,
@@ -33,7 +34,7 @@ export const ALERT_RULES = {
   },
   provider_error_rate: {
     cooldownSeconds: 300,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 20,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 3,
@@ -43,7 +44,7 @@ export const ALERT_RULES = {
   },
   stale_screener_snapshot: {
     cooldownSeconds: 900,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 1,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 1,
@@ -53,7 +54,7 @@ export const ALERT_RULES = {
   },
   workflow_failure: {
     cooldownSeconds: 300,
-    destination: "vercel_runtime_alerts",
+    destination: "supabase_observability_alert_events",
     minimumSamples: 1,
     owner: "alpha_dog_operations",
     recoveryConsecutiveSamples: 1,
@@ -88,46 +89,23 @@ export type AlertAdapter = (
   event: AlertAdapterEvent,
 ) => void | Promise<void>;
 
-const lastTriggeredAt = new Map<AlertKey, number>();
+const durableAlertAdapter: AlertAdapter = (event) => {
+  const scheduled = scheduleAlertSample(
+    event.alertKey,
+    event.outcome === "triggered" ? 1 : 0,
+  );
 
-const runtimeLogAlertAdapter: AlertAdapter = (event) => {
-  emitTelemetry({
-    alertKey: event.alertKey,
-    errorCode: event.alertKey.toUpperCase(),
-    event: "alert.event",
-    outcome: event.outcome,
-    severity: event.outcome === "recovered" ? "info" : event.severity,
-  });
+  if (!scheduled) {
+    throw new Error("The observability alert control plane is unavailable.");
+  }
 };
 
 export async function dispatchAlert(
   alertKey: AlertKey,
   outcome: AlertOutcome,
-  adapter: AlertAdapter = runtimeLogAlertAdapter,
+  adapter: AlertAdapter = durableAlertAdapter,
 ) {
   const rule = ALERT_RULES[alertKey];
-  const now = Date.now();
-  const lastTriggered = lastTriggeredAt.get(alertKey) ?? 0;
-
-  if (
-    outcome === "triggered" &&
-    now - lastTriggered < rule.cooldownSeconds * 1000
-  ) {
-    emitTelemetry({
-      alertKey,
-      event: "alert.deduplicated",
-      outcome: "cooldown",
-      severity: "debug",
-    });
-
-    return false;
-  }
-
-  if (outcome === "triggered") {
-    lastTriggeredAt.set(alertKey, now);
-  } else {
-    lastTriggeredAt.delete(alertKey);
-  }
 
   try {
     await adapter({
@@ -144,11 +122,9 @@ export async function dispatchAlert(
       outcome: "failed",
       severity: "error",
     });
+
+    return false;
   }
 
   return true;
-}
-
-export function resetAlertStateForTests() {
-  lastTriggeredAt.clear();
 }

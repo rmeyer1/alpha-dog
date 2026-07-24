@@ -32,6 +32,7 @@ const result: UniverseDeepScanCoverageResult = {
 const telemetryContext = {
   correlationId: "workflow-correlation-1",
   logicalOperationId: "workflow-operation-1",
+  startedAtEpochMs: Date.now(),
 };
 
 beforeEach(() => {

@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+
+const scheduleAlertSample = vi.hoisted(() => vi.fn());
+
+vi.mock("./alert-control-plane", () => ({
+  scheduleAlertSample,
+}));
+
 import {
   observeProviderCall,
   providerHttpError,
@@ -56,9 +63,17 @@ describe("provider telemetry matrix", () => {
       expect(serialized).not.toContain("timeout canary");
       expect(serialized).not.toContain("malformed body canary");
       expect(serialized).not.toContain("network URL canary");
+      expect(scheduleAlertSample.mock.calls).toEqual([
+        ["provider_error_rate", 0],
+        ["provider_error_rate", 1],
+        ["provider_error_rate", 1],
+        ["provider_error_rate", 1],
+        ["provider_error_rate", 1],
+      ]);
 
       info.mockRestore();
       warn.mockRestore();
+      scheduleAlertSample.mockReset();
     },
   );
 });

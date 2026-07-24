@@ -4,6 +4,7 @@ const getEasternMarketHoursStateMock = vi.hoisted(() => vi.fn());
 const getScheduledScreenerRefreshRequestsMock = vi.hoisted(() => vi.fn());
 const getScreenerRefreshDecisionMock = vi.hoisted(() => vi.fn());
 const startMock = vi.hoisted(() => vi.fn());
+const scheduleAlertSampleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("workflow/api", () => ({ start: startMock }));
 vi.mock("@/workflows/wheel-screener", () => ({
@@ -20,6 +21,9 @@ vi.mock("@/lib/supabase/rest", () => ({
     url: "https://alpha-dog.supabase.co",
   }),
 }));
+vi.mock("@/lib/observability/alert-control-plane", () => ({
+  scheduleAlertSample: scheduleAlertSampleMock,
+}));
 vi.mock("@/lib/wheel/screener-refresh", () => ({
   getEasternMarketHoursState: getEasternMarketHoursStateMock,
   getScheduledScreenerRefreshRequests:
@@ -27,7 +31,11 @@ vi.mock("@/lib/wheel/screener-refresh", () => ({
   getScreenerRefreshDecision: getScreenerRefreshDecisionMock,
   getScreenerRefreshMaxRuns: () => 4,
   getScreenerWeekendRefreshMaxRuns: () => 4,
-  summarizeScreenerRefreshDecisions: () => ({ dueCount: 1 }),
+  summarizeScreenerRefreshDecisions: () => ({
+    dueCount: 1,
+    maxAgeMinutes: 60,
+    notConfiguredCount: 0,
+  }),
 }));
 
 beforeEach(() => {
@@ -35,6 +43,7 @@ beforeEach(() => {
   getScheduledScreenerRefreshRequestsMock.mockReset();
   getScreenerRefreshDecisionMock.mockReset();
   startMock.mockReset();
+  scheduleAlertSampleMock.mockReset();
 
   getEasternMarketHoursStateMock.mockReturnValue({
     easternMinutes: 600,
@@ -86,5 +95,9 @@ describe("scheduled screener refresh", () => {
       ],
     });
     expect(startMock).toHaveBeenCalledOnce();
+    expect(scheduleAlertSampleMock).toHaveBeenCalledWith(
+      "stale_screener_snapshot",
+      60,
+    );
   });
 });

@@ -109,6 +109,7 @@ async function POSTHandler(request: NextRequest) {
 
     if (error instanceof StatementImportFinalizeError) {
       await emitStatementImportTelemetry({
+        alert: true,
         error,
         errorCode: error.code,
         outcome: "failed",

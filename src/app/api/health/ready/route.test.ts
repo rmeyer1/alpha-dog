@@ -26,7 +26,9 @@ describe("GET /api/health/ready", () => {
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, s-maxage=5, stale-while-revalidate=10",
+    );
     expect(payload).toEqual({
       checks: {
         optional: { healthy: 1, total: 1 },

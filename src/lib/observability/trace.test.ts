@@ -21,7 +21,7 @@ import { runWithTelemetryContext } from "./context";
 import { observeProviderCall } from "./provider";
 import { instrumentApiRoute } from "./route";
 import { withTelemetrySpan } from "./telemetry";
-import { observedWorkflowArguments } from "./workflow";
+import { startObservedWorkflow } from "./workflow";
 
 let contextManager: AsyncLocalStorageContextManager;
 let exporter: InMemorySpanExporter;
@@ -124,9 +124,10 @@ describe("trace correlation", () => {
     const handler = instrumentApiRoute(
       { method: "POST", route: "/api/workflow-start" },
       async () => {
-        const [, durable] = await observedWorkflowArguments(
+        const [, durable] = await startObservedWorkflow(
           "wheel_screener",
           { limit: 25 },
+          async (args) => args,
         );
 
         return Response.json({ durable });
@@ -155,20 +156,24 @@ describe("trace correlation", () => {
       )
       .map((value) => JSON.parse(value));
 
-    expect(response.headers.get("x-alpha-dog-correlation-id")).toBe(
-      "browser-request-123",
+    const serverCorrelationId = response.headers.get(
+      "x-alpha-dog-correlation-id",
     );
-    expect(body.durable.correlationId).toBe("browser-request-123");
+
+    expect(serverCorrelationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(serverCorrelationId).not.toBe("browser-request-123");
+    expect(body.durable.correlationId).toBe(serverCorrelationId);
     expect(body.durable.logicalOperationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(records).toEqual([
       expect.objectContaining({
-        correlationId: "browser-request-123",
+        correlationId: serverCorrelationId,
         event: "workflow.lifecycle",
         logicalOperationId: body.durable.logicalOperationId,
         outcome: "started",
       }),
       expect.objectContaining({
-        correlationId: "browser-request-123",
+        clientCorrelationId: "browser-request-123",
+        correlationId: serverCorrelationId,
         event: "api.request",
         route: "/api/workflow-start",
       }),
@@ -211,7 +216,8 @@ describe("trace correlation", () => {
       routeSpan?.spanContext().traceId,
     );
     expect(providerSpan?.attributes).toMatchObject({
-      "alpha_dog.correlation_id": "provider-link-123",
+      "alpha_dog.client_correlation_id": "provider-link-123",
+      "alpha_dog.correlation_id": expect.stringMatching(/^[0-9a-f-]{36}$/),
       "alpha_dog.route": "/api/provider-link",
       "provider.name": "openai",
       "provider.operation": "controlled_probe",

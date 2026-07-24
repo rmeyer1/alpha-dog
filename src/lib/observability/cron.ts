@@ -20,6 +20,8 @@ export async function observeCronOperation(
 
     if (failed) {
       await dispatchAlert("cron_refresh_missing", "triggered");
+    } else {
+      await dispatchAlert("cron_refresh_missing", "recovered");
     }
 
     return response;

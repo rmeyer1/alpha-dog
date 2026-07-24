@@ -1,5 +1,6 @@
 import {
   CORRELATION_HEADER,
+  activeTelemetryContext,
   correlationIdFromRequest,
   createCorrelationId,
 } from "@/lib/observability/context";
@@ -14,7 +15,8 @@ export function createAuthCorrelationId() {
 }
 
 export function authCorrelationIdFromRequest(request: Request) {
-  return correlationIdFromRequest(request);
+  return activeTelemetryContext()?.correlationId ??
+    correlationIdFromRequest(request);
 }
 
 export function safeAuthLogCode(code: string) {

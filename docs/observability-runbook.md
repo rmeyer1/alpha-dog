@@ -7,11 +7,13 @@ site.
 
 ## Correlation and trace lookup
 
-Every `/api` response includes `x-alpha-dog-correlation-id`. A caller value is
-accepted only when it is 1–64 ASCII characters, begins with an alphanumeric
-character, contains a digit or separator, and otherwise uses only
-letters, digits, `.`, `_`, `:`, or `-`. Invalid control, Unicode, whitespace,
-or oversized input is replaced with a UUID.
+Every `/api` response includes a server-generated,
+`x-alpha-dog-correlation-id` UUID that is unique to that request. A caller
+value never replaces this identity. A valid caller value is retained only as
+the secondary `clientCorrelationId`; it must be 1–64 ASCII characters, begin
+with an alphanumeric character, contain a digit or separator, and otherwise
+use only letters, digits, `.`, `_`, `:`, or `-`. Control, Unicode, whitespace,
+and oversized values are discarded.
 
 To investigate a failed request:
 
@@ -23,8 +25,11 @@ To investigate a failed request:
 3. Open the matching trace and filter custom attributes by
    `alpha_dog.correlation_id`. Provider child spans use the same trace and
    correlation value.
-4. For Workflow retries, search the same `correlationId` and the returned
-   `logicalOperationId`. Durable arguments preserve both across resume.
+4. For Workflow retries, search the same `correlationId` and
+   `logicalOperationId`. Durable arguments preserve both plus
+   `startedAtEpochMs`, so resumed/completed/failed records report total
+   duration. A `started` event is emitted only after Workflow accepts the
+   enqueue; rejected enqueues emit `failed` without an orphan start.
 
 Do not paste request bodies, query strings, user identifiers, provider
 responses, prompts, statement rows, symbols, wallets, cookies, or credentials
@@ -35,13 +40,16 @@ into logs or incident notes.
 | Endpoint | Contract | Dependency traffic |
 | --- | --- | --- |
 | `GET /api/health/live` | HTTP 200 while the process can serve requests | None |
-| `GET /api/health/ready` | HTTP 200 when required dependencies pass; otherwise HTTP 503 | Concurrent, read-only, 1.5-second timeout, cached 30 seconds healthy or 10 seconds failed, and coalesced in flight |
+| `GET /api/health/ready` | Public, CDN-cached aggregate from the shared Supabase control plane; HTTP 200 when fresh/ready, otherwise HTTP 503 | One aggregate database read on an edge-cache miss; never probes third parties |
+| `GET /api/health/ready/refresh` | `CRON_SECRET`-authenticated refresh scheduled every minute by `vercel.json` | At most one cross-instance lease holder runs concurrent, read-only, 1.5-second probes |
 | `GET /api/health/configuration` | Aggregate deployment-mode/configuration readiness | None |
 
 The readiness probes cannot place trades, write database rows, start
 Workflows, or issue paid OpenAI generations. Output contains only aggregate
-required/optional counts, status, and bounded duration. The cache and in-flight
-coalescing prevent public fan-out from multiplying provider traffic.
+required/optional counts, status, and bounded duration. A database lease and
+shared 30-second healthy/10-second failed snapshot prevent cold instances,
+regions, and scale-out from multiplying provider traffic. Public traffic can
+only read the shared aggregate.
 
 During an outage, keep liveness HTTP 200. A required dependency failure should
 change readiness to HTTP 503. Recover only after a fresh readiness response is
@@ -61,8 +69,10 @@ HTTP 200 and the corresponding provider telemetry is successful.
 - `paid_route.guard`: allowed, auth/access denial, rate/concurrency denial,
   unavailable limiter, or release failure.
 - `cron.execution`: completed or failed.
-- `alert.event`, `alert.deduplicated`, and `alert.delivery_failed`: native
-  runtime alert-adapter lifecycle.
+- `alert.event` and `alert.delivery_failed`: durable alert-adapter lifecycle.
+  Trigger/recovery events are persisted in
+  `observability_alert_events` and published through the native
+  `alpha_dog_observability_alerts` Postgres notification channel.
 
 All dimensions are bounded and low-cardinality. Final serialization discards
 unknown fields recursively and emits only an allowlist. Telemetry and alert
@@ -71,8 +81,11 @@ fail-closed for required dependencies.
 
 ## Alert definitions
 
-Configure Vercel Runtime Log/Observability monitors from these source-controlled
-rules in `src/lib/observability/alerts.ts`:
+The migration
+`supabase/migrations/20260724111354_add_observability_control_plane.sql`
+installs these rules in the shared database and schedules the evaluator every
+minute with Supabase Cron/`pg_cron`. The TypeScript rule definitions are kept
+in source-controlled parity:
 
 | Alert | Threshold and window | Minimum samples | Severity | Cooldown / recovery |
 | --- | --- | --- | --- | --- |
@@ -83,12 +96,14 @@ rules in `src/lib/observability/alerts.ts`:
 | Workflow failure | ≥ 1 in 5 minutes | 1 | error | 5 minutes / 1 healthy sample |
 | import finalization failure | ≥ 1 in 5 minutes | 1 | error | 5 minutes / 1 healthy sample |
 
-Use exact JSON fragments as the monitor filter, such as
-`"event":"provider.request"` plus a non-success `"outcome"`, or
-`"event":"alert.event"` plus the relevant `"alertKey"`. The native adapter
-emits controlled cron, Workflow, and import failures into the same searchable
-runtime stream. Cooldown suppresses duplicate pages without suppressing the
-underlying operational event.
+Provider, paid-route, cron, Workflow, and import samples are persisted with
+Vercel background work, so business responses and durable work do not wait on
+the alert control plane. The database evaluator atomically applies thresholds,
+minimum samples, cooldown, dedup, and recovery, inserts a durable event, and
+publishes a native Postgres notification. Inspect
+`observability_alert_state` for active conditions and
+`observability_alert_events` for the delivery history; both contain only
+bounded operational dimensions.
 
 ## Incident procedure
 
@@ -110,14 +125,19 @@ Run:
 
 ```bash
 npm test
+npm run test:observability:coverage
 npm run benchmark:observability
 npm run verify:browser-secrets
+npm run test:supabase
 ```
 
 The suite inventories every API route, tests final serialized redaction with
-canaries, injects all five provider failure classes, proves parent/child trace
-linkage, exercises real cron/Workflow/import alert events, verifies concurrent
-health behavior, and measures route-boundary overhead and body-byte parity.
+canaries, injects all five failure classes through each real Alpaca, Finnhub,
+Polymarket, OpenAI, and Supabase client, proves parent/child trace linkage,
+exercises durable cron/Workflow/import trigger and recovery events, verifies
+distributed readiness lease behavior, measures critical observability paths
+above the enforced 80% threshold, and checks route-boundary overhead/body-byte
+parity.
 
 Implementation follows the official
 [Next.js instrumentation convention](https://nextjs.org/docs/app/guides/instrumentation),

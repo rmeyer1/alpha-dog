@@ -7,7 +7,8 @@ import {
   isDemoMode,
 } from "@/lib/env";
 import { observeCronOperation } from "@/lib/observability/cron";
-import { observedWorkflowArguments } from "@/lib/observability/workflow";
+import { startObservedWorkflow } from "@/lib/observability/workflow";
+import { scheduleAlertSample } from "@/lib/observability/alert-control-plane";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   getEasternMarketHoursState,
@@ -164,12 +165,13 @@ async function handleRefresh(request: Request) {
       continue;
     }
 
-    const run = await start(
-      wheelScreenerWorkflow,
-      await observedWorkflowArguments("wheel_screener", {
+    const run = await startObservedWorkflow(
+      "wheel_screener",
+      {
         ...decision.request,
         forceRefresh: true,
-      }),
+      },
+      (args) => start(wheelScreenerWorkflow, args),
     );
     const workflowStatus = await run.status;
 
@@ -184,6 +186,13 @@ async function handleRefresh(request: Request) {
     });
   }
 
+  const health = summarizeScreenerRefreshDecisions(decisions);
+
+  scheduleAlertSample(
+    "stale_screener_snapshot",
+    health.maxAgeMinutes ?? (health.notConfiguredCount > 0 ? 31 : 0),
+  );
+
   return NextResponse.json({
     ok: true,
     enqueueSucceeded: true,
@@ -192,7 +201,7 @@ async function handleRefresh(request: Request) {
       started.every((run) => run.completionStatus === "complete"),
     dryRun,
     force,
-    health: summarizeScreenerRefreshDecisions(decisions),
+    health,
     marketHours,
     maxRuns,
     configuredCount: configuredRequests.length,

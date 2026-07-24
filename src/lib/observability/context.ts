@@ -2,6 +2,7 @@ import {
   context,
   createContextKey,
 } from "@opentelemetry/api";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { DurableTelemetryContext } from "./durable-context";
 
 export type { DurableTelemetryContext } from "./durable-context";
@@ -13,6 +14,7 @@ const SAFE_CORRELATION_ID_PATTERN =
   /^(?=[A-Za-z0-9._:-]{1,64}$)(?=.*[0-9._:-])[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 
 export interface TelemetryContext {
+  clientCorrelationId?: string;
   correlationId: string;
   method?: string;
   route?: string;
@@ -21,6 +23,7 @@ export interface TelemetryContext {
 const requestTelemetryContextKey = createContextKey(
   "alpha-dog.telemetry-context",
 );
+const requestTelemetryStorage = new AsyncLocalStorage<TelemetryContext>();
 
 export function createCorrelationId() {
   return crypto.randomUUID();
@@ -40,29 +43,41 @@ export function normalizeCorrelationId(value: unknown) {
 }
 
 export function correlationIdFromRequest(request?: Request | null) {
+  void request;
+  return createCorrelationId();
+}
+
+export function clientCorrelationIdFromRequest(request?: Request | null) {
   return normalizeCorrelationId(
     request?.headers.get(CORRELATION_HEADER),
-  ) ?? createCorrelationId();
+  );
 }
 
 export function runWithTelemetryContext<T>(
   telemetryContext: TelemetryContext,
   callback: () => T,
 ) {
-  return context.with(
-    context.active().setValue(
-      requestTelemetryContextKey,
-      telemetryContext,
-    ),
-    callback,
+  return requestTelemetryStorage.run(
+    telemetryContext,
+    () =>
+      context.with(
+        context.active().setValue(
+          requestTelemetryContextKey,
+          telemetryContext,
+        ),
+        callback,
+      ),
   );
 }
 
 export function activeTelemetryContext() {
   return (
-    context.active().getValue(requestTelemetryContextKey) as
-      | TelemetryContext
-      | undefined
+    requestTelemetryStorage.getStore() ??
+    (
+      context.active().getValue(requestTelemetryContextKey) as
+        | TelemetryContext
+        | undefined
+    )
   ) ?? null;
 }
 
@@ -73,6 +88,7 @@ export function createDurableTelemetryContext(
     correlationId:
       normalizeCorrelationId(correlationId) ?? createCorrelationId(),
     logicalOperationId: crypto.randomUUID(),
+    startedAtEpochMs: Date.now(),
   };
 }
 
@@ -85,5 +101,10 @@ export function normalizeDurableTelemetryContext(
     logicalOperationId:
       normalizeCorrelationId(value?.logicalOperationId) ??
         crypto.randomUUID(),
+    startedAtEpochMs:
+      Number.isSafeInteger(value?.startedAtEpochMs) &&
+        Number(value?.startedAtEpochMs) > 0
+        ? Number(value?.startedAtEpochMs)
+        : Date.now(),
   };
 }

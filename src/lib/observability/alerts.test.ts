@@ -1,13 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ALERT_RULES,
   dispatchAlert,
-  resetAlertStateForTests,
 } from "./alerts";
-
-beforeEach(() => {
-  resetAlertStateForTests();
-});
 
 describe("alert definitions and adapter", () => {
   it("defines numeric windows, thresholds, samples, cooldowns, and recovery", () => {
@@ -27,11 +22,11 @@ describe("alert definitions and adapter", () => {
       expect(rule.cooldownSeconds).toBeGreaterThan(0);
       expect(rule.recoveryConsecutiveSamples).toBeGreaterThan(0);
       expect(rule.owner).toBe("alpha_dog_operations");
-      expect(rule.destination).toBe("vercel_runtime_alerts");
+      expect(rule.destination).toBe("supabase_observability_alert_events");
     }
   });
 
-  it("deduplicates triggers, emits recovery, and contains adapter failure", async () => {
+  it("delegates atomic deduplication and recovery to the durable adapter", async () => {
     const adapter = vi.fn();
 
     expect(
@@ -39,11 +34,11 @@ describe("alert definitions and adapter", () => {
     ).toBe(true);
     expect(
       await dispatchAlert("workflow_failure", "triggered", adapter),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       await dispatchAlert("workflow_failure", "recovered", adapter),
     ).toBe(true);
-    expect(adapter).toHaveBeenCalledTimes(2);
+    expect(adapter).toHaveBeenCalledTimes(3);
 
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const failingAdapter = vi.fn(() => {
@@ -52,7 +47,7 @@ describe("alert definitions and adapter", () => {
 
     await expect(
       dispatchAlert("cron_refresh_missing", "triggered", failingAdapter),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
     expect(JSON.stringify(error.mock.calls)).not.toContain(
       "webhook secret canary",
     );

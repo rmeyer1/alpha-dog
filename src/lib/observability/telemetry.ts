@@ -13,6 +13,7 @@ export interface TelemetryEvent {
   alertKey?: string;
   attempt?: number;
   cacheState?: string;
+  clientCorrelationId?: string;
   correlationId?: string;
   durationMs?: number;
   error?: unknown;
@@ -28,7 +29,7 @@ export interface TelemetryEvent {
   workflow?: string;
 }
 
-const MAX_DURATION_MS = 10 * 60 * 1000;
+const MAX_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_ATTEMPT = 100;
 const SAFE_EVENT_PATTERN = /^[a-z][a-z0-9_.-]{0,63}$/;
@@ -112,12 +113,18 @@ export function serializeTelemetryEvent(input: TelemetryEvent) {
   const correlationId = safeCorrelationId(
     input.correlationId ?? active?.correlationId,
   );
+  const clientCorrelationId = safeCorrelationId(
+    input.clientCorrelationId ?? active?.clientCorrelationId,
+  );
   const route = safeRoute(input.route ?? active?.route);
   const durationMs = safeBoundedNumber(input.durationMs, MAX_DURATION_MS, 2);
   const ageMs = safeBoundedNumber(input.ageMs, MAX_AGE_MS);
   const attempt = safeBoundedNumber(input.attempt, MAX_ATTEMPT);
 
   if (correlationId) record.correlationId = correlationId;
+  if (clientCorrelationId) {
+    record.clientCorrelationId = clientCorrelationId;
+  }
   if (route) record.route = route;
   if (durationMs != null) record.durationMs = durationMs;
   if (ageMs != null) record.ageMs = ageMs;
@@ -206,6 +213,9 @@ function safeSpanAttributes(
 
   if (active?.correlationId) {
     safe["alpha_dog.correlation_id"] = active.correlationId;
+  }
+  if (active?.clientCorrelationId) {
+    safe["alpha_dog.client_correlation_id"] = active.clientCorrelationId;
   }
   if (active?.route) {
     safe["alpha_dog.route"] = active.route;

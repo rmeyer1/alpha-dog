@@ -1,6 +1,7 @@
 export interface DurableTelemetryContext {
   correlationId: string;
   logicalOperationId: string;
+  startedAtEpochMs: number;
 }
 
 const SAFE_DURABLE_ID_PATTERN =
@@ -12,7 +13,9 @@ export function requireDurableTelemetryContext(
   if (
     !value ||
     !SAFE_DURABLE_ID_PATTERN.test(value.correlationId) ||
-    !SAFE_DURABLE_ID_PATTERN.test(value.logicalOperationId)
+    !SAFE_DURABLE_ID_PATTERN.test(value.logicalOperationId) ||
+    !Number.isSafeInteger(value.startedAtEpochMs) ||
+    value.startedAtEpochMs <= 0
   ) {
     throw new Error("A valid durable telemetry context is required.");
   }

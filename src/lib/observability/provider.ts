@@ -4,6 +4,7 @@ import {
   monotonicNow,
   withTelemetrySpan,
 } from "./telemetry";
+import { scheduleAlertSample } from "./alert-control-plane";
 
 export const providerNames = [
   "alpaca",
@@ -139,6 +140,7 @@ export async function observeProviderCall<T>(
           outcome: "success",
           provider,
         });
+        scheduleAlertSample("provider_error_rate", 0);
 
         return result;
       } catch (error) {
@@ -155,6 +157,7 @@ export async function observeProviderCall<T>(
           provider,
           severity: "warn",
         });
+        scheduleAlertSample("provider_error_rate", 1);
 
         throw error;
       }

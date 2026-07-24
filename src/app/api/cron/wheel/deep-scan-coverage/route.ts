@@ -8,7 +8,7 @@ import {
   isDemoMode,
 } from "@/lib/env";
 import { observeCronOperation } from "@/lib/observability/cron";
-import { observedWorkflowArguments } from "@/lib/observability/workflow";
+import { startObservedWorkflow } from "@/lib/observability/workflow";
 import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getScheduledScreenerRefreshRequests } from "@/lib/wheel/screener-refresh";
@@ -163,12 +163,13 @@ async function handleDeepScanCoverage(request: Request) {
 
   if (!dryRun) {
     for (const scanRequest of scanRequests) {
-      const run = await start(
-        wheelDeepScanWorkflow,
-        await observedWorkflowArguments("wheel_deep_scan", {
+      const run = await startObservedWorkflow(
+        "wheel_deep_scan",
+        {
           ...scanRequest,
           workflowIdempotencyKey: randomUUID(),
-        }),
+        },
+        (args) => start(wheelDeepScanWorkflow, args),
       );
       const workflowStatus = await run.status;
 

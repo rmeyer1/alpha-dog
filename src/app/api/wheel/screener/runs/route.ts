@@ -2,7 +2,7 @@ import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
-import { observedWorkflowArguments } from "@/lib/observability/workflow";
+import { startObservedWorkflow } from "@/lib/observability/workflow";
 import {
   getEnv,
   getMarketDataConfigurationError,
@@ -96,9 +96,10 @@ async function POSTHandler(request: Request) {
     }
 
     try {
-      const run = await start(
-        wheelScreenerWorkflow,
-        await observedWorkflowArguments("wheel_screener", parsed.data),
+      const run = await startObservedWorkflow(
+        "wheel_screener",
+        parsed.data,
+        (args) => start(wheelScreenerWorkflow, args),
       );
       const status = await run.status;
 

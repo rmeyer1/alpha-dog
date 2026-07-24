@@ -20,19 +20,34 @@ export function workflowTelemetryArguments<T>(
   return [request, createDurableTelemetryContext()];
 }
 
-export async function observedWorkflowArguments<T>(
+export async function startObservedWorkflow<TRequest, TResult>(
   workflow: WorkflowName,
-  request: T,
-): Promise<[T, DurableTelemetryContext]> {
+  request: TRequest,
+  startWorkflow: (
+    args: [TRequest, DurableTelemetryContext],
+  ) => Promise<TResult>,
+): Promise<TResult> {
   const args = workflowTelemetryArguments(request);
 
-  await emitWorkflowTelemetry({
-    context: args[1],
-    phase: "started",
-    workflow,
-  });
+  try {
+    const result = await startWorkflow(args);
 
-  return args;
+    await emitWorkflowTelemetry({
+      context: args[1],
+      phase: "started",
+      workflow,
+    });
+
+    return result;
+  } catch (error) {
+    await emitWorkflowTelemetry({
+      context: args[1],
+      error,
+      phase: "failed",
+      workflow,
+    });
+    throw error;
+  }
 }
 
 export function runWithDurableTelemetryContext<T>(
@@ -55,6 +70,10 @@ export async function emitWorkflowTelemetry(options: {
 }) {
   emitTelemetry({
     correlationId: options.context.correlationId,
+    durationMs: Math.max(
+      0,
+      Date.now() - options.context.startedAtEpochMs,
+    ),
     error: options.error,
     errorCode:
       options.phase === "failed" ? "WORKFLOW_FAILED" : undefined,
@@ -67,5 +86,7 @@ export async function emitWorkflowTelemetry(options: {
 
   if (options.phase === "failed") {
     await dispatchAlert("workflow_failure", "triggered");
+  } else if (options.phase === "completed") {
+    await dispatchAlert("workflow_failure", "recovered");
   }
 }

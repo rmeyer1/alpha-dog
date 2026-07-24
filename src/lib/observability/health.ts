@@ -3,6 +3,8 @@ import {
   getEnv,
   type AppEnv,
 } from "@/lib/env";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   observeProviderCall,
   privateProviderFetchTracing,
@@ -40,10 +42,14 @@ export interface ReadinessSummary {
   status: "not_ready" | "ready";
 }
 
-let readinessCache:
-  | { expiresAt: number; value: ReadinessSummary }
-  | null = null;
-let readinessInFlight: Promise<ReadinessSummary> | null = null;
+const UNAVAILABLE_READINESS_SUMMARY: ReadinessSummary = {
+  checks: {
+    optional: { healthy: 0, total: 0 },
+    required: { healthy: 0, total: 0 },
+  },
+  durationMs: 0,
+  status: "not_ready",
+};
 
 function safeJsonValidator(
   predicate: (value: unknown) => boolean,
@@ -304,8 +310,7 @@ export async function runReadinessProbes(
   };
 }
 
-async function refreshReadiness() {
-  const env = getEnv();
+export async function refreshReadiness(env = getEnv()) {
   const configurationReady = getDeploymentHealth(env).status !== "invalid";
   return runReadinessProbes(
     configuredDependencyProbes(env),
@@ -313,36 +318,135 @@ async function refreshReadiness() {
   );
 }
 
-export async function getReadinessSummary(
-  refresh: () => Promise<ReadinessSummary> = refreshReadiness,
-) {
-  if (readinessCache && readinessCache.expiresAt > Date.now()) {
-    return readinessCache.value;
+function safeCountPair(value: unknown) {
+  if (!value || typeof value !== "object") {
+    return null;
   }
 
-  if (!readinessInFlight) {
-    readinessInFlight = refresh().then((summary) => {
-      const ttl = summary.status === "ready"
-        ? PROBE_CACHE_TTL_MS
-        : FAILED_PROBE_CACHE_TTL_MS;
+  const candidate = value as { healthy?: unknown; total?: unknown };
 
-      readinessCache = {
-        expiresAt: Date.now() + ttl,
-        value: summary,
-      };
-
-      return summary;
-    }).finally(() => {
-      readinessInFlight = null;
-    });
+  if (
+    !Number.isInteger(candidate.healthy) ||
+    !Number.isInteger(candidate.total) ||
+    Number(candidate.healthy) < 0 ||
+    Number(candidate.total) < Number(candidate.healthy)
+  ) {
+    return null;
   }
 
-  return readinessInFlight;
+  return {
+    healthy: Number(candidate.healthy),
+    total: Number(candidate.total),
+  };
 }
 
-export function resetReadinessCacheForTests() {
-  readinessCache = null;
-  readinessInFlight = null;
+function safeReadinessSummary(value: unknown): ReadinessSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as {
+    checks?: {
+      optional?: unknown;
+      required?: unknown;
+    };
+    durationMs?: unknown;
+    status?: unknown;
+  };
+  const optional = safeCountPair(candidate.checks?.optional);
+  const required = safeCountPair(candidate.checks?.required);
+
+  if (
+    !optional ||
+    !required ||
+    (candidate.status !== "ready" && candidate.status !== "not_ready") ||
+    typeof candidate.durationMs !== "number" ||
+    !Number.isFinite(candidate.durationMs) ||
+    candidate.durationMs < 0
+  ) {
+    return null;
+  }
+
+  return {
+    checks: { optional, required },
+    durationMs: Math.min(
+      30_000,
+      Math.round(candidate.durationMs * 100) / 100,
+    ),
+    status: candidate.status,
+  };
+}
+
+export async function getReadinessSummary(
+  client: SupabaseClient | null = getSupabaseAdminClient(),
+) {
+  if (!client) {
+    return UNAVAILABLE_READINESS_SUMMARY;
+  }
+
+  const { data, error } = await client
+    .from("observability_readiness_state")
+    .select("summary,expires_at")
+    .eq("state_key", "current")
+    .maybeSingle();
+
+  if (error || !data) {
+    return UNAVAILABLE_READINESS_SUMMARY;
+  }
+
+  const summary = safeReadinessSummary(data.summary);
+
+  if (!summary) {
+    return UNAVAILABLE_READINESS_SUMMARY;
+  }
+
+  return new Date(data.expires_at).getTime() > Date.now()
+    ? summary
+    : { ...summary, status: "not_ready" as const };
+}
+
+export async function refreshSharedReadinessSummary(options: {
+  client?: SupabaseClient | null;
+  refresh?: () => Promise<ReadinessSummary>;
+} = {}) {
+  const client = options.client === undefined
+    ? getSupabaseAdminClient()
+    : options.client;
+
+  if (!client) {
+    return UNAVAILABLE_READINESS_SUMMARY;
+  }
+
+  const owner = crypto.randomUUID();
+  const claim = await client.rpc(
+    "claim_observability_readiness_refresh",
+    {
+      p_lease_seconds: 10,
+      p_owner: owner,
+    },
+  );
+
+  if (claim.error || claim.data !== true) {
+    return getReadinessSummary(client);
+  }
+
+  const summary = await (options.refresh ?? refreshReadiness)();
+  const ttlMs = summary.status === "ready"
+    ? PROBE_CACHE_TTL_MS
+    : FAILED_PROBE_CACHE_TTL_MS;
+  const completion = await client.rpc(
+    "complete_observability_readiness_refresh",
+    {
+      p_owner: owner,
+      p_status: summary.status,
+      p_summary: summary,
+      p_ttl_seconds: Math.ceil(ttlMs / 1_000),
+    },
+  );
+
+  return completion.error || completion.data !== true
+    ? UNAVAILABLE_READINESS_SUMMARY
+    : summary;
 }
 
 export function getConfigurationSummary(env = getEnv()) {

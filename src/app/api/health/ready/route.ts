@@ -7,7 +7,9 @@ async function GETHandler() {
   const summary = await getReadinessSummary();
 
   return Response.json(summary, {
-    headers: { "Cache-Control": "no-store" },
+    headers: {
+      "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10",
+    },
     status: summary.status === "ready" ? 200 : 503,
   });
 }

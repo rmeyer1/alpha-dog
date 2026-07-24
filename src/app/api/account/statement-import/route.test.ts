@@ -254,15 +254,17 @@ describe("POST /api/account/statement-import", () => {
       ]),
     ].join("\n");
 
-    const response = await POST(importRequest(csv, {
-      "x-alpha-dog-correlation-id": "statement-import-test",
-    }));
+    const response = await POST(importRequest(csv));
     const json = await response.json();
+    const correlationId = response.headers.get(
+      "x-alpha-dog-correlation-id",
+    );
 
     expect(response.status).toBe(500);
+    expect(correlationId).toMatch(/^[0-9a-f-]{36}$/);
     expect(json.error).toEqual({
       code: "STATEMENT_IMPORT_FINALIZE_FAILED",
-      correlationId: "statement-import-test",
+      correlationId,
       message: "Unable to finalize statement import.",
     });
   });

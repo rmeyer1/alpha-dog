@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
 import { emitTelemetry } from "@/lib/observability/telemetry";
+import { scheduleAlertSample } from "@/lib/observability/alert-control-plane";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -163,6 +164,7 @@ export async function acquirePaidRouteGuard(
       outcome: "unavailable",
       severity: "warn",
     });
+    scheduleAlertSample("paid_usage_anomaly", 1);
 
     return {
       allowed: false,
@@ -189,6 +191,7 @@ export async function acquirePaidRouteGuard(
       outcome: "unavailable",
       severity: "warn",
     });
+    scheduleAlertSample("paid_usage_anomaly", 1);
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, unavailableResponse()),
@@ -233,6 +236,7 @@ export async function acquirePaidRouteGuard(
       outcome: "unavailable",
       severity: "warn",
     });
+    scheduleAlertSample("paid_usage_anomaly", 1);
 
     return {
       allowed: false,
@@ -248,6 +252,7 @@ export async function acquirePaidRouteGuard(
       outcome: "unavailable",
       severity: "warn",
     });
+    scheduleAlertSample("paid_usage_anomaly", 1);
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, unavailableResponse()),
@@ -266,6 +271,7 @@ export async function acquirePaidRouteGuard(
         : "rate_limited",
       severity: "warn",
     });
+    scheduleAlertSample("paid_usage_anomaly", 1);
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, rejectedResponse(result)),
@@ -279,6 +285,7 @@ export async function acquirePaidRouteGuard(
     operation: policy.routeKey,
     outcome: "allowed",
   });
+  scheduleAlertSample("paid_usage_anomaly", 0);
 
   return {
     allowed: true,

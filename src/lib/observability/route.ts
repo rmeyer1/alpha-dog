@@ -2,6 +2,7 @@ import {
   SpanStatusCode,
 } from "@opentelemetry/api";
 import {
+  clientCorrelationIdFromRequest,
   CORRELATION_HEADER,
   correlationIdFromRequest,
   runWithTelemetryContext,
@@ -77,10 +78,13 @@ export function instrumentApiRoute<T extends ApiRouteHandler>(
   const instrumented = async (...args: Parameters<T>) => {
     const request = requestFromArguments(args);
     const correlationId = correlationIdFromRequest(request);
+    const clientCorrelationId = clientCorrelationIdFromRequest(request) ??
+      undefined;
     const startedAt = monotonicNow();
 
     return runWithTelemetryContext(
       {
+        clientCorrelationId,
         correlationId,
         method: definition.method,
         route: definition.route,
@@ -113,6 +117,7 @@ export function instrumentApiRoute<T extends ApiRouteHandler>(
             response = responseWithCorrelationId(response, correlationId);
 
             emitTelemetry({
+              clientCorrelationId,
               correlationId,
               durationMs: elapsedMilliseconds(startedAt),
               error: thrownError,

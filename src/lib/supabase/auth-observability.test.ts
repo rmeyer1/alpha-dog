@@ -5,20 +5,35 @@ import {
   logAuthAccountFailure,
   safeAuthLogCode,
 } from "./auth-observability";
+import { runWithTelemetryContext } from "@/lib/observability/context";
 
 describe("auth observability", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("reuses caller supplied correlation ids", () => {
+  it("does not let caller supplied IDs replace the server identity", () => {
     const request = new Request("https://alpha.example", {
       headers: {
         [AUTH_CORRELATION_HEADER]: "qa-correlation-id",
       },
     });
 
-    expect(authCorrelationIdFromRequest(request)).toBe("qa-correlation-id");
+    const correlationId = authCorrelationIdFromRequest(request);
+
+    expect(correlationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(correlationId).not.toBe("qa-correlation-id");
+  });
+
+  it("reuses the active route identity for response bodies and logs", () => {
+    const request = new Request("https://alpha.example");
+
+    expect(
+      runWithTelemetryContext(
+        { correlationId: "server-request-123" },
+        () => authCorrelationIdFromRequest(request),
+      ),
+    ).toBe("server-request-123");
   });
 
   it("generates correlation ids when none are supplied", () => {

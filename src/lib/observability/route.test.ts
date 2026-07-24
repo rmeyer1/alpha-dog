@@ -24,11 +24,14 @@ describe("API route telemetry boundary", () => {
     });
     const response = await handler(request);
     const records = telemetryRecords(warn);
+    const serverCorrelationId = response.headers.get(CORRELATION_HEADER);
 
     expect(response.status).toBe(400);
-    expect(response.headers.get(CORRELATION_HEADER)).toBe("caller-request-1");
+    expect(serverCorrelationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(serverCorrelationId).not.toBe("caller-request-1");
     expect(records).toEqual([expect.objectContaining({
-      correlationId: "caller-request-1",
+      clientCorrelationId: "caller-request-1",
+      correlationId: serverCorrelationId,
       errorCode: "HTTP_400",
       httpStatus: 400,
       outcome: "client_error",
@@ -36,6 +39,31 @@ describe("API route telemetry boundary", () => {
     })]);
 
     warn.mockRestore();
+  });
+
+  it("keeps repeated caller IDs secondary to unique server identities", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const handler = instrumentApiRoute(
+      { method: "GET", route: "/api/example" },
+      async () => Response.json({ ok: true }),
+    );
+    const request = () => new Request("https://alpha-dog.test/api/example", {
+      headers: { [CORRELATION_HEADER]: "repeated-caller-1" },
+    });
+    const first = await handler(request());
+    const second = await handler(request());
+
+    expect(first.headers.get(CORRELATION_HEADER)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second.headers.get(CORRELATION_HEADER)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second.headers.get(CORRELATION_HEADER)).not.toBe(
+      first.headers.get(CORRELATION_HEADER),
+    );
+
+    for (const record of telemetryRecords(info)) {
+      expect(record.clientCorrelationId).toBe("repeated-caller-1");
+    }
+
+    info.mockRestore();
   });
 
   it("maps thrown values to a safe response without leaking exception content", async () => {
