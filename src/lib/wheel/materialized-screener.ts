@@ -14,6 +14,7 @@ import type {
   WheelScreenerRequest,
   WheelScreenerResponse,
 } from "./types";
+import { upsertScannerRows } from "./scanner-concurrency";
 
 export const MATERIALIZED_FRESH_TTL_MS = 15 * 60 * 1000;
 export const MATERIALIZED_STALE_TTL_MS = 2 * 60 * 60 * 1000;
@@ -26,7 +27,7 @@ const DEEP_SCAN_CANDIDATE_SELECT =
 const LEGACY_DEEP_SCAN_CANDIDATE_SELECT =
   "persona,strategy,symbol,company_name,exchange,score,option_type,expiration,dte,short_strike,long_strike,premium_yield,annualized_yield,return_on_risk,annualized_return_on_risk,delta,implied_volatility,liquidity_quality,warning_count,underlying_price,underlying_as_of,trend,rsi14,ma20,ma50,ma200,warnings,errors,as_of";
 const SNAPSHOT_SELECT =
-  "id,persona,strategy,filter_key,filters,feed,data_source_mode,status,started_at,completed_at,total_count,processed_count,skipped_count,error,created_at";
+  "id,persona,strategy,filter_key,filters,feed,data_source_mode,status,started_at,heartbeat_at,completed_at,total_count,processed_count,skipped_count,error,created_at";
 
 export interface WheelScreenerSnapshotRow {
   id: string;
@@ -37,6 +38,7 @@ export interface WheelScreenerSnapshotRow {
   feed: DataFeed;
   status: "running" | "complete" | "failed";
   started_at: string;
+  heartbeat_at: string;
   completed_at: string | null;
   total_count: number;
   processed_count: number;
@@ -660,16 +662,13 @@ export async function upsertMaterializedWheelScreenerCandidates(
     return;
   }
 
-  await requestSupabaseRest<null>("wheel_option_candidates", {
-    method: "POST",
-    body: response.companies.map((company) =>
-      companyScoreToCandidateRow(snapshotId, request, company),
+  await upsertScannerRows(
+    "wheel_option_candidates",
+    response.companies.map((company) =>
+      companyScoreToCandidateRow(snapshotId, request, company)
     ),
-    prefer: "resolution=merge-duplicates,return=minimal",
-    query: {
-      on_conflict: "snapshot_id,symbol,strategy",
-    },
-  });
+    "snapshot_id,symbol,strategy",
+  );
 }
 
 export async function completeMaterializedWheelScreenerSnapshot(
@@ -693,6 +692,30 @@ export async function completeMaterializedWheelScreenerSnapshot(
     prefer: "return=minimal",
     query: {
       id: `eq.${snapshotId}`,
+    },
+  });
+}
+
+export async function heartbeatMaterializedWheelScreenerSnapshot(
+  snapshotId: string | null,
+  response: WheelScreenerResponse,
+) {
+  if (!snapshotId) {
+    return;
+  }
+
+  await requestSupabaseRest<null>("wheel_screener_snapshots", {
+    method: "PATCH",
+    body: {
+      heartbeat_at: new Date().toISOString(),
+      total_count: response.progress.totalCount,
+      processed_count: response.progress.processedCount,
+      skipped_count: response.skippedCount,
+    },
+    prefer: "return=minimal",
+    query: {
+      id: `eq.${snapshotId}`,
+      status: "eq.running",
     },
   });
 }

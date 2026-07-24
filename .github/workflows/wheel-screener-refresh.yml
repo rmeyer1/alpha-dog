@@ -2,7 +2,9 @@ name: Wheel Screener Refresh
 
 on:
   schedule:
-    - cron: "*/15 * * * 1-5"
+    # Offset from the top of the hour to avoid colliding with market-data
+    # publication boundaries. The route still enforces New York market hours.
+    - cron: "7,22,37,52 13-21 * * 1-5"
   workflow_dispatch:
 
 jobs:

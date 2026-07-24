@@ -30,6 +30,15 @@ import {
   scoreCandidate,
   scoreVerticalSpreadCandidate,
 } from "./scoring";
+import {
+  acquireScannerLease,
+  heartbeatScannerLease,
+  releaseScannerLease,
+  scannerOwnerId,
+  type ScannerLease,
+  upsertScannerRows,
+  withDeadlockRetry,
+} from "./scanner-concurrency";
 import type {
   DataFeed,
   OptionType,
@@ -195,6 +204,7 @@ export interface UniverseDeepScanCoverageRequest {
   forceRefresh?: boolean;
   persona: WheelScreenerRequest["persona"];
   strategy: WheelCompanyStrategy;
+  workflowIdempotencyKey?: string;
 }
 
 export interface UniverseDeepScanCoverageResult {
@@ -247,16 +257,6 @@ function stableStringify(value: unknown): string {
       `${JSON.stringify(key)}:${stableStringify(entryValue)}`
     )
     .join(",")}}`;
-}
-
-function chunk<T>(values: T[], size: number) {
-  const chunks: T[][] = [];
-
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-
-  return chunks;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -538,20 +538,36 @@ function technicalIsFresh(row: UnderlyingTechnicalRow | undefined) {
 }
 
 async function upsertRows(table: string, rows: unknown[], onConflict: string) {
-  for (const rowChunk of chunk(rows, 500)) {
-    if (rowChunk.length === 0) {
-      continue;
-    }
+  await upsertScannerRows(table, rows, onConflict);
+}
 
-    await requestSupabaseRest<null>(table, {
-      method: "POST",
-      body: rowChunk,
-      prefer: "resolution=merge-duplicates,return=minimal",
-      query: {
-        on_conflict: onConflict,
+async function patchScannerRun(
+  table: "wheel_universe_scan_runs" | "wheel_deep_scan_runs",
+  body: Record<string, unknown>,
+  runId: string,
+) {
+  await withDeadlockRetry(
+    () =>
+      requestSupabaseRest<null>(table, {
+        method: "PATCH",
+        body,
+        prefer: "return=minimal",
+        query: {
+          id: `eq.${runId}`,
+          status: "eq.running",
+        },
+      }),
+    {
+      onRetry: ({ attempt, delayMs }) => {
+        console.warn("wheel_scanner_run_write_deadlock_retry", {
+          attempt,
+          delayMs,
+          runId,
+          table,
+        });
       },
-    });
-  }
+    },
+  );
 }
 
 async function persistUniverseAssets(assets: ScannerAsset[]) {
@@ -830,7 +846,10 @@ function selectBestCandidate(
   }
 }
 
-async function createUniverseScanRun(request: WheelScreenerRequest) {
+async function createUniverseScanRun(
+  request: WheelScreenerRequest,
+  lease: ScannerLease,
+) {
   const rows = await requestSupabaseRest<Array<{ id: string }>>(
     "wheel_universe_scan_runs",
     {
@@ -841,6 +860,9 @@ async function createUniverseScanRun(request: WheelScreenerRequest) {
         status: "running",
         filters: mergeFilters(request.persona, request.filters),
         deep_scan_size: getEnv().WHEEL_UNIVERSE_DEEP_SCAN_SIZE,
+        heartbeat_at: new Date().toISOString(),
+        lease_key: lease.leaseKey,
+        lease_owner_id: lease.ownerId,
       }],
       prefer: "return=representation",
       query: {
@@ -852,6 +874,23 @@ async function createUniverseScanRun(request: WheelScreenerRequest) {
   return rows?.[0]?.id ?? null;
 }
 
+async function heartbeatUniverseScanRun(
+  runId: string | null,
+  lease: ScannerLease,
+) {
+  await heartbeatScannerLease(lease);
+
+  if (!runId) {
+    return;
+  }
+
+  await patchScannerRun(
+    "wheel_universe_scan_runs",
+    { heartbeat_at: new Date().toISOString() },
+    runId,
+  );
+}
+
 async function completeUniverseScanRun(
   runId: string | null,
   response: WheelScreenerResponse,
@@ -861,9 +900,9 @@ async function completeUniverseScanRun(
     return;
   }
 
-  await requestSupabaseRest<null>("wheel_universe_scan_runs", {
-    method: "PATCH",
-    body: {
+  await patchScannerRun(
+    "wheel_universe_scan_runs",
+    {
       status: "complete",
       completed_at: new Date().toISOString(),
       total_count: response.progress.totalCount,
@@ -872,11 +911,8 @@ async function completeUniverseScanRun(
       error: response.errors[0] ?? null,
       summary,
     },
-    prefer: "return=minimal",
-    query: {
-      id: `eq.${runId}`,
-    },
-  });
+    runId,
+  );
 }
 
 async function failUniverseScanRun(
@@ -898,14 +934,7 @@ async function failUniverseScanRun(
     body.summary = summary;
   }
 
-  await requestSupabaseRest<null>("wheel_universe_scan_runs", {
-    method: "PATCH",
-    body,
-    prefer: "return=minimal",
-    query: {
-      id: `eq.${runId}`,
-    },
-  });
+  await patchScannerRun("wheel_universe_scan_runs", body, runId);
 }
 
 function optionMarketSnapshotRows(
@@ -1152,6 +1181,7 @@ function addContractRefreshSummary(
 async function createDeepScanRun(
   context: DeepScanContext,
   batchSize: number,
+  lease: ScannerLease,
 ) {
   const rows = await requestSupabaseRest<Array<{ id: string }>>(
     "wheel_deep_scan_runs",
@@ -1164,6 +1194,9 @@ async function createDeepScanRun(
         filters: context.filters,
         status: "running",
         requested_batch_size: batchSize,
+        heartbeat_at: new Date().toISOString(),
+        lease_key: lease.leaseKey,
+        lease_owner_id: lease.ownerId,
       }],
       prefer: "return=representation",
       query: {
@@ -1173,6 +1206,23 @@ async function createDeepScanRun(
   );
 
   return rows?.[0]?.id ?? null;
+}
+
+async function heartbeatDeepScanRun(
+  runId: string | null,
+  lease: ScannerLease,
+) {
+  await heartbeatScannerLease(lease);
+
+  if (!runId) {
+    return;
+  }
+
+  await patchScannerRun(
+    "wheel_deep_scan_runs",
+    { heartbeat_at: new Date().toISOString() },
+    runId,
+  );
 }
 
 async function completeDeepScanRun(
@@ -1187,9 +1237,9 @@ async function completeDeepScanRun(
     return;
   }
 
-  await requestSupabaseRest<null>("wheel_deep_scan_runs", {
-    method: "PATCH",
-    body: {
+  await patchScannerRun(
+    "wheel_deep_scan_runs",
+    {
       status: "complete",
       completed_at: new Date().toISOString(),
       selected_count: result.selectedCount,
@@ -1198,11 +1248,8 @@ async function completeDeepScanRun(
       error_count: result.errorCount,
       summary,
     },
-    prefer: "return=minimal",
-    query: {
-      id: `eq.${runId}`,
-    },
-  });
+    runId,
+  );
 }
 
 async function failDeepScanRun(
@@ -1224,14 +1271,27 @@ async function failDeepScanRun(
     body.summary = summary;
   }
 
-  await requestSupabaseRest<null>("wheel_deep_scan_runs", {
-    method: "PATCH",
-    body,
-    prefer: "return=minimal",
-    query: {
-      id: `eq.${runId}`,
+  await patchScannerRun("wheel_deep_scan_runs", body, runId);
+}
+
+async function checkpointDeepScanRun(
+  runId: string | null,
+  result: UniverseDeepScanCoverageResult,
+  summary: DeepScanRunSummary,
+) {
+  if (!runId) {
+    return;
+  }
+
+  await patchScannerRun(
+    "wheel_deep_scan_runs",
+    {
+      heartbeat_at: new Date().toISOString(),
+      workflow_result: result,
+      summary,
     },
-  });
+    runId,
+  );
 }
 
 async function getDeepScanCoverage(context: DeepScanContext) {
@@ -1359,16 +1419,18 @@ async function deleteDeepScanCandidate(
   context: DeepScanContext,
   symbol: string,
 ) {
-  await requestSupabaseRest<null>("wheel_deep_scan_candidates", {
-    method: "DELETE",
-    prefer: "return=minimal",
-    query: {
-      persona: `eq.${context.persona}`,
-      strategy: `eq.${context.strategy}`,
-      filter_key: `eq.${context.filterKey}`,
-      symbol: `eq.${symbol}`,
-    },
-  });
+  await withDeadlockRetry(() =>
+    requestSupabaseRest<null>("wheel_deep_scan_candidates", {
+      method: "DELETE",
+      prefer: "return=minimal",
+      query: {
+        persona: `eq.${context.persona}`,
+        strategy: `eq.${context.strategy}`,
+        filter_key: `eq.${context.filterKey}`,
+        symbol: `eq.${symbol}`,
+      },
+    })
+  );
 }
 
 async function upsertDeepScanCoverageRows(
@@ -1453,10 +1515,24 @@ export async function analyzeStagedUniverseWheelCompanies(
     strategy,
   };
   const persona = getPersona(request.persona);
-  const runId = await createUniverseScanRun({ ...request, strategy });
+  const leaseResult = await acquireScannerLease({
+    context,
+    intervalMinutes: 15,
+    scanKind: "universe",
+  });
+
+  if (!leaseResult.acquired) {
+    throw new Error(
+      `A matching universe scan is already active. Retry after ${leaseResult.retryAfterSeconds} seconds.`,
+    );
+  }
+
+  const lease = leaseResult;
+  let runId: string | null = null;
   let summary: UniverseScanRunSummary | null = null;
 
   try {
+    runId = await createUniverseScanRun({ ...request, strategy }, lease);
     const assets = await getWheelAssetUniverse();
     const snapshots = await getStockSnapshotsBySymbols(
       assets.map((asset) => asset.symbol),
@@ -1472,9 +1548,11 @@ export async function analyzeStagedUniverseWheelCompanies(
 
     await persistUniverseAssets(assets);
     await persistStockSnapshots(runId, ranked);
+    await heartbeatUniverseScanRun(runId, lease);
 
     const { cached: technicals, summary: technicalSummary } =
       await ensureTechnicals(deepScan);
+    await heartbeatUniverseScanRun(runId, lease);
     const earningsContexts = await getCachedEarningsRiskContexts(
       deepScan.map((item) => item.asset.symbol),
       now,
@@ -1633,17 +1711,27 @@ export async function analyzeStagedUniverseWheelCompanies(
 
     await persistOptionMarketSnapshots(optionSnapshotRows);
     await persistRankedCandidates(runId, companies);
+    await heartbeatUniverseScanRun(runId, lease);
     await completeUniverseScanRun(runId, response, runSummary);
 
     return response;
   } catch (error) {
     await failUniverseScanRun(runId, error, summary);
     throw error;
+  } finally {
+    await releaseScannerLease(lease).catch((error) => {
+      console.warn("wheel_universe_scan_lease_release_failed", {
+        error: error instanceof Error ? error.name : "UnknownError",
+        runId,
+      });
+    });
   }
 }
 
-export async function runUniverseDeepScanCoverage(
+async function executeUniverseDeepScanCoverage(
   request: UniverseDeepScanCoverageRequest,
+  deferCompletion: boolean,
+  idempotencyKey?: string,
 ): Promise<UniverseDeepScanCoverageResult> {
   if (!getSupabaseServiceConfig()) {
     throw new Error(
@@ -1659,10 +1747,50 @@ export async function runUniverseDeepScanCoverage(
     Date.now() -
     env.WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS * 60 * 60 * 1000;
   const staleBefore = new Date(staleBeforeMs).toISOString();
-  const runId = await createDeepScanRun(context, batchSize);
+  const leaseResult = await acquireScannerLease({
+    context,
+    intervalMinutes: 60,
+    ownerId: idempotencyKey ? scannerOwnerId(idempotencyKey) : undefined,
+    scanKind: "deep_scan",
+  });
+
+  if (!leaseResult.acquired) {
+    return {
+      batchSize,
+      candidateCount: 0,
+      errorCount: 0,
+      errors: [],
+      filterKey: context.filterKey,
+      persona: context.persona,
+      runId: null,
+      scannedCount: 0,
+      scannedSymbols: [],
+      selectedCount: 0,
+      skippedReason:
+        `A matching deep scan is already active; retry after ${leaseResult.retryAfterSeconds} seconds.`,
+      staleBefore,
+      strategy: context.strategy,
+      totalEligibleCount: 0,
+    };
+  }
+
+  const lease = leaseResult;
+  let runId: string | null = null;
   let summary: DeepScanRunSummary | null = null;
+  let retainLeaseForWorkflow = false;
 
   try {
+    const reusableRun = idempotencyKey
+      ? await getReusableDeepScanRun(lease)
+      : null;
+
+    if (reusableRun?.workflow_result) {
+      retainLeaseForWorkflow = true;
+      return reusableRun.workflow_result;
+    }
+
+    runId = reusableRun?.id ??
+      await createDeepScanRun(context, batchSize, lease);
     const assets = await getWheelAssetUniverse();
     const snapshots = await getStockSnapshotsBySymbols(
       assets.map((asset) => asset.symbol),
@@ -1677,6 +1805,7 @@ export async function runUniverseDeepScanCoverage(
 
     await persistUniverseAssets(assets);
     await persistStockSnapshots(null, ranked);
+    await heartbeatDeepScanRun(runId, lease);
 
     const coverage = await getDeepScanCoverage(context);
     const selected = selectDeepScanCoverageBatch(
@@ -1730,13 +1859,19 @@ export async function runUniverseDeepScanCoverage(
         totalEligibleCount: ranked.length,
       };
 
-      await completeDeepScanRun(runId, result, runSummary);
+      if (deferCompletion) {
+        await checkpointDeepScanRun(runId, result, runSummary);
+        retainLeaseForWorkflow = true;
+      } else {
+        await completeDeepScanRun(runId, result, runSummary);
+      }
 
       return result;
     }
 
     const { cached: technicals, summary: technicalSummary } =
       await ensureTechnicals(selected);
+    await heartbeatDeepScanRun(runId, lease);
     runSummary.technicals = technicalSummary;
     const earningsContexts = await getCachedEarningsRiskContexts(
       selected.map((item) => item.asset.symbol),
@@ -1866,6 +2001,7 @@ export async function runUniverseDeepScanCoverage(
     await persistOptionMarketSnapshots(optionSnapshotRows);
     await upsertDeepScanCandidates(context, runId, rankedCompanies);
     await upsertDeepScanCoverageRows(context, coverageRows);
+    await heartbeatDeepScanRun(runId, lease);
     runSummary.contracts.optionSnapshotRows = optionSnapshotRows.length;
     runSummary.errors = {
       count: errors.length,
@@ -1889,11 +2025,148 @@ export async function runUniverseDeepScanCoverage(
       totalEligibleCount: ranked.length,
     };
 
-    await completeDeepScanRun(runId, result, runSummary);
+    if (deferCompletion) {
+      await checkpointDeepScanRun(runId, result, runSummary);
+      retainLeaseForWorkflow = true;
+    } else {
+      await completeDeepScanRun(runId, result, runSummary);
+    }
 
     return result;
   } catch (error) {
     await failDeepScanRun(runId, error, summary);
     throw error;
+  } finally {
+    if (!retainLeaseForWorkflow) {
+      await releaseScannerLease(lease).catch((error) => {
+        console.warn("wheel_deep_scan_lease_release_failed", {
+          error: error instanceof Error ? error.name : "UnknownError",
+          runId,
+        });
+      });
+    }
   }
+}
+
+export async function runUniverseDeepScanCoverage(
+  request: UniverseDeepScanCoverageRequest,
+) {
+  return executeUniverseDeepScanCoverage(request, false);
+}
+
+export interface StagedUniverseDeepScanCoverage {
+  result: UniverseDeepScanCoverageResult | null;
+  runId: string | null;
+}
+
+export async function stageUniverseDeepScanCoverage(
+  request: UniverseDeepScanCoverageRequest,
+  idempotencyKey: string,
+): Promise<StagedUniverseDeepScanCoverage> {
+  const result = await executeUniverseDeepScanCoverage(
+    request,
+    true,
+    idempotencyKey,
+  );
+
+  return {
+    result: result.runId ? null : result,
+    runId: result.runId,
+  };
+}
+
+interface DeepScanCheckpointRow {
+  lease_key: string | null;
+  lease_owner_id: string | null;
+  status: "running" | "complete" | "failed";
+  summary: DeepScanRunSummary;
+  workflow_result: UniverseDeepScanCoverageResult | null;
+}
+
+interface ReusableDeepScanRun {
+  id: string;
+  workflow_result: UniverseDeepScanCoverageResult | null;
+}
+
+async function getReusableDeepScanRun(lease: ScannerLease) {
+  const rows = await requestSupabaseRest<ReusableDeepScanRun[]>(
+    "wheel_deep_scan_runs",
+    {
+      query: {
+        lease_key: `eq.${lease.leaseKey}`,
+        lease_owner_id: `eq.${lease.ownerId}`,
+        limit: 1,
+        order: "started_at.desc",
+        select: "id,workflow_result",
+        status: "eq.running",
+      },
+    },
+  );
+
+  return rows?.[0] ?? null;
+}
+
+async function getDeepScanCheckpoint(runId: string) {
+  const rows = await requestSupabaseRest<DeepScanCheckpointRow[]>(
+    "wheel_deep_scan_runs",
+    {
+      query: {
+        id: `eq.${runId}`,
+        limit: 1,
+        select:
+          "status,summary,workflow_result,lease_key,lease_owner_id",
+      },
+    },
+  );
+
+  return rows?.[0] ?? null;
+}
+
+async function releaseDeepScanCheckpointLease(
+  checkpoint: DeepScanCheckpointRow | null,
+) {
+  if (!checkpoint?.lease_key || !checkpoint.lease_owner_id) {
+    return;
+  }
+
+  await releaseScannerLease({
+    leaseKey: checkpoint.lease_key,
+    ownerId: checkpoint.lease_owner_id,
+  });
+}
+
+export async function completeStagedUniverseDeepScanCoverage(
+  runId: string,
+) {
+  const checkpoint = await getDeepScanCheckpoint(runId);
+
+  if (!checkpoint?.workflow_result) {
+    throw new Error(`Deep scan workflow checkpoint ${runId} is unavailable.`);
+  }
+
+  if (checkpoint.status === "failed") {
+    throw new Error(`Deep scan workflow checkpoint ${runId} has failed.`);
+  }
+
+  if (checkpoint.status === "running") {
+    await completeDeepScanRun(
+      runId,
+      checkpoint.workflow_result,
+      checkpoint.summary,
+    );
+  }
+
+  await releaseDeepScanCheckpointLease(checkpoint);
+
+  return checkpoint.workflow_result;
+}
+
+export async function failStagedUniverseDeepScanCoverage(
+  runId: string,
+  error: unknown,
+) {
+  const checkpoint = await getDeepScanCheckpoint(runId);
+
+  await failDeepScanRun(runId, error, checkpoint?.summary ?? null);
+  await releaseDeepScanCheckpointLease(checkpoint);
 }

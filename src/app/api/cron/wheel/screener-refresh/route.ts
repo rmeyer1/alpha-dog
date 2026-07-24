@@ -21,6 +21,8 @@ import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 export const dynamic = "force-dynamic";
 
 interface StartedRefresh {
+  completionStatus: "complete" | "pending";
+  enqueueStatus: "accepted";
   persona: WheelScreenerRequest["persona"];
   runId: string;
   status: string;
@@ -165,17 +167,25 @@ async function handleRefresh(request: Request) {
         forceRefresh: true,
       },
     ]);
+    const workflowStatus = await run.status;
 
     started.push({
+      completionStatus:
+        workflowStatus === "completed" ? "complete" : "pending",
+      enqueueStatus: "accepted",
       persona: decision.request.persona,
       strategy: decision.request.strategy,
       runId: run.runId,
-      status: await run.status,
+      status: workflowStatus,
     });
   }
 
   return NextResponse.json({
     ok: true,
+    enqueueSucceeded: true,
+    publicationCompleted:
+      started.length > 0 &&
+      started.every((run) => run.completionStatus === "complete"),
     dryRun,
     force,
     health: summarizeScreenerRefreshDecisions(decisions),

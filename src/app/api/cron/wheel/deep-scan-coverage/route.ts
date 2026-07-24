@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import {
@@ -21,6 +22,8 @@ const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
 });
 
 interface StartedDeepScan {
+  completionStatus: "complete" | "pending";
+  enqueueStatus: "accepted";
   persona: UniverseDeepScanCoverageRequest["persona"];
   runId: string;
   status: string;
@@ -171,19 +174,30 @@ async function handleDeepScanCoverage(request: Request) {
 
   if (!dryRun) {
     for (const scanRequest of scanRequests) {
-      const run = await start(wheelDeepScanWorkflow, [scanRequest]);
+      const run = await start(wheelDeepScanWorkflow, [{
+        ...scanRequest,
+        workflowIdempotencyKey: randomUUID(),
+      }]);
+      const workflowStatus = await run.status;
 
       started.push({
+        completionStatus:
+          workflowStatus === "completed" ? "complete" : "pending",
+        enqueueStatus: "accepted",
         persona: scanRequest.persona,
         strategy: scanRequest.strategy,
         runId: run.runId,
-        status: await run.status,
+        status: workflowStatus,
       });
     }
   }
 
   return NextResponse.json({
     ok: true,
+    enqueueSucceeded: true,
+    publicationCompleted:
+      started.length > 0 &&
+      started.every((run) => run.completionStatus === "complete"),
     dryRun,
     force,
     coverageHours,

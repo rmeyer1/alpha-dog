@@ -8,6 +8,30 @@ const getWheelAssetUniverseMock = vi.hoisted(() => vi.fn());
 const requestSupabaseRestMock = vi.hoisted(() => vi.fn());
 const getSupabaseServiceConfigMock = vi.hoisted(() => vi.fn());
 
+function scannerLeaseRpcResult(table: string) {
+  if (table === "rpc/acquire_wheel_scan_lease") {
+    return {
+      acquired: true,
+      expires_at: "2026-06-08T17:00:00.000Z",
+      owner_id: "11111111-1111-1111-1111-111111111111",
+      retry_after_seconds: 0,
+    };
+  }
+
+  if (table === "rpc/heartbeat_wheel_scan_lease") {
+    return {
+      expires_at: "2026-06-08T17:00:00.000Z",
+      renewed: true,
+    };
+  }
+
+  if (table === "rpc/release_wheel_scan_lease") {
+    return true;
+  }
+
+  return undefined;
+}
+
 vi.mock("@/lib/alpaca/client", () => ({
   getHistoricalDailyBarsBySymbols: getHistoricalDailyBarsBySymbolsMock,
   getLiveOptionSnapshotContractsBySymbols:
@@ -96,6 +120,12 @@ describe("staged universe scanner", () => {
       },
     ]);
     requestSupabaseRestMock.mockImplementation((table, options) => {
+      const leaseResult = scannerLeaseRpcResult(table);
+
+      if (leaseResult !== undefined) {
+        return Promise.resolve(leaseResult);
+      }
+
       if (table === "wheel_universe_scan_runs" && options?.method === "POST") {
         return Promise.resolve([{ id: "scan-run-id" }]);
       }
@@ -122,7 +152,9 @@ describe("staged universe scanner", () => {
     });
     const runPatch = requestSupabaseRestMock.mock.calls.find(
       ([table, options]) =>
-        table === "wheel_universe_scan_runs" && options?.method === "PATCH",
+        table === "wheel_universe_scan_runs" &&
+        options?.method === "PATCH" &&
+        options?.body?.status === "complete",
     );
 
     expect(getStockSnapshotsBySymbolsMock).toHaveBeenCalledWith(
@@ -220,6 +252,12 @@ describe("staged universe scanner", () => {
       },
     ]);
     requestSupabaseRestMock.mockImplementation((table, options) => {
+      const leaseResult = scannerLeaseRpcResult(table);
+
+      if (leaseResult !== undefined) {
+        return Promise.resolve(leaseResult);
+      }
+
       if (table === "wheel_universe_scan_runs" && options?.method === "POST") {
         return Promise.resolve([{ id: "scan-run-id" }]);
       }
@@ -315,6 +353,12 @@ describe("staged universe scanner", () => {
       },
     ]);
     requestSupabaseRestMock.mockImplementation((table, options) => {
+      const leaseResult = scannerLeaseRpcResult(table);
+
+      if (leaseResult !== undefined) {
+        return Promise.resolve(leaseResult);
+      }
+
       if (table === "wheel_deep_scan_runs" && options?.method === "POST") {
         return Promise.resolve([{ id: "deep-run-id" }]);
       }
@@ -423,6 +467,12 @@ describe("staged universe scanner", () => {
       },
     ]);
     requestSupabaseRestMock.mockImplementation((table, options) => {
+      const leaseResult = scannerLeaseRpcResult(table);
+
+      if (leaseResult !== undefined) {
+        return Promise.resolve(leaseResult);
+      }
+
       if (table === "wheel_deep_scan_runs" && options?.method === "POST") {
         return Promise.resolve([{ id: "deep-run-id" }]);
       }
@@ -475,7 +525,9 @@ describe("staged universe scanner", () => {
     );
     const runPatch = requestSupabaseRestMock.mock.calls.find(
       ([table, options]) =>
-        table === "wheel_deep_scan_runs" && options?.method === "PATCH",
+        table === "wheel_deep_scan_runs" &&
+        options?.method === "PATCH" &&
+        options?.body?.status === "complete",
     );
 
     expect(getLiveOptionSnapshotContractsBySymbolsMock).toHaveBeenCalledWith(
@@ -528,5 +580,128 @@ describe("staged universe scanner", () => {
         totalEligibleCount: 1,
       },
     });
+  });
+
+  it("does not start provider work when an active universe owner holds the interval lease", async () => {
+    requestSupabaseRestMock.mockImplementation((table) => {
+      if (table === "rpc/acquire_wheel_scan_lease") {
+        return Promise.resolve({
+          acquired: false,
+          expires_at: "2026-06-08T17:00:00.000Z",
+          owner_id: "22222222-2222-2222-2222-222222222222",
+          retry_after_seconds: 90,
+        });
+      }
+
+      return Promise.resolve(null);
+    });
+    const { analyzeStagedUniverseWheelCompanies } = await import(
+      "./universe-scanner"
+    );
+
+    await expect(
+      analyzeStagedUniverseWheelCompanies({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).rejects.toThrow("already active");
+    expect(getWheelAssetUniverseMock).not.toHaveBeenCalled();
+    expect(getStockSnapshotsBySymbolsMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a duplicate deep-scan trigger as skipped before provider work", async () => {
+    requestSupabaseRestMock.mockImplementation((table) => {
+      if (table === "rpc/acquire_wheel_scan_lease") {
+        return Promise.resolve({
+          acquired: false,
+          expires_at: "2026-06-08T17:00:00.000Z",
+          owner_id: "22222222-2222-2222-2222-222222222222",
+          retry_after_seconds: 90,
+        });
+      }
+
+      return Promise.resolve(null);
+    });
+    const { runUniverseDeepScanCoverage } = await import(
+      "./universe-scanner"
+    );
+
+    await expect(
+      runUniverseDeepScanCoverage({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).resolves.toMatchObject({
+      runId: null,
+      scannedCount: 0,
+      skippedReason: expect.stringContaining("already active"),
+    });
+    expect(getWheelAssetUniverseMock).not.toHaveBeenCalled();
+    expect(getStockSnapshotsBySymbolsMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses a staged checkpoint when the same Workflow step retries", async () => {
+    const checkpoint = {
+      batchSize: 1,
+      candidateCount: 1,
+      errorCount: 0,
+      errors: [],
+      filterKey: "{}",
+      persona: "balanced_wheel",
+      runId: "deep-run-id",
+      scannedCount: 1,
+      scannedSymbols: ["AAPL"],
+      selectedCount: 1,
+      skippedReason: null,
+      staleBefore: "2026-06-08T12:00:00.000Z",
+      strategy: "short_put",
+      totalEligibleCount: 1,
+    };
+    requestSupabaseRestMock.mockImplementation((table, options) => {
+      const leaseResult = scannerLeaseRpcResult(table);
+
+      if (leaseResult !== undefined) {
+        return Promise.resolve(leaseResult);
+      }
+
+      if (
+        table === "wheel_deep_scan_runs" &&
+        options?.query?.lease_owner_id
+      ) {
+        return Promise.resolve([{
+          id: "deep-run-id",
+          workflow_result: checkpoint,
+        }]);
+      }
+
+      return Promise.resolve(null);
+    });
+    const { stageUniverseDeepScanCoverage } = await import(
+      "./universe-scanner"
+    );
+
+    await expect(
+      stageUniverseDeepScanCoverage(
+        {
+          persona: "balanced_wheel",
+          strategy: "short_put",
+        },
+        "step_retry",
+      ),
+    ).resolves.toEqual({
+      result: null,
+      runId: "deep-run-id",
+    });
+
+    expect(getWheelAssetUniverseMock).not.toHaveBeenCalled();
+    expect(getStockSnapshotsBySymbolsMock).not.toHaveBeenCalled();
+    expect(requestSupabaseRestMock).not.toHaveBeenCalledWith(
+      "wheel_deep_scan_runs",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(requestSupabaseRestMock).not.toHaveBeenCalledWith(
+      "rpc/release_wheel_scan_lease",
+      expect.anything(),
+    );
   });
 });

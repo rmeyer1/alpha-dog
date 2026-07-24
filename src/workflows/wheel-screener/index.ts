@@ -11,6 +11,7 @@ import {
   completeScreenerSnapshot,
   createScreenerSnapshot,
   failScreenerSnapshot,
+  heartbeatScreenerSnapshot,
   screenWheelCompaniesBatch,
   upsertScreenerSnapshotCandidates,
   writeScreenerProgress,
@@ -140,6 +141,7 @@ export async function wheelScreenerWorkflow(
       await upsertScreenerSnapshotCandidates(snapshotId, request, batchResponse);
 
       aggregate = mergeScreenerResponse(aggregate, batchResponse, limit);
+      await heartbeatScreenerSnapshot(snapshotId, aggregate);
       await writeScreenerProgress(aggregate);
 
       if (
