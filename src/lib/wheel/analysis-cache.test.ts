@@ -4,6 +4,7 @@ import {
   ANALYSIS_CACHE_STALE_TTL_MS,
   MemoryAnalysisCacheStore,
   buildAnalysisCacheKey,
+  getFreshRuntimeAnalysisCache,
 } from "./analysis-cache";
 import type { WheelAnalysisResponse, WheelFilters } from "./types";
 
@@ -209,5 +210,21 @@ describe("analysis cache", () => {
     expect(store.getFresh("key")).not.toBeNull();
 
     vi.useRealTimers();
+  });
+
+  it("emits one logical cache decision when Runtime Cache is bypassed in tests", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    await expect(
+      getFreshRuntimeAnalysisCache("wheel-analysis:test"),
+    ).resolves.toBeNull();
+    const records = info.mock.calls
+      .map(([value]) => String(value))
+      .filter((value) => value.includes('"event":"cache.operation"'));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toContain('"cacheState":"miss"');
+
+    info.mockRestore();
   });
 });

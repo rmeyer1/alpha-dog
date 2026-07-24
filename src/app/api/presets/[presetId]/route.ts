@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import {
   deleteSavedPreset,
@@ -45,7 +46,7 @@ async function missingPresetResponse(presetId: string, userId: string) {
   );
 }
 
-export async function PUT(request: NextRequest, context: RouteContext) {
+async function PUTHandler(request: NextRequest, context: RouteContext) {
   const { presetId } = await context.params;
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
@@ -90,7 +91,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
   return copyAuthCookies(auth.response, NextResponse.json({ preset }));
 }
 
-export async function DELETE(request: NextRequest, context: RouteContext) {
+async function DELETEHandler(request: NextRequest, context: RouteContext) {
   const { presetId } = await context.params;
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
@@ -114,3 +115,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   return copyAuthCookies(auth.response, NextResponse.json({ ok: true }));
 }
+
+export const PUT = instrumentApiRoute(
+  { method: "PUT", route: "/api/presets/[presetId]" },
+  PUTHandler,
+);
+
+export const DELETE = instrumentApiRoute(
+  { method: "DELETE", route: "/api/presets/[presetId]" },
+  DELETEHandler,
+);

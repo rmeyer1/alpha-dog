@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
@@ -6,6 +7,8 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
+import { observeCronOperation } from "@/lib/observability/cron";
+import { observedWorkflowArguments } from "@/lib/observability/workflow";
 import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getScheduledScreenerRefreshRequests } from "@/lib/wheel/screener-refresh";
@@ -160,10 +163,13 @@ async function handleDeepScanCoverage(request: Request) {
 
   if (!dryRun) {
     for (const scanRequest of scanRequests) {
-      const run = await start(wheelDeepScanWorkflow, [{
-        ...scanRequest,
-        workflowIdempotencyKey: randomUUID(),
-      }]);
+      const run = await start(
+        wheelDeepScanWorkflow,
+        await observedWorkflowArguments("wheel_deep_scan", {
+          ...scanRequest,
+          workflowIdempotencyKey: randomUUID(),
+        }),
+      );
       const workflowStatus = await run.status;
 
       started.push({
@@ -195,10 +201,26 @@ async function handleDeepScanCoverage(request: Request) {
   });
 }
 
-export async function GET(request: Request) {
-  return handleDeepScanCoverage(request);
+async function GETHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_deep_scan_coverage",
+    () => handleDeepScanCoverage(request),
+  );
 }
 
-export async function POST(request: Request) {
-  return handleDeepScanCoverage(request);
+async function POSTHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_deep_scan_coverage",
+    () => handleDeepScanCoverage(request),
+  );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/cron/wheel/deep-scan-coverage" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/cron/wheel/deep-scan-coverage" },
+  POSTHandler,
+);

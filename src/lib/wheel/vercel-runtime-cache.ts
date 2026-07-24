@@ -1,9 +1,14 @@
 import { getCache } from "@vercel/functions";
+import { emitCacheTelemetry } from "@/lib/observability/cache";
 
 const namespace = "alpha-dog-wheel";
 
 function runtimeCacheDisabled() {
   return process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
+}
+
+function cacheOperation(key: string) {
+  return key.split(":")[0] || "runtime_cache";
 }
 
 export async function getRuntimeCacheValue<T>(key: string): Promise<T | null> {
@@ -28,6 +33,7 @@ export async function setRuntimeCacheValue(
   },
 ) {
   if (runtimeCacheDisabled()) {
+    emitCacheTelemetry(cacheOperation(key), "bypass");
     return;
   }
 
@@ -37,7 +43,9 @@ export async function setRuntimeCacheValue(
       tags: options.tags,
       ttl: options.ttlSeconds,
     });
-  } catch {
+    emitCacheTelemetry(options.name, "write_success");
+  } catch (error) {
+    emitCacheTelemetry(options.name, "write_failure", { error });
     // Runtime Cache is an optimization; memory cache and live fetch remain the fallback.
   }
 }

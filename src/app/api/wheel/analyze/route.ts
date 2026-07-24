@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
@@ -25,7 +26,7 @@ function analysisErrorResponse() {
   );
 }
 
-export async function POST(request: NextRequest) {
+async function POSTHandler(request: NextRequest) {
   const json = await request.json().catch(() => null);
   const parsed = analyzeRequestSchema.safeParse(json);
 
@@ -98,3 +99,8 @@ export async function POST(request: NextRequest) {
     await guard.release();
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/wheel/analyze" },
+  POSTHandler,
+);

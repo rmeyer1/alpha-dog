@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
+import { emitTelemetry } from "@/lib/observability/telemetry";
 import {
   accountSessionErrorResponse,
   copyAuthCookies,
@@ -102,6 +103,13 @@ export async function acquirePaidRouteGuard(
   const policy = paidRoutePolicies[policyKey];
 
   if (policy.access === "internal-only" && process.env.NODE_ENV === "production") {
+    emitTelemetry({
+      errorCode: "NOT_FOUND",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: "access_denied",
+      severity: "warn",
+    });
     return {
       allowed: false,
       response: NextResponse.json(
@@ -122,6 +130,13 @@ export async function acquirePaidRouteGuard(
       const auth = await getRequiredAccountSession(nextRequest, authResponse);
 
       if ("code" in auth) {
+        emitTelemetry({
+          errorCode: auth.code,
+          event: "paid_route.guard",
+          operation: policy.routeKey,
+          outcome: "authentication_denied",
+          severity: "warn",
+        });
         return {
           allowed: false,
           response: copyAuthCookies(
@@ -139,6 +154,14 @@ export async function acquirePaidRouteGuard(
     console.warn("api_abuse_auth_unavailable", {
       error: error instanceof Error ? error.name : "UnknownError",
       route: policy.routeKey,
+    });
+    emitTelemetry({
+      error,
+      errorCode: "AUTH_UNAVAILABLE",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: "unavailable",
+      severity: "warn",
     });
 
     return {
@@ -159,6 +182,13 @@ export async function acquirePaidRouteGuard(
   }
 
   if (!serviceConfig || !hmacSecret) {
+    emitTelemetry({
+      errorCode: "ABUSE_PROTECTION_UNAVAILABLE",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: "unavailable",
+      severity: "warn",
+    });
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, unavailableResponse()),
@@ -195,6 +225,14 @@ export async function acquirePaidRouteGuard(
       error: error instanceof Error ? error.name : "UnknownError",
       route: policy.routeKey,
     });
+    emitTelemetry({
+      error,
+      errorCode: "ABUSE_PROTECTION_UNAVAILABLE",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: "unavailable",
+      severity: "warn",
+    });
 
     return {
       allowed: false,
@@ -203,6 +241,13 @@ export async function acquirePaidRouteGuard(
   }
 
   if (!result) {
+    emitTelemetry({
+      errorCode: "ABUSE_PROTECTION_UNAVAILABLE",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: "unavailable",
+      severity: "warn",
+    });
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, unavailableResponse()),
@@ -210,6 +255,17 @@ export async function acquirePaidRouteGuard(
   }
 
   if (!result.allowed) {
+    emitTelemetry({
+      errorCode: result.reason === "concurrency"
+        ? "API_CONCURRENCY_LIMITED"
+        : "API_RATE_LIMITED",
+      event: "paid_route.guard",
+      operation: policy.routeKey,
+      outcome: result.reason === "concurrency"
+        ? "concurrency_limited"
+        : "rate_limited",
+      severity: "warn",
+    });
     return {
       allowed: false,
       response: copyAuthCookies(authResponse, rejectedResponse(result)),
@@ -217,6 +273,12 @@ export async function acquirePaidRouteGuard(
   }
 
   const leaseId = result.lease_id ?? requestedLeaseId;
+
+  emitTelemetry({
+    event: "paid_route.guard",
+    operation: policy.routeKey,
+    outcome: "allowed",
+  });
 
   return {
     allowed: true,
@@ -242,6 +304,14 @@ export async function acquirePaidRouteGuard(
         console.warn("api_abuse_lease_release_failed", {
           error: error instanceof Error ? error.name : "UnknownError",
           route: policy.routeKey,
+        });
+        emitTelemetry({
+          error,
+          errorCode: "LEASE_RELEASE_FAILED",
+          event: "paid_route.guard",
+          operation: policy.routeKey,
+          outcome: "release_failed",
+          severity: "warn",
         });
       }
     },

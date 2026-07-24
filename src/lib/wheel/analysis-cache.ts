@@ -9,6 +9,7 @@ import {
   getRuntimeCacheValue,
   setRuntimeCacheValue,
 } from "./vercel-runtime-cache";
+import { emitCacheTelemetry } from "@/lib/observability/cache";
 
 export const ANALYSIS_CACHE_VERSION = "v3";
 export const ANALYSIS_CACHE_FRESH_TTL_MS = 2 * 60 * 1000;
@@ -155,9 +156,13 @@ export async function getFreshRuntimeAnalysisCache(
   const entry = await getRuntimeCacheValue<AnalysisCacheEntry>(key);
 
   if (!entry || nowMs > entry.freshUntilMs) {
+    emitCacheTelemetry("wheel_analysis", "miss");
     return null;
   }
 
+  emitCacheTelemetry("wheel_analysis", "fresh_hit", {
+    ageMs: nowMs - entry.writtenAtMs,
+  });
   return cloneEntry(entry);
 }
 
@@ -168,9 +173,13 @@ export async function getStaleRuntimeAnalysisCache(
   const entry = await getRuntimeCacheValue<AnalysisCacheEntry>(key);
 
   if (!entry || nowMs > entry.staleUntilMs) {
+    emitCacheTelemetry("wheel_analysis", "miss");
     return null;
   }
 
+  emitCacheTelemetry("wheel_analysis", "stale_fallback", {
+    ageMs: nowMs - entry.writtenAtMs,
+  });
   return cloneEntry(entry);
 }
 

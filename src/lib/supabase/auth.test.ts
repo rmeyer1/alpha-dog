@@ -73,6 +73,10 @@ describe("supabase auth helpers", () => {
           apikey: "anon-key",
           Authorization: "Bearer session-token",
         },
+        opentelemetry: {
+          ignore: true,
+          propagateContext: false,
+        },
       },
     );
   });

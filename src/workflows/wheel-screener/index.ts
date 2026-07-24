@@ -1,4 +1,8 @@
 import { sleep } from "workflow";
+import {
+  requireDurableTelemetryContext,
+  type DurableTelemetryContext,
+} from "@/lib/observability/durable-context";
 import type {
   Warning,
   WheelCompanyScore,
@@ -12,6 +16,7 @@ import {
   createScreenerSnapshot,
   failScreenerSnapshot,
   heartbeatScreenerSnapshot,
+  recordScreenerWorkflowLifecycle,
   screenWheelCompaniesBatch,
   upsertScreenerSnapshotCandidates,
   writeScreenerProgress,
@@ -119,29 +124,39 @@ function completeProgress(response: WheelScreenerResponse) {
 
 export async function wheelScreenerWorkflow(
   request: WheelScreenerRequest,
+  telemetryContext: DurableTelemetryContext,
 ): Promise<WheelScreenerResponse> {
   "use workflow";
 
+  const telemetry = requireDurableTelemetryContext(telemetryContext);
+  await recordScreenerWorkflowLifecycle(telemetry, "resumed");
   const limit = request.limit ?? 50;
   const batchSize = request.batchSize ?? workflowBatchSize;
   const batchResultLimit = Math.max(limit, batchSize);
   let cursor = request.cursor ?? 0;
   let aggregate: WheelScreenerResponse | null = null;
-  const snapshotId = await createScreenerSnapshot(request);
+  let snapshotId: string | null = null;
 
   try {
+    snapshotId = await createScreenerSnapshot(request, telemetry);
+
     while (true) {
       const batchResponse = await screenWheelCompaniesBatch({
         ...request,
         cursor,
         batchSize,
         limit: batchResultLimit,
-      });
+      }, telemetry);
 
-      await upsertScreenerSnapshotCandidates(snapshotId, request, batchResponse);
+      await upsertScreenerSnapshotCandidates(
+        snapshotId,
+        request,
+        batchResponse,
+        telemetry,
+      );
 
       aggregate = mergeScreenerResponse(aggregate, batchResponse, limit);
-      await heartbeatScreenerSnapshot(snapshotId, aggregate);
+      await heartbeatScreenerSnapshot(snapshotId, aggregate, telemetry);
       await writeScreenerProgress(aggregate);
 
       if (
@@ -151,9 +166,10 @@ export async function wheelScreenerWorkflow(
         const completed = completeProgress(aggregate);
 
         await writeScreenerProgress(completed);
-        await completeScreenerSnapshot(snapshotId, completed);
-        await cacheScreenerResult(request, completed);
+        await completeScreenerSnapshot(snapshotId, completed, telemetry);
+        await cacheScreenerResult(request, completed, telemetry);
         await closeScreenerProgress();
+        await recordScreenerWorkflowLifecycle(telemetry, "completed");
 
         return completed;
       }
@@ -162,10 +178,14 @@ export async function wheelScreenerWorkflow(
       cursor = batchResponse.progress.nextCursor;
     }
   } catch (error) {
-    await failScreenerSnapshot(
-      snapshotId,
-      error instanceof Error ? error.message : "Screener workflow failed.",
-    );
+    if (snapshotId) {
+      await failScreenerSnapshot(
+        snapshotId,
+        error instanceof Error ? error.message : "Screener workflow failed.",
+        telemetry,
+      );
+    }
+    await recordScreenerWorkflowLifecycle(telemetry, "failed");
     throw error;
   }
 }

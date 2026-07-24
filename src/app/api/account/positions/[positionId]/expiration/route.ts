@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import {
   expireSimulatedPosition,
@@ -16,7 +17,7 @@ interface RouteContext {
   }>;
 }
 
-export async function POST(request: NextRequest, context: RouteContext) {
+async function POSTHandler(request: NextRequest, context: RouteContext) {
   const { positionId } = await context.params;
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
@@ -76,3 +77,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     throw error;
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/account/positions/[positionId]/expiration" },
+  POSTHandler,
+);

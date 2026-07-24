@@ -1,10 +1,11 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { probeOptionsFeed } from "@/lib/alpaca/client";
 
 type OptionsFeed = "opra" | "indicative";
 
-export async function GET(request: Request) {
+async function GETHandler(request: Request) {
   const url = new URL(request.url);
   const ticker = (url.searchParams.get("ticker") ?? "AAPL")
     .trim()
@@ -43,3 +44,8 @@ export async function GET(request: Request) {
     await guard.release();
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/alpaca/feed-test" },
+  GETHandler,
+);

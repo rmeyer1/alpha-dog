@@ -3,6 +3,11 @@ import {
   analyzeTopWheelCompanies,
   cacheCompletedWheelScreenerResponse,
 } from "@/lib/wheel/screener";
+import type { DurableTelemetryContext } from "@/lib/observability/context";
+import {
+  emitWorkflowTelemetry,
+  runWithDurableTelemetryContext,
+} from "@/lib/observability/workflow";
 import {
   completeMaterializedWheelScreenerSnapshot,
   createMaterializedWheelScreenerSnapshot,
@@ -17,10 +22,14 @@ import type {
 
 export async function screenWheelCompaniesBatch(
   request: WheelScreenerRequest,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  return analyzeTopWheelCompanies(request);
+  return runWithDurableTelemetryContext(
+    telemetryContext,
+    () => analyzeTopWheelCompanies(request),
+  );
 }
 
 export async function writeScreenerProgress(
@@ -45,55 +54,97 @@ export async function closeScreenerProgress() {
 export async function cacheScreenerResult(
   request: WheelScreenerRequest,
   response: WheelScreenerResponse,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  await cacheCompletedWheelScreenerResponse(request, response);
+  await runWithDurableTelemetryContext(
+    telemetryContext,
+    () => cacheCompletedWheelScreenerResponse(request, response),
+  );
 }
 
-export async function createScreenerSnapshot(request: WheelScreenerRequest) {
+export async function createScreenerSnapshot(
+  request: WheelScreenerRequest,
+  telemetryContext: DurableTelemetryContext,
+) {
   "use step";
 
-  return createMaterializedWheelScreenerSnapshot(request);
+  return runWithDurableTelemetryContext(
+    telemetryContext,
+    () => createMaterializedWheelScreenerSnapshot(request),
+  );
 }
 
 export async function upsertScreenerSnapshotCandidates(
   snapshotId: string | null,
   request: WheelScreenerRequest,
   response: WheelScreenerResponse,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  await upsertMaterializedWheelScreenerCandidates(
-    snapshotId,
-    request,
-    response,
+  await runWithDurableTelemetryContext(
+    telemetryContext,
+    () =>
+      upsertMaterializedWheelScreenerCandidates(
+        snapshotId,
+        request,
+        response,
+      ),
   );
 }
 
 export async function completeScreenerSnapshot(
   snapshotId: string | null,
   response: WheelScreenerResponse,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  await completeMaterializedWheelScreenerSnapshot(snapshotId, response);
+  await runWithDurableTelemetryContext(
+    telemetryContext,
+    () => completeMaterializedWheelScreenerSnapshot(snapshotId, response),
+  );
 }
 
 export async function heartbeatScreenerSnapshot(
   snapshotId: string | null,
   response: WheelScreenerResponse,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  await heartbeatMaterializedWheelScreenerSnapshot(snapshotId, response);
+  await runWithDurableTelemetryContext(
+    telemetryContext,
+    () => heartbeatMaterializedWheelScreenerSnapshot(snapshotId, response),
+  );
 }
 
 export async function failScreenerSnapshot(
   snapshotId: string | null,
   errorMessage: string,
+  telemetryContext: DurableTelemetryContext,
 ) {
   "use step";
 
-  await failMaterializedWheelScreenerSnapshot(snapshotId, errorMessage);
+  await runWithDurableTelemetryContext(
+    telemetryContext,
+    () => failMaterializedWheelScreenerSnapshot(snapshotId, errorMessage),
+  );
+}
+
+export async function recordScreenerWorkflowLifecycle(
+  telemetryContext: DurableTelemetryContext,
+  phase: "completed" | "failed" | "resumed",
+) {
+  "use step";
+
+  await runWithDurableTelemetryContext(telemetryContext, (normalized) =>
+    emitWorkflowTelemetry({
+      context: normalized,
+      phase,
+      workflow: "wheel_screener",
+    })
+  );
 }

@@ -1,10 +1,11 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { analyzeTradeCandidate } from "@/lib/trade-analysis/analyze";
 import type { TradeAnalysisInput } from "@/lib/trade-analysis/types";
 import { tradeAnalysisRequestSchema } from "@/lib/trade-analysis/validation";
 
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const json = await request.json().catch(() => null);
   const parsed = tradeAnalysisRequestSchema.safeParse(json);
 
@@ -49,3 +50,8 @@ export async function POST(request: Request) {
     await guard.release();
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/trade/analyze" },
+  POSTHandler,
+);

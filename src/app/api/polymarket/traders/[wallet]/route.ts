@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import {
@@ -30,7 +31,7 @@ function withCachedFreshness(
   };
 }
 
-export async function GET(
+async function GETHandler(
   request: Request,
   { params }: { params: Promise<{ wallet: string }> },
 ) {
@@ -106,3 +107,8 @@ export async function GET(
     );
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/polymarket/traders/[wallet]" },
+  GETHandler,
+);

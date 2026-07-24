@@ -1,10 +1,11 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextRequest, NextResponse } from "next/server";
 import { loadAccountHubState } from "@/lib/supabase/account-hub";
 import { accountNavStateFromHubState } from "@/lib/supabase/account-nav";
 import { copyAuthCookies } from "@/lib/supabase/account-session";
 import { createSupabaseRouteClient } from "@/lib/supabase/server";
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const supabase = createSupabaseRouteClient(request, authResponse);
   const state = await loadAccountHubState(supabase);
@@ -14,3 +15,8 @@ export async function GET(request: NextRequest) {
     NextResponse.json({ account: accountNavStateFromHubState(state) }),
   );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/auth/account-state" },
+  GETHandler,
+);

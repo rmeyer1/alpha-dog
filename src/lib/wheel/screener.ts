@@ -8,6 +8,7 @@ import {
   getRuntimeCacheValue,
   setRuntimeCacheValue,
 } from "./vercel-runtime-cache";
+import { emitCacheTelemetry } from "@/lib/observability/cache";
 import type {
   CacheStatus,
   DataFeed,
@@ -201,12 +202,14 @@ async function getFreshSharedScreenerCache(key: string, nowMs = Date.now()) {
   const memoryEntry = getFreshScreenerCache(key, nowMs);
 
   if (memoryEntry) {
+    emitCacheTelemetry("wheel_screener", "fresh_hit");
     return memoryEntry;
   }
 
   const runtimeEntry = await getRuntimeCacheValue<ScreenerCacheEntry>(key);
 
   if (!runtimeEntry || nowMs > runtimeEntry.freshUntilMs) {
+    emitCacheTelemetry("wheel_screener", "miss");
     return null;
   }
 
@@ -216,6 +219,7 @@ async function getFreshSharedScreenerCache(key: string, nowMs = Date.now()) {
     staleUntilMs: runtimeEntry.staleUntilMs,
   });
 
+  emitCacheTelemetry("wheel_screener", "fresh_hit");
   return getFreshScreenerCache(key, nowMs);
 }
 
@@ -256,12 +260,14 @@ async function getStaleSharedScreenerCache(key: string, nowMs = Date.now()) {
   const memoryEntry = getStaleScreenerCache(key, nowMs);
 
   if (memoryEntry) {
+    emitCacheTelemetry("wheel_screener", "stale_fallback");
     return memoryEntry;
   }
 
   const runtimeEntry = await getRuntimeCacheValue<ScreenerCacheEntry>(key);
 
   if (!runtimeEntry || nowMs > runtimeEntry.staleUntilMs) {
+    emitCacheTelemetry("wheel_screener", "miss");
     return null;
   }
 
@@ -271,6 +277,7 @@ async function getStaleSharedScreenerCache(key: string, nowMs = Date.now()) {
     staleUntilMs: runtimeEntry.staleUntilMs,
   });
 
+  emitCacheTelemetry("wheel_screener", "stale_fallback");
   return getStaleScreenerCache(key, nowMs);
 }
 
@@ -516,6 +523,7 @@ export async function getCachedWheelScreenerResponse(
   request: WheelScreenerRequest,
 ) {
   if (request.forceRefresh || (request.cursor ?? 0) !== 0) {
+    emitCacheTelemetry("wheel_screener", "bypass");
     return null;
   }
 

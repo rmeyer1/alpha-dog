@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { getFinnhubEarningsSurprises } from "@/lib/finnhub/client";
 import {
   integerParam,
@@ -10,7 +11,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request, context: SymbolRouteContext) {
+async function GETHandler(request: Request, context: SymbolRouteContext) {
   const symbol = await symbolFromContext(context);
 
   if (!symbol) {
@@ -37,3 +38,8 @@ export async function GET(request: Request, context: SymbolRouteContext) {
     return { earningsSurprises, symbol };
   });
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/finnhub/company/[symbol]/earnings" },
+  GETHandler,
+);

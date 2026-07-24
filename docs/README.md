@@ -8,6 +8,9 @@ This documentation package translates the Wheel Strategy Dashboard BRD into impl
 - [`wheel_strategy_tech_spec.md`](./wheel_strategy_tech_spec.md) — REST-first architecture, Alpaca integration, cache strategy, and system components.
 - [`wheel_strategy_api_spec.md`](./wheel_strategy_api_spec.md) — Internal REST API contracts for analysis, personas, saved presets, and refresh behavior.
 - [`auth-hardening-runbook.md`](./auth-hardening-runbook.md) — Auth/account failure diagnosis, RLS checks, and safe observability notes.
+- [`observability-runbook.md`](./observability-runbook.md) — Correlation, health,
+  provider/cache/workflow telemetry, alert thresholds, tracing policy, and
+  incident response.
 - [`supabase-account-isolation.md`](./supabase-account-isolation.md) — Clean-database RLS, Data API privileges, lifecycle RPC isolation, service-key containment, and migration verification.
 - [`wheel_strategy_data_model.md`](./wheel_strategy_data_model.md) — PostgreSQL-ready data model, cache/audit entities, and domain DTOs.
 - [`wheel_strategy_algorithms.md`](./wheel_strategy_algorithms.md) — Calculation, scoring, liquidity, warning, and persona-ranking specification.

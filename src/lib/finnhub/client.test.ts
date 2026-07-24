@@ -65,12 +65,14 @@ describe("Finnhub client", () => {
       from: "2026-07-01",
       to: "2026-07-31",
     });
-    const url = new URL(fetchMock.mock.calls[0][0]);
+    const [input, init] = fetchMock.mock.calls[0];
+    const url = new URL(input);
 
     expect(url.pathname).toBe("/api/v1/calendar/earnings");
     expect(url.searchParams.get("from")).toBe("2026-07-01");
     expect(url.searchParams.get("to")).toBe("2026-07-31");
-    expect(url.searchParams.get("token")).toBe("test-key");
+    expect(url.searchParams.get("token")).toBeNull();
+    expect(new Headers(init?.headers).get("X-Finnhub-Token")).toBe("test-key");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ symbol: "MSFT", hour: "bmo" });
   });

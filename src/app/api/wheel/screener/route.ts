@@ -1,6 +1,8 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
+import { observedWorkflowArguments } from "@/lib/observability/workflow";
 import {
   getEnv,
   getMarketDataConfigurationError,
@@ -12,7 +14,7 @@ import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh"
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
-export async function POST(request: Request) {
+async function POSTHandler(request: Request) {
   const json = await request.json().catch(() => null);
   const parsed = screenerRequestSchema.safeParse(json);
 
@@ -79,7 +81,10 @@ export async function POST(request: Request) {
       }
 
       try {
-        const run = await start(wheelScreenerWorkflow, [parsed.data]);
+        const run = await start(
+          wheelScreenerWorkflow,
+          await observedWorkflowArguments("wheel_screener", parsed.data),
+        );
 
         return guard.withAuthCookies(NextResponse.json(
           {
@@ -110,3 +115,8 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/wheel/screener" },
+  POSTHandler,
+);

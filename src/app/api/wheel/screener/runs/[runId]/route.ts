@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { getRun } from "workflow/api";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
@@ -6,7 +7,7 @@ import type {
   WheelScreenerRunResponse,
 } from "@/lib/wheel/types";
 
-export async function GET(
+async function GETHandler(
   request: Request,
   { params }: { params: Promise<{ runId: string }> },
 ) {
@@ -69,3 +70,8 @@ export async function GET(
     await guard.release();
   }
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/wheel/screener/runs/[runId]" },
+  GETHandler,
+);

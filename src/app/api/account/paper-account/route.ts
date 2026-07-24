@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import { loadPaperAccountOverview } from "@/lib/account/simulated-account-portfolio";
 import {
@@ -6,7 +7,7 @@ import {
   getRequiredAccountSession,
 } from "@/lib/supabase/account-session";
 
-export async function GET(request: NextRequest) {
+async function GETHandler(request: NextRequest) {
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -23,3 +24,8 @@ export async function GET(request: NextRequest) {
     summary: portfolio.summary,
   }));
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/account/paper-account" },
+  GETHandler,
+);

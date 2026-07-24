@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse, type NextRequest } from "next/server";
 import { loadAccountPositionDetail } from "@/lib/account/simulated-account-portfolio";
 import {
@@ -19,7 +20,7 @@ interface RouteContext {
   }>;
 }
 
-export async function GET(request: NextRequest, context: RouteContext) {
+async function GETHandler(request: NextRequest, context: RouteContext) {
   const { positionId } = await context.params;
   const searchParams = new URL(request.url).searchParams;
   let eventLimit: number;
@@ -99,3 +100,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   return copyAuthCookies(auth.response, NextResponse.json({ position }));
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/account/positions/[positionId]" },
+  GETHandler,
+);

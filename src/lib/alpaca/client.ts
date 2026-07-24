@@ -1,4 +1,10 @@
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 import { withProviderTimeout } from "@/lib/provider-timeout";
 import { round } from "@/lib/wheel/calculations";
 import type {
@@ -480,60 +486,90 @@ function alpacaErrorMessage(
 }
 
 async function fetchAlpacaJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
-  const providerSignal = withProviderTimeout(signal, 30_000);
+  const operation = url.pathname.includes("/options/")
+    ? "options_data"
+    : url.pathname.includes("/stocks/")
+      ? "stock_data"
+      : url.pathname.endsWith("/assets")
+        ? "assets"
+        : url.pathname.endsWith("/clock")
+          ? "clock"
+          : "request";
 
-  for (let attempt = 0; attempt <= ALPACA_RETRY_DELAYS_MS.length; attempt += 1) {
-    const release = await alpacaRequestLimiter.acquire(providerSignal);
-    let released = false;
+  return observeProviderCall("alpaca", operation, async () => {
+    const providerSignal = withProviderTimeout(signal, 30_000);
 
-    try {
-      const response = await fetch(url, {
-        headers: alpacaHeaders(),
-        cache: "no-store",
-        signal: providerSignal,
-      });
-      const body = (await response.json().catch(() => null)) as
-        | (T & { message?: string })
-        | null;
-      const requestId = response.headers?.get("x-request-id") ?? null;
+    for (
+      let attempt = 0;
+      attempt <= ALPACA_RETRY_DELAYS_MS.length;
+      attempt += 1
+    ) {
+      const release = await alpacaRequestLimiter.acquire(providerSignal);
+      let released = false;
 
-      if (response.ok) {
-        if (!body) {
-          throw new Error("Alpaca returned an empty response.");
+      try {
+        const response = await fetch(url, {
+          headers: alpacaHeaders(),
+          cache: "no-store",
+          opentelemetry: privateProviderFetchTracing,
+          signal: providerSignal,
+        });
+        let body: (T & { message?: string }) | null;
+
+        try {
+          body = await response.json() as T & { message?: string };
+        } catch (error) {
+          if (response.ok) {
+            throw providerMalformedResponse(
+              "Alpaca returned a malformed response.",
+              error,
+            );
+          }
+
+          body = null;
+        }
+        const requestId = response.headers?.get("x-request-id") ?? null;
+
+        if (response.ok) {
+          if (!body) {
+            throw providerMalformedResponse(
+              "Alpaca returned an empty response.",
+            );
+          }
+
+          return body;
         }
 
-        return body;
-      }
+        const error = new AlpacaHttpError({
+          message: alpacaErrorMessage(response.status, requestId, body?.message),
+          requestId,
+          retryAfterMs: parseRetryAfterMs(response.headers),
+          status: response.status,
+        });
 
-      const error = new AlpacaHttpError({
-        message: alpacaErrorMessage(response.status, requestId, body?.message),
-        requestId,
-        retryAfterMs: parseRetryAfterMs(response.headers),
-        status: response.status,
-      });
+        if (
+          attempt < ALPACA_RETRY_DELAYS_MS.length &&
+          shouldRetryAlpacaStatus(response.status)
+        ) {
+          release();
+          released = true;
+          await wait(
+            error.retryAfterMs ?? ALPACA_RETRY_DELAYS_MS[attempt],
+            providerSignal,
+          );
+          continue;
+        }
 
-      if (
-        attempt < ALPACA_RETRY_DELAYS_MS.length &&
-        shouldRetryAlpacaStatus(response.status)
-      ) {
-        release();
-        released = true;
-        await wait(
-          error.retryAfterMs ?? ALPACA_RETRY_DELAYS_MS[attempt],
-          providerSignal,
-        );
-        continue;
-      }
-
-      throw error;
-    } finally {
-      if (!released) {
-        release();
+        throw error;
+      } finally {
+        if (!released) {
+          release();
+        }
       }
     }
-  }
 
-  throw new Error("Alpaca request failed after retries.");
+    throw new Error("Alpaca request failed after retries.");
+  });
 }
 
 async function getAssetsByExchange(exchange: "NYSE" | "NASDAQ") {
@@ -1411,47 +1447,61 @@ export async function probeOptionsFeed(
   );
   url.searchParams.set("feed", feed);
   url.searchParams.set("limit", "10");
+  let status: number | null = null;
 
   try {
-    const response = await fetch(url, {
-      headers: alpacaHeaders(),
-      cache: "no-store",
-      signal: providerSignal,
-    });
-    const body = (await response.json().catch(() => null)) as
-      | { snapshots?: Record<string, unknown>; message?: string }
-      | null;
+    return await observeProviderCall("alpaca", "feed_probe", async () => {
+      const response = await fetch(url, {
+        headers: alpacaHeaders(),
+        cache: "no-store",
+        opentelemetry: privateProviderFetchTracing,
+        signal: providerSignal,
+      });
+      status = response.status;
+      let body: { snapshots?: Record<string, unknown> } | null = null;
 
-    if (!response.ok) {
+      try {
+        body = await response.json() as {
+          snapshots?: Record<string, unknown>;
+        };
+      } catch (error) {
+        if (response.ok) {
+          throw providerMalformedResponse(
+            "Alpaca returned a malformed response.",
+            error,
+          );
+        }
+      }
+
+      if (!response.ok) {
+        throw providerHttpError(
+          response.status,
+          `Alpaca returned HTTP ${response.status}.`,
+        );
+      }
+
+      if (!body) {
+        throw providerMalformedResponse(
+          "Alpaca returned an empty response.",
+        );
+      }
+
       return {
-        ok: false,
+        ok: true,
         feed,
         ticker,
         status: response.status,
-        message:
-          body?.message ??
-          `Alpaca returned HTTP ${response.status} for ${feed} feed.`,
+        message: `${feed} feed is reachable for ${ticker}.`,
+        sampleContractCount: Object.keys(body.snapshots ?? {}).length,
       };
-    }
-
-    return {
-      ok: true,
-      feed,
-      ticker,
-      status: response.status,
-      message: `${feed} feed is reachable for ${ticker}.`,
-      sampleContractCount: Object.keys(body?.snapshots ?? {}).length,
-    };
-  } catch (error) {
+    });
+  } catch {
     return {
       ok: false,
       feed,
       ticker,
-      status: null,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unknown error while probing Alpaca feed.",
+      status,
+      message: "Unable to probe the Alpaca options feed.",
     };
   }
 }

@@ -1,5 +1,7 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { getEnv } from "@/lib/env";
+import { observeCronOperation } from "@/lib/observability/cron";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   earningsRefreshWindow,
@@ -109,10 +111,26 @@ async function handleEarningsRefresh(request: Request) {
   });
 }
 
-export async function GET(request: Request) {
-  return handleEarningsRefresh(request);
+async function GETHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_earnings_refresh",
+    () => handleEarningsRefresh(request),
+  );
 }
 
-export async function POST(request: Request) {
-  return handleEarningsRefresh(request);
+async function POSTHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_earnings_refresh",
+    () => handleEarningsRefresh(request),
+  );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/cron/wheel/earnings-refresh" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/cron/wheel/earnings-refresh" },
+  POSTHandler,
+);

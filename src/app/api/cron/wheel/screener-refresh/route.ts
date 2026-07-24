@@ -1,3 +1,4 @@
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
 import {
@@ -5,6 +6,8 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
+import { observeCronOperation } from "@/lib/observability/cron";
+import { observedWorkflowArguments } from "@/lib/observability/workflow";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   getEasternMarketHoursState,
@@ -161,12 +164,13 @@ async function handleRefresh(request: Request) {
       continue;
     }
 
-    const run = await start(wheelScreenerWorkflow, [
-      {
+    const run = await start(
+      wheelScreenerWorkflow,
+      await observedWorkflowArguments("wheel_screener", {
         ...decision.request,
         forceRefresh: true,
-      },
-    ]);
+      }),
+    );
     const workflowStatus = await run.status;
 
     started.push({
@@ -198,10 +202,26 @@ async function handleRefresh(request: Request) {
   });
 }
 
-export async function GET(request: Request) {
-  return handleRefresh(request);
+async function GETHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_screener_refresh",
+    () => handleRefresh(request),
+  );
 }
 
-export async function POST(request: Request) {
-  return handleRefresh(request);
+async function POSTHandler(request: Request) {
+  return observeCronOperation(
+    "wheel_screener_refresh",
+    () => handleRefresh(request),
+  );
 }
+
+export const GET = instrumentApiRoute(
+  { method: "GET", route: "/api/cron/wheel/screener-refresh" },
+  GETHandler,
+);
+
+export const POST = instrumentApiRoute(
+  { method: "POST", route: "/api/cron/wheel/screener-refresh" },
+  POSTHandler,
+);

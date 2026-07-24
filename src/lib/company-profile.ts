@@ -7,6 +7,12 @@ import {
   type AlpacaStockSnapshot,
 } from "@/lib/alpaca/client";
 import { getEnv, hasAlpacaCredentials } from "@/lib/env";
+import {
+  observeProviderCall,
+  privateProviderFetchTracing,
+  providerHttpError,
+  providerMalformedResponse,
+} from "@/lib/observability/provider";
 import { round } from "@/lib/wheel/calculations";
 
 export type { AlpacaAsset, AlpacaBar, AlpacaStockSnapshot } from "@/lib/alpaca/client";
@@ -272,27 +278,43 @@ async function fetchSignalScribeRows<T>(
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url, {
-    headers: {
-      apikey: config.serviceRoleKey,
-      Authorization: `Bearer ${config.serviceRoleKey}`,
-      Accept: "application/json",
-    },
-    cache: "no-store",
-    signal,
+  return observeProviderCall("supabase", "signal_scribe_query", async () => {
+    const response = await fetch(url, {
+      headers: {
+        apikey: config.serviceRoleKey,
+        Authorization: `Bearer ${config.serviceRoleKey}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+      opentelemetry: privateProviderFetchTracing,
+      signal,
+    });
+    let body: unknown;
+
+    try {
+      body = await response.json();
+    } catch (error) {
+      throw providerMalformedResponse(
+        "Supabase returned a malformed response.",
+        error,
+      );
+    }
+
+    if (!response.ok) {
+      throw providerHttpError(
+        response.status,
+        `Supabase returned HTTP ${response.status}.`,
+      );
+    }
+
+    if (!Array.isArray(body)) {
+      throw providerMalformedResponse(
+        "Supabase returned a malformed response.",
+      );
+    }
+
+    return body as T[];
   });
-  const body = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const message =
-      body && typeof body === "object" && "message" in body
-        ? String(body.message)
-        : `Supabase returned HTTP ${response.status}.`;
-
-    throw new Error(message);
-  }
-
-  return Array.isArray(body) ? (body as T[]) : [];
 }
 
 function filingIdFilter(filings: SignalScribeFiling[]) {
