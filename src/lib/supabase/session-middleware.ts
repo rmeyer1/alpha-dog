@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { copyAuthCookies } from "./account-session";
 import { getSupabaseAuthConfig } from "./auth";
 import { createSupabaseRouteClient } from "./server";
 
@@ -79,5 +80,5 @@ export async function refreshSupabaseSession(request: NextRequest) {
 
   await supabase.auth.getUser().catch(() => null);
 
-  return response;
+  return copyAuthCookies(response, NextResponse.next({ request }));
 }

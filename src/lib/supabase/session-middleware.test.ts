@@ -5,16 +5,31 @@ const mocks = vi.hoisted(() => ({
   createSupabaseRouteClient: vi.fn(),
   getSupabaseAuthConfig: vi.fn(),
   getUser: vi.fn(),
+  loadAccountPortfolio: vi.fn(),
 }));
 
 vi.mock("./auth", () => ({
   getSupabaseAuthConfig: mocks.getSupabaseAuthConfig,
+  isAccountProfileComplete: (profile: {
+    email?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+  } | null) => Boolean(
+    profile?.email?.trim() &&
+      profile.first_name?.trim() &&
+      profile.last_name?.trim(),
+  ),
 }));
 
 vi.mock("./server", () => ({
   createSupabaseRouteClient: mocks.createSupabaseRouteClient,
 }));
 
+vi.mock("@/lib/account/simulated-account-portfolio", () => ({
+  loadAccountPortfolio: mocks.loadAccountPortfolio,
+}));
+
+import { GET as getPaperAccount } from "@/app/api/account/paper-account/route";
 import {
   hasSupabaseSessionCookie,
   refreshSupabaseSession,
@@ -44,6 +59,13 @@ describe("session proxy routing", () => {
     });
     mocks.createSupabaseRouteClient.mockReturnValue({
       auth: { getUser: mocks.getUser },
+    });
+    mocks.loadAccountPortfolio.mockResolvedValue({
+      account: { id: "paper-account-1" },
+      historyPositions: [],
+      openPositions: [],
+      positions: [],
+      summary: { cashBalance: 1_000 },
     });
   });
 
@@ -150,9 +172,10 @@ describe("session proxy routing", () => {
   });
 
   it("refreshes an authenticated request exactly once and preserves safety headers", async () => {
-    mocks.createSupabaseRouteClient.mockImplementation((_request, response) => ({
+    mocks.createSupabaseRouteClient.mockImplementation((proxyRequest, response) => ({
       auth: {
         getUser: mocks.getUser.mockImplementationOnce(async () => {
+          proxyRequest.cookies.set(AUTH_COOKIE, "refreshed");
           response.cookies.set(AUTH_COOKIE, "refreshed");
           response.headers.set(
             "Cache-Control",
@@ -179,12 +202,16 @@ describe("session proxy routing", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(response.headers.get("expires")).toBe("0");
     expect(response.headers.get("pragma")).toBe("no-cache");
+    expect(response.headers.get("x-middleware-request-cookie"))
+      .toBe(`${AUTH_COOKIE}=refreshed`);
   });
 
-  it("preserves cookie rotation and deletion from the refresh response", async () => {
-    mocks.createSupabaseRouteClient.mockImplementation((_request, response) => ({
+  it("serializes cookie rotation and deletion for the current request", async () => {
+    mocks.createSupabaseRouteClient.mockImplementation((proxyRequest, response) => ({
       auth: {
         getUser: mocks.getUser.mockImplementationOnce(async () => {
+          proxyRequest.cookies.set(AUTH_COOKIE, "");
+          proxyRequest.cookies.set(`${AUTH_COOKIE}.0`, "rotated");
           response.cookies.set(AUTH_COOKIE, "", { maxAge: 0 });
           response.cookies.set(`${AUTH_COOKIE}.0`, "rotated");
           return {
@@ -202,6 +229,110 @@ describe("session proxy routing", () => {
     expect(mocks.getUser).toHaveBeenCalledOnce();
     expect(response.cookies.get(AUTH_COOKIE)?.value).toBe("");
     expect(response.cookies.get(`${AUTH_COOKIE}.0`)?.value).toBe("rotated");
+
+    const downstreamRequest = request(
+      "/account",
+      response.headers.get("x-middleware-request-cookie") ?? undefined,
+    );
+    expect(downstreamRequest.cookies.get(AUTH_COOKIE)?.value).toBe("");
+    expect(downstreamRequest.cookies.get(`${AUTH_COOKIE}.0`)?.value)
+      .toBe("rotated");
+  });
+
+  it("forwards a rotated session to the authoritative protected handler", async () => {
+    let proxyRefreshCalls = 0;
+    let authoritativeCalls = 0;
+    let redundantRefreshCalls = 0;
+
+    mocks.createSupabaseRouteClient.mockImplementation(
+      (currentRequest, currentResponse) => {
+        if (mocks.createSupabaseRouteClient.mock.calls.length === 1) {
+          return {
+            auth: {
+              getUser: async () => {
+                proxyRefreshCalls += 1;
+                currentRequest.cookies.set(AUTH_COOKIE, "refreshed");
+                currentResponse.cookies.set(AUTH_COOKIE, "refreshed");
+                currentResponse.headers.set(
+                  "Cache-Control",
+                  "private, no-cache, no-store, must-revalidate, max-age=0",
+                );
+
+                return {
+                  data: { user: { id: "user-1" } },
+                  error: null,
+                };
+              },
+            },
+          };
+        }
+
+        const forwardedCookie = currentRequest.cookies.get(AUTH_COOKIE)?.value;
+        const getUser = async () => {
+          authoritativeCalls += 1;
+
+          if (forwardedCookie !== "refreshed") {
+            redundantRefreshCalls += 1;
+            return {
+              data: { user: null },
+              error: { message: "JWT expired" },
+            };
+          }
+
+          return {
+            data: {
+              user: {
+                app_metadata: {},
+                aud: "authenticated",
+                created_at: "2026-07-23T00:00:00.000Z",
+                id: "user-1",
+                user_metadata: {},
+              },
+            },
+            error: null,
+          };
+        };
+        const maybeSingle = async () => ({
+          data: {
+            email: "desk@example.com",
+            first_name: "Ryan",
+            last_name: "Meyer",
+          },
+          error: null,
+        });
+
+        return {
+          auth: { getUser },
+          from: () => ({
+            select: () => ({
+              eq: () => ({ maybeSingle }),
+            }),
+          }),
+        };
+      },
+    );
+
+    const proxyResponse = await refreshSupabaseSession(
+      request(
+        "/api/account/paper-account",
+        `${AUTH_COOKIE}=stale`,
+      ),
+    );
+    const forwardedCookie = proxyResponse.headers.get(
+      "x-middleware-request-cookie",
+    );
+
+    expect(forwardedCookie).toBe(`${AUTH_COOKIE}=refreshed`);
+
+    const routeResponse = await getPaperAccount(
+      request("/api/account/paper-account", forwardedCookie ?? undefined),
+    );
+
+    expect(routeResponse.status).toBe(200);
+    expect(proxyRefreshCalls).toBe(1);
+    expect(authoritativeCalls).toBe(1);
+    expect(redundantRefreshCalls).toBe(0);
+    expect(mocks.loadAccountPortfolio).toHaveBeenCalledOnce();
   });
 
   it("fails open at the proxy boundary for an expired session", async () => {
