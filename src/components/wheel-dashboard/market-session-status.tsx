@@ -116,7 +116,7 @@ export function getMarketSessionView(
   };
 }
 
-export function MarketSessionStatusPill({
+export function MarketSessionStatusTile({
   className = "",
   initialState,
 }: {
@@ -146,14 +146,21 @@ export function MarketSessionStatusPill({
   }, []);
 
   return (
-    <span
-      className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2 py-1 text-sm ${view.tone.border} ${view.tone.surface} ${view.tone.text} ${className}`}
+    <div
+      className={`flex min-h-12 items-center gap-3 rounded-lg border px-3 ${view.tone.border} ${view.tone.surface} ${className}`}
+      data-market-phase={market.phase}
+      role="status"
       title={`${view.label} - ${view.detail}`}
     >
       <Icon className={`size-4 shrink-0 ${view.tone.icon}`} />
-      <span className="truncate">
-        {view.label} · {view.detail}
-      </span>
-    </span>
+      <div className="min-w-0">
+        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
+          US market
+        </div>
+        <div className={`truncate text-sm font-medium ${view.tone.text}`}>
+          {view.label} · {view.detail}
+        </div>
+      </div>
+    </div>
   );
 }
