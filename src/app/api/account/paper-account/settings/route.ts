@@ -14,22 +14,25 @@ export async function PATCH(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "paper account");
+    return accountSessionErrorResponse(auth.code, "paper account", authResponse);
   }
 
   const json = await request.json().catch(() => null);
   const parsed = paperAccountSettingsSchema.safeParse(json);
 
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "INVALID_PAPER_ACCOUNT_SETTINGS",
-          message: "Paper account settings payload is invalid.",
-          details: parsed.error.flatten(),
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "INVALID_PAPER_ACCOUNT_SETTINGS",
+            message: "Paper account settings payload is invalid.",
+            details: parsed.error.flatten(),
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 

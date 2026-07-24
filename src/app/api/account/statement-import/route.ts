@@ -25,33 +25,43 @@ export async function POST(request: NextRequest) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "statement import");
+    return accountSessionErrorResponse(
+      auth.code,
+      "statement import",
+      authResponse,
+    );
   }
 
   const formData = await request.formData().catch(() => null);
   const file = formData?.get("file");
 
   if (!(file instanceof File)) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "STATEMENT_IMPORT_FILE_REQUIRED",
-          message: "Upload a broker statement CSV file.",
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "STATEMENT_IMPORT_FILE_REQUIRED",
+            message: "Upload a broker statement CSV file.",
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 
   if (file.size > MAX_IMPORT_BYTES) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "STATEMENT_IMPORT_FILE_TOO_LARGE",
-          message: "CSV file must be 2 MB or smaller.",
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "STATEMENT_IMPORT_FILE_TOO_LARGE",
+            message: "CSV file must be 2 MB or smaller.",
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 
@@ -73,15 +83,18 @@ export async function POST(request: NextRequest) {
     return copyAuthCookies(auth.response, NextResponse.json(result));
   } catch (error) {
     if (error instanceof StatementImportAdapterError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: error.code,
-            details: error.details,
-            message: error.message,
+      return copyAuthCookies(
+        auth.response,
+        NextResponse.json(
+          {
+            error: {
+              code: error.code,
+              details: error.details,
+              message: error.message,
+            },
           },
-        },
-        { status: 400 },
+          { status: 400 },
+        ),
       );
     }
 
@@ -92,15 +105,18 @@ export async function POST(request: NextRequest) {
         operation: "statement_import_finalize",
       });
 
-      return NextResponse.json(
-        {
-          error: {
-            code: error.code,
-            correlationId,
-            message: error.message,
+      return copyAuthCookies(
+        auth.response,
+        NextResponse.json(
+          {
+            error: {
+              code: error.code,
+              correlationId,
+              message: error.message,
+            },
           },
-        },
-        { status: 500 },
+          { status: 500 },
+        ),
       );
     }
 

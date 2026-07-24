@@ -22,22 +22,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await getRequiredAccountSession(request, authResponse);
 
   if ("code" in auth) {
-    return accountSessionErrorResponse(auth.code, "simulated positions");
+    return accountSessionErrorResponse(
+      auth.code,
+      "simulated positions",
+      authResponse,
+    );
   }
 
   const json = await request.json().catch(() => null);
   const parsed = expireSimulatedPositionInputSchema.safeParse(json);
 
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: {
-          code: "INVALID_SIMULATED_POSITION_EXPIRATION",
-          message: "Simulated position expiration payload is invalid.",
-          details: parsed.error.flatten(),
+    return copyAuthCookies(
+      auth.response,
+      NextResponse.json(
+        {
+          error: {
+            code: "INVALID_SIMULATED_POSITION_EXPIRATION",
+            message: "Simulated position expiration payload is invalid.",
+            details: parsed.error.flatten(),
+          },
         },
-      },
-      { status: 400 },
+        { status: 400 },
+      ),
     );
   }
 
@@ -52,14 +59,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return copyAuthCookies(auth.response, NextResponse.json(result));
   } catch (error) {
     if (error instanceof SimulatedPositionValidationError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: error.code,
-            message: error.message,
+      return copyAuthCookies(
+        auth.response,
+        NextResponse.json(
+          {
+            error: {
+              code: error.code,
+              message: error.message,
+            },
           },
-        },
-        { status: error.status },
+          { status: error.status },
+        ),
       );
     }
 

@@ -1,35 +1,73 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { getSupabaseAuthConfig } from "./auth";
 import { createSupabaseRouteClient } from "./server";
 
-const STATIC_FILE_PATTERN = /\/[^/]+\.[^/]+$/;
+const EXACT_SESSION_ROUTES = new Set([
+  "/api/auth/account-state",
+  "/api/auth/logout",
+  "/api/auth/profile",
+]);
 
 export function shouldRefreshSession(pathname: string) {
-  if (
-    pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico" ||
-    pathname === "/robots.txt" ||
-    pathname === "/sitemap.xml" ||
-    STATIC_FILE_PATTERN.test(pathname)
-  ) {
+  return pathname === "/account" ||
+    pathname.startsWith("/account/") ||
+    pathname === "/api/account" ||
+    pathname.startsWith("/api/account/") ||
+    pathname === "/api/presets" ||
+    pathname.startsWith("/api/presets/") ||
+    EXACT_SESSION_ROUTES.has(pathname);
+}
+
+export function supabaseAuthCookieName(supabaseUrl: string) {
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split(".")[0];
+
+    return projectRef ? `sb-${projectRef}-auth-token` : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasSupabaseSessionCookie(
+  request: Pick<NextRequest, "cookies">,
+  supabaseUrl: string,
+) {
+  const cookieName = supabaseAuthCookieName(supabaseUrl);
+
+  if (!cookieName) {
     return false;
   }
 
-  if (
-    pathname === "/auth/callback" ||
-    pathname.startsWith("/api/auth/oauth/") ||
-    pathname.startsWith("/api/cron/")
-  ) {
-    return false;
-  }
+  return request.cookies.getAll().some((cookie) => {
+    if (!cookie.value) {
+      return false;
+    }
 
-  return true;
+    if (cookie.name === cookieName) {
+      return true;
+    }
+
+    const chunkPrefix = `${cookieName}.`;
+
+    return cookie.name.startsWith(chunkPrefix) &&
+      /^(0|[1-9][0-9]*)$/.test(cookie.name.slice(chunkPrefix.length));
+  });
 }
 
 export async function refreshSupabaseSession(request: NextRequest) {
-  const response = NextResponse.next();
+  const response = NextResponse.next({ request });
 
   if (!shouldRefreshSession(request.nextUrl.pathname)) {
+    return response;
+  }
+
+  const authConfig = getSupabaseAuthConfig();
+
+  if (
+    !authConfig ||
+    !hasSupabaseSessionCookie(request, authConfig.url)
+  ) {
     return response;
   }
 

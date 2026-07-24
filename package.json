@@ -12,6 +12,7 @@
     "sharp": "0.35.3"
   },
   "scripts": {
+    "benchmark:session-proxy": "vitest run src/lib/supabase/session-middleware.benchmark.test.ts --reporter=verbose",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
