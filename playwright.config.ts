@@ -32,6 +32,7 @@ export default defineConfig({
       APCA_API_SECRET_KEY: "",
       NEXT_PUBLIC_ALPHA_DOG_SUPABASE_ANON_KEY: "",
       NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: "",
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
       OPENAI_API_KEY: "",
     },
     reuseExistingServer: !process.env.CI,

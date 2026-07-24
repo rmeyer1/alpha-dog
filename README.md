@@ -43,13 +43,15 @@ npm run typecheck
 npm test
 npm run build
 npx playwright install chromium
-npm run test:e2e:smoke
+npm run test:e2e
 npm audit --audit-level=high
 ```
 
-The smoke suite builds and starts the application without live provider
-credentials. Network-sensitive application calls are either intercepted or
-exercise the fail-closed configuration boundary.
+The browser suite builds and starts the application without live provider
+credentials. Network-sensitive application calls are intercepted or exercise
+the fail-closed configuration boundary. The production-only manual-account
+challenge uses a browser-local Turnstile test double and public test site key;
+no server secret or external challenge request is required.
 
 The pull-request workflow is independent of the scheduled cron-trigger
 workflows in `.github/workflows/`.
