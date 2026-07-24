@@ -1,361 +1,392 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
-import { loadAccountPortfolio } from "./simulated-account-portfolio";
+import {
+  createPositionCursor,
+  parsePositionCursor,
+} from "./pagination";
+import {
+  loadAccountPositionDetail,
+  loadAccountPositionPage,
+  loadPaperAccountOverview,
+} from "./simulated-account-portfolio";
 
-function maybeSingleChain(data: unknown, error: unknown = null) {
+const ownerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const positionIds = [
+  "11111111-1111-4111-8111-111111111111",
+  "22222222-2222-4222-8222-222222222222",
+  "33333333-3333-4333-8333-333333333333",
+];
+const watermark = "2026-07-24T12:00:00.000Z";
+
+function positionRow(
+  id: string,
+  openedAt: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    candidate_as_of: null,
+    candidate_cache_source: null,
+    candidate_cache_status: null,
+    candidate_feed: null,
+    closed_at: null,
+    contracts_opened: 2,
+    contracts_remaining: 2,
+    created_at: openedAt,
+    data_source_mode: "unknown",
+    expiration_date: "2026-08-21",
+    id,
+    net_credit: "1.5",
+    notes: null,
+    opened_at: openedAt,
+    paper_account_id: "paper-account-1",
+    source: "simulated",
+    status: "open",
+    strategy_type: "short_put",
+    symbol: "AAPL",
+    underlying_price_at_open: "201.25",
+    updated_at: openedAt,
+    user_id: ownerId,
+    ...overrides,
+  };
+}
+
+function legRow(positionId: string) {
+  return {
+    ask_price: "1.1",
+    bid_price: "0.9",
+    contract_symbol: "AAPL260821P00190000",
+    current_mark: "1",
+    delta: null,
+    expiration_date: "2026-08-21",
+    gamma: null,
+    id: crypto.randomUUID(),
+    implied_volatility: null,
+    leg_index: 0,
+    mid_price: "1",
+    open_interest: null,
+    open_price: "1.5",
+    option_type: "put",
+    position_id: positionId,
+    quantity: 2,
+    quote_as_of: null,
+    rho: null,
+    side: "short",
+    snapshot: {},
+    strike: "95",
+    theta: null,
+    vega: null,
+    volume: null,
+  };
+}
+
+function eventRow(
+  id: string,
+  positionId: string,
+  createdAt: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    cash_delta: "0",
+    created_at: createdAt,
+    event_type: "manual_adjustment",
+    id,
+    margin_delta: "0",
+    metadata: { reason: "ambiguous_expiration_outcome" },
+    paper_account_id: "paper-account-1",
+    position_id: positionId,
+    price: null,
+    quantity: 2,
+    realized_pnl_delta: "0",
+    user_id: ownerId,
+    ...overrides,
+  };
+}
+
+function accountChain() {
   const chain = {
     eq: vi.fn(() => chain),
-    maybeSingle: vi.fn(async () => ({ data, error })),
+    maybeSingle: vi.fn(async () => ({
+      data: {
+        created_at: "2026-07-01T00:00:00.000Z",
+        current_cash: "1000",
+        id: "paper-account-1",
+        margin_balance: "500",
+        margin_interest_rate: "0.05",
+        starting_cash: "1000",
+        updated_at: watermark,
+        user_id: ownerId,
+      },
+      error: null,
+    })),
     select: vi.fn(() => chain),
   };
 
   return chain;
 }
 
-function eqOrderChain(data: unknown, error: unknown = null) {
-  const chain = {
-    eq: vi.fn(() => chain),
-    order: vi.fn(async () => ({ data, error })),
-    select: vi.fn(() => chain),
-  };
-
-  return chain;
-}
-
-function inOrderChain(data: unknown, error: unknown = null) {
+function legsChain(data: unknown[]) {
   const chain = {
     in: vi.fn(() => chain),
-    order: vi.fn(async () => ({ data, error })),
+    order: vi.fn(async () => ({ data, error: null })),
     select: vi.fn(() => chain),
   };
 
   return chain;
 }
 
-describe("simulated account portfolio loader", () => {
-  it("loads account-owned rows and separates margin interest from option P/L", async () => {
-    const account = maybeSingleChain({
-      created_at: "2026-07-02T20:00:00.000Z",
-      current_cash: "0",
-      id: "paper-account-1",
-      margin_balance: "500",
-      margin_interest_rate: "0.05",
-      starting_cash: "1000",
-      updated_at: "2026-07-02T20:00:00.000Z",
-      user_id: "user-1",
+function detailChain(data: unknown) {
+  const chain = {
+    eq: vi.fn(() => chain),
+    maybeSingle: vi.fn(async () => ({ data, error: null })),
+    select: vi.fn(() => chain),
+  };
+
+  return chain;
+}
+
+describe("bounded simulated account portfolio loading", () => {
+  it("overfetches one row, batches visible legs and lifecycle, and emits a stable cursor", async () => {
+    const rows = [
+      positionRow(positionIds[0], "2026-07-24T11:00:00.000Z", {
+        status: "closed",
+      }),
+      positionRow(positionIds[1], "2026-07-24T10:00:00.000Z", {
+        status: "manual_review",
+      }),
+      positionRow(positionIds[2], "2026-07-24T09:00:00.000Z", {
+        status: "closed",
+      }),
+    ];
+    const legs = legsChain([legRow(positionIds[0]), legRow(positionIds[1])]);
+    const lifecycle = eventRow(
+      "44444444-4444-4444-8444-444444444444",
+      positionIds[1],
+      "2026-07-24T11:30:00.000Z",
+    );
+    const rpc = vi.fn(async (name: string, args?: unknown) => {
+      if (name === "get_paper_account_position_page") {
+        expect(args).toEqual({
+          p_page_size: 3,
+          p_position_id: null,
+          p_scope: "history",
+          p_sort_at: null,
+        });
+        return { data: rows, error: null };
+      }
+
+      expect(name).toBe("get_latest_simulated_position_lifecycle_events");
+      expect(args).toEqual({ p_position_ids: positionIds.slice(0, 2) });
+      return { data: [lifecycle], error: null };
     });
-    const positions = eqOrderChain([{
-      closed_at: null,
-      contracts_opened: 2,
-      contracts_remaining: 2,
-      created_at: "2026-07-02T20:00:00.000Z",
-      expiration_date: "2026-08-21",
-      id: "position-1",
-      net_credit: "1.5",
-      notes: null,
-      opened_at: "2026-07-02T20:00:00.000Z",
-      paper_account_id: "paper-account-1",
-      source: "simulated",
-      status: "open",
-      strategy_type: "short_put",
-      symbol: "AAPL",
-      underlying_price_at_open: "201.25",
-      updated_at: "2026-07-02T20:00:00.000Z",
-      user_id: "user-1",
-    }]);
-    const legs = inOrderChain([{
-      ask_price: null,
-      bid_price: null,
-      contract_symbol: "AAPL260821P00190000",
-      current_mark: null,
-      delta: null,
-      expiration_date: "2026-08-21",
-      gamma: null,
-      id: "leg-1",
-      implied_volatility: null,
-      leg_index: 0,
-      mid_price: null,
-      open_interest: null,
-      open_price: "1.5",
-      option_type: "put",
-      position_id: "position-1",
-      quantity: 2,
-      quote_as_of: null,
-      rho: null,
-      side: "short",
-      snapshot: {},
-      strike: "95",
-      theta: null,
-      vega: null,
-      volume: null,
-    }]);
-    const events = eqOrderChain([
-      {
-        cash_delta: "300",
-        created_at: "2026-07-02T20:00:00.000Z",
-        event_type: "opened",
-        id: "event-1",
-        margin_delta: "0",
-        metadata: {},
-        paper_account_id: "paper-account-1",
-        position_id: "position-1",
-        price: "1.5",
-        quantity: 2,
-        realized_pnl_delta: "0",
-        user_id: "user-1",
-      },
-      {
-        cash_delta: "-4.25",
-        created_at: "2026-07-03T20:00:00.000Z",
-        event_type: "margin_interest",
-        id: "event-2",
-        margin_delta: "0",
-        metadata: {},
-        paper_account_id: "paper-account-1",
-        position_id: "position-1",
-        price: null,
-        quantity: null,
-        realized_pnl_delta: "0",
-        user_id: "user-1",
-      },
-    ]);
     const from = vi.fn((table: string) => {
-      if (table === "paper_accounts") {
-        return { select: account.select };
-      }
-
-      if (table === "simulated_positions") {
-        return { select: positions.select };
-      }
-
       if (table === "simulated_position_legs") {
         return { select: legs.select };
-      }
-
-      if (table === "simulated_position_events") {
-        return { select: events.select };
       }
 
       throw new Error(`Unexpected table ${table}`);
     });
 
-    const portfolio = await loadAccountPortfolio(
-      { from } as unknown as SupabaseClient,
-      "user-1",
+    const result = await loadAccountPositionPage(
+      { from, rpc } as unknown as SupabaseClient,
+      ownerId,
+      { cursor: null, limit: 2, scope: "history", watermark },
     );
 
-    expect(account.eq).toHaveBeenCalledWith("user_id", "user-1");
-    expect(positions.eq).toHaveBeenCalledWith("user_id", "user-1");
-    expect(legs.in).toHaveBeenCalledWith("position_id", ["position-1"]);
-    expect(events.eq).toHaveBeenCalledWith("user_id", "user-1");
-    expect(portfolio.openPositions).toHaveLength(1);
-    expect(portfolio.historyPositions).toHaveLength(0);
-    expect(portfolio.summary).toEqual(expect.objectContaining({
-      cashBalance: 1295.75,
-      marginBalance: 500,
-      marginInterestAccrued: 4.25,
-      realizedPnl: 0,
-      totalPremiumCollected: 300,
-      unrealizedPnl: null,
-      unrealizedPnlStatus: "unavailable",
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(legs.in).toHaveBeenCalledWith(
+      "position_id",
+      positionIds.slice(0, 2),
+    );
+    expect(result.positions).toHaveLength(2);
+    expect(result.positions[1].lifecycle).toEqual(expect.objectContaining({
+      eventId: lifecycle.id,
+      outcome: "manual_review",
+    }));
+    expect(result.nextCursor).not.toBeNull();
+    expect(parsePositionCursor(
+      result.nextCursor,
+      "history",
+      ownerId,
+    )).toEqual(expect.objectContaining({
+      id: positionIds[1],
+      sortAt: "2026-07-24T10:00:00.000Z",
+      watermark,
     }));
   });
 
-  it("exposes lifecycle event context for historical positions", async () => {
-    const account = maybeSingleChain({
-      created_at: "2026-07-02T20:00:00.000Z",
-      current_cash: "0",
-      id: "paper-account-1",
-      margin_balance: "28000",
-      margin_interest_rate: "0.05",
-      starting_cash: "10000",
-      updated_at: "2026-07-02T20:00:00.000Z",
-      user_id: "user-1",
-    });
-    const positions = eqOrderChain([{
-      closed_at: "2026-08-21T21:00:00.000Z",
-      contracts_opened: 2,
-      contracts_remaining: 0,
-      created_at: "2026-07-02T20:00:00.000Z",
-      expiration_date: "2026-08-21",
-      id: "position-1",
-      net_credit: "1.5",
-      notes: null,
-      opened_at: "2026-07-02T20:00:00.000Z",
-      paper_account_id: "paper-account-1",
-      source: "simulated",
-      status: "assigned",
-      strategy_type: "short_put",
-      symbol: "AAPL",
-      underlying_price_at_open: "201.25",
-      updated_at: "2026-08-21T21:00:00.000Z",
-      user_id: "user-1",
-    }]);
-    const legs = inOrderChain([]);
-    const events = eqOrderChain([{
-      cash_delta: "-38000",
-      created_at: "2026-08-21T21:00:00.000Z",
-      event_type: "assigned",
-      id: "event-1",
-      margin_delta: "28000",
-      metadata: {
-        assignmentCost: 38000,
-        costBasis: 190,
-        expiredAt: "2026-08-21T21:00:00.000Z",
-        shares: 200,
-        underlyingPriceAtExpiration: 180,
-      },
-      paper_account_id: "paper-account-1",
-      position_id: "position-1",
-      price: "190",
-      quantity: 2,
-      realized_pnl_delta: "300",
-      user_id: "user-1",
-    }]);
-    const from = vi.fn((table: string) => {
-      if (table === "paper_accounts") {
-        return { select: account.select };
-      }
+  it("returns a terminal null cursor without loading invisible rows", async () => {
+    const rows = [
+      positionRow(positionIds[0], "2026-07-24T11:00:00.000Z"),
+    ];
+    const legs = legsChain([legRow(positionIds[0])]);
+    const from = vi.fn(() => ({ select: legs.select }));
+    const rpc = vi.fn(async (name: string) => ({
+      data: name === "get_paper_account_position_page" ? rows : [],
+      error: null,
+    }));
 
-      if (table === "simulated_positions") {
-        return { select: positions.select };
-      }
-
-      if (table === "simulated_position_legs") {
-        return { select: legs.select };
-      }
-
-      if (table === "simulated_position_events") {
-        return { select: events.select };
-      }
-
-      throw new Error(`Unexpected table ${table}`);
-    });
-
-    const portfolio = await loadAccountPortfolio(
-      { from } as unknown as SupabaseClient,
-      "user-1",
+    const result = await loadAccountPositionPage(
+      { from, rpc } as unknown as SupabaseClient,
+      ownerId,
+      { cursor: null, limit: 2, scope: "open", watermark },
     );
 
-    expect(portfolio.openPositions).toHaveLength(0);
-    expect(portfolio.historyPositions[0]).toEqual(expect.objectContaining({
-      lifecycle: expect.objectContaining({
-        cashDelta: -38_000,
-        effectiveAt: "2026-08-21T21:00:00.000Z",
-        marginDelta: 28_000,
-        metadata: expect.objectContaining({
-          assignmentCost: 38_000,
-          costBasis: 190,
-          shares: 200,
-          underlyingPriceAtExpiration: 180,
-        }),
-        outcome: "assigned",
-        price: 190,
-        quantity: 2,
-        realizedPnlDelta: 300,
+    expect(result.nextCursor).toBeNull();
+    expect(result.positions).toHaveLength(1);
+  });
+
+  it("uses every descending sort column for tied-timestamp middle pages", async () => {
+    const sortAt = "2026-07-24T11:00:00.000Z";
+    const encoded = createPositionCursor({
+      id: positionIds[1],
+      ownerId,
+      scope: "open",
+      sortAt,
+      watermark,
+    });
+    const cursor = parsePositionCursor(encoded, "open", ownerId);
+    const rows = [
+      positionRow(positionIds[2], sortAt),
+    ];
+    const legs = legsChain([legRow(positionIds[2])]);
+    const from = vi.fn(() => ({ select: legs.select }));
+    const rpc = vi.fn(async (name: string) => ({
+      data: name === "get_paper_account_position_page" ? rows : [],
+      error: null,
+    }));
+
+    await loadAccountPositionPage(
+      { from, rpc } as unknown as SupabaseClient,
+      ownerId,
+      { cursor, limit: 25, scope: "open", watermark },
+    );
+
+    expect(rpc).toHaveBeenCalledWith(
+      "get_paper_account_position_page",
+      {
+        p_page_size: 26,
+        p_position_id: positionIds[1],
+        p_scope: "open",
+        p_sort_at: sortAt,
+      },
+    );
+  });
+
+  it("rejects a changed collection watermark before any position query", async () => {
+    const encoded = createPositionCursor({
+      id: positionIds[0],
+      ownerId,
+      scope: "history",
+      sortAt: "2026-07-24T11:00:00.000Z",
+      watermark: "2026-07-24T11:30:00.000Z",
+    });
+    const cursor = parsePositionCursor(encoded, "history", ownerId);
+    const from = vi.fn();
+
+    await expect(loadAccountPositionPage(
+      { from, rpc: vi.fn() } as unknown as SupabaseClient,
+      ownerId,
+      { cursor, limit: 25, scope: "history", watermark },
+    )).rejects.toEqual(expect.objectContaining({
+      code: "STALE_POSITION_CURSOR",
+      status: 409,
+    }));
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("loads account-wide summary through one RPC without list or event reads", async () => {
+    const account = accountChain();
+    const from = vi.fn((table: string) => {
+      expect(table).toBe("paper_accounts");
+      return { select: account.select };
+    });
+    const rpc = vi.fn(async () => ({
+      data: [{
+        cash_balance: "1245.75",
+        history_position_count: "10000",
+        margin_balance: "525",
+        margin_interest_accrued: "4.25",
+        margin_interest_rate: "0.05",
+        open_exposure: "9500",
+        open_position_count: "3",
+        position_watermark: watermark,
+        realized_pnl: "100",
+        total_premium_collected: "300",
+        unrealized_pnl: null,
+        unrealized_pnl_status: "unavailable",
+      }],
+      error: null,
+    }));
+
+    const result = await loadPaperAccountOverview(
+      { from, rpc } as unknown as SupabaseClient,
+      ownerId,
+    );
+
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("get_paper_account_portfolio_summary");
+    expect(from).toHaveBeenCalledOnce();
+    expect(result).toEqual(expect.objectContaining({
+      historyPositionCount: 10_000,
+      openPositionCount: 3,
+      positionWatermark: watermark,
+      summary: expect.objectContaining({
+        cashBalance: 1245.75,
+        marginInterestAccrued: 4.25,
+        unrealizedPnl: null,
+        unrealizedPnlStatus: "unavailable",
       }),
-      status: "assigned",
     }));
   });
 
-  it("exposes called-away lifecycle event context for covered calls", async () => {
-    const account = maybeSingleChain({
-      created_at: "2026-07-02T20:00:00.000Z",
-      current_cash: "52000",
-      id: "paper-account-1",
-      margin_balance: "0",
-      margin_interest_rate: "0.05",
-      starting_cash: "10000",
-      updated_at: "2026-07-02T20:00:00.000Z",
-      user_id: "user-1",
+  it("paginates detail events by the complete timestamp and UUID tuple", async () => {
+    const row = positionRow(positionIds[0], "2026-07-24T11:00:00.000Z");
+    const position = detailChain(row);
+    const legs = legsChain([legRow(positionIds[0])]);
+    const eventRows = [
+      eventRow(
+        "55555555-5555-4555-8555-555555555555",
+        positionIds[0],
+        "2026-07-24T12:00:00.000Z",
+        { event_type: "opened" },
+      ),
+      eventRow(
+        "44444444-4444-4444-8444-444444444444",
+        positionIds[0],
+        "2026-07-24T11:00:00.000Z",
+      ),
+    ];
+    const rpc = vi.fn(async (name: string, args: unknown) => {
+      expect(name).toBe("get_simulated_position_event_page");
+      expect(args).toEqual({
+        p_event_id: null,
+        p_page_size: 2,
+        p_position_id: positionIds[0],
+        p_sort_at: null,
+      });
+      return { data: eventRows, error: null };
     });
-    const positions = eqOrderChain([{
-      closed_at: "2026-08-21T21:00:00.000Z",
-      contracts_opened: 2,
-      contracts_remaining: 0,
-      created_at: "2026-07-02T20:00:00.000Z",
-      expiration_date: "2026-08-21",
-      id: "position-1",
-      net_credit: "2.5",
-      notes: null,
-      opened_at: "2026-07-02T20:00:00.000Z",
-      paper_account_id: "paper-account-1",
-      source: "simulated",
-      status: "called_away",
-      strategy_type: "covered_call",
-      symbol: "AAPL",
-      underlying_price_at_open: "201.25",
-      updated_at: "2026-08-21T21:00:00.000Z",
-      user_id: "user-1",
-    }]);
-    const legs = inOrderChain([]);
-    const events = eqOrderChain([{
-      cash_delta: "42000",
-      created_at: "2026-08-21T21:00:00.000Z",
-      event_type: "called_away",
-      id: "event-1",
-      margin_delta: "0",
-      metadata: {
-        calledAwayAt: "2026-08-21T21:00:00.000Z",
-        calledAwayPrice: 210,
-        calledAwayProceeds: 42000,
-        costBasis: 180,
-        remainingLotShares: 100,
-        shares: 200,
-        sourceLotId: "lot-1",
-        sourcePositionId: "assigned-put-position-1",
-        stockRealizedPnl: 6000,
-        underlyingPriceAtExpiration: 220,
-      },
-      paper_account_id: "paper-account-1",
-      position_id: "position-1",
-      price: "210",
-      quantity: 2,
-      realized_pnl_delta: "6500",
-      user_id: "user-1",
-    }]);
     const from = vi.fn((table: string) => {
-      if (table === "paper_accounts") {
-        return { select: account.select };
-      }
-
       if (table === "simulated_positions") {
-        return { select: positions.select };
+        return { select: position.select };
       }
 
       if (table === "simulated_position_legs") {
         return { select: legs.select };
       }
 
-      if (table === "simulated_position_events") {
-        return { select: events.select };
-      }
-
       throw new Error(`Unexpected table ${table}`);
     });
 
-    const portfolio = await loadAccountPortfolio(
-      { from } as unknown as SupabaseClient,
-      "user-1",
+    const result = await loadAccountPositionDetail(
+      { from, rpc } as unknown as SupabaseClient,
+      ownerId,
+      positionIds[0],
+      { eventCursor: null, eventLimit: 1 },
     );
 
-    expect(portfolio.historyPositions[0]).toEqual(expect.objectContaining({
-      lifecycle: expect.objectContaining({
-        cashDelta: 42_000,
-        effectiveAt: "2026-08-21T21:00:00.000Z",
-        metadata: expect.objectContaining({
-          calledAwayPrice: 210,
-          shares: 200,
-          sourceLotId: "lot-1",
-          sourcePositionId: "assigned-put-position-1",
-          underlyingPriceAtExpiration: 220,
-        }),
-        outcome: "called_away",
-        price: 210,
-        quantity: 2,
-        realizedPnlDelta: 6_500,
-      }),
-      status: "called_away",
-    }));
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(result?.events).toHaveLength(1);
+    expect(result?.nextEventCursor).not.toBeNull();
   });
 });

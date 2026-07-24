@@ -3,10 +3,17 @@ import { z } from "zod";
 import {
   summarizePaperAccount,
   valueOpenPosition,
-  type SimulatedAccountingEvent,
   type SimulatedAccountingLeg,
   type SimulatedAccountingPosition,
 } from "./simulated-accounting";
+import {
+  AccountPaginationError,
+  createEventCursor,
+  createPositionCursor,
+  type EventCursor,
+  type PositionCollection,
+  type PositionCursor,
+} from "./pagination";
 
 export const paperAccountSettingsSchema = z.object({
   currentCash: z.number().finite().min(0).optional(),
@@ -96,6 +103,21 @@ interface EventRow {
   user_id: string;
 }
 
+interface PortfolioSummaryRow {
+  cash_balance: number | string;
+  history_position_count: number | string;
+  margin_balance: number | string;
+  margin_interest_accrued: number | string;
+  margin_interest_rate: number | string;
+  open_exposure: number | string;
+  open_position_count: number | string;
+  position_watermark: string;
+  realized_pnl: number | string;
+  total_premium_collected: number | string;
+  unrealized_pnl: number | string | null;
+  unrealized_pnl_status: "available" | "unavailable";
+}
+
 const paperAccountColumns = [
   "id",
   "user_id",
@@ -157,21 +179,6 @@ const legColumns = [
   "volume",
   "quote_as_of",
   "snapshot",
-].join(",");
-
-const eventColumns = [
-  "id",
-  "user_id",
-  "paper_account_id",
-  "position_id",
-  "event_type",
-  "quantity",
-  "price",
-  "cash_delta",
-  "realized_pnl_delta",
-  "margin_delta",
-  "metadata",
-  "created_at",
 ].join(",");
 
 function numberValue(value: number | string | null | undefined) {
@@ -275,15 +282,6 @@ function toAccountingPosition(
   };
 }
 
-function toAccountingEvent(event: ReturnType<typeof toEvent>): SimulatedAccountingEvent {
-  return {
-    cashDelta: event.cashDelta,
-    eventType: event.eventType,
-    marginDelta: event.marginDelta,
-    realizedPnlDelta: event.realizedPnlDelta,
-  };
-}
-
 function stringMetadataValue(
   metadata: Record<string, unknown>,
   key: string,
@@ -339,7 +337,23 @@ function lifecycleSummary(
       event: ReturnType<typeof toEvent>;
       outcome: "assigned" | "called_away" | "expired_otm" | "manual_review";
     } => entry.outcome != null);
-  const latest = lifecycleEvents.at(-1);
+  const latest = lifecycleEvents.reduce<(typeof lifecycleEvents)[number] | null>(
+    (current, entry) => {
+      if (!current) {
+        return entry;
+      }
+
+      const byCreatedAt = entry.event.createdAt.localeCompare(
+        current.event.createdAt,
+      );
+
+      return byCreatedAt > 0 ||
+          (byCreatedAt === 0 && entry.event.id.localeCompare(current.event.id) > 0)
+        ? entry
+        : current;
+    },
+    null,
+  );
 
   if (!latest) {
     return null;
@@ -473,18 +487,92 @@ export async function updatePaperAccountSettings(
   return toPaperAccount(updated.data as unknown as PaperAccountRow);
 }
 
-async function loadPositions(supabase: SupabaseClient, userId: string) {
-  const positions = await supabase
-    .from("simulated_positions")
-    .select(positionColumns)
-    .eq("user_id", userId)
-    .order("opened_at", { ascending: false });
+export async function loadAccountPositionPage(
+  supabase: SupabaseClient,
+  userId: string,
+  {
+    cursor,
+    limit,
+    scope,
+    watermark,
+  }: {
+    cursor: PositionCursor | null;
+    limit: number;
+    scope: PositionCollection;
+    watermark: string;
+  },
+) {
+  if (cursor && cursor.watermark !== watermark) {
+    throw new AccountPaginationError(
+      "STALE_POSITION_CURSOR",
+      "The position list changed or its cursor expired. Refresh the position list.",
+      409,
+    );
+  }
+
+  const positions = await supabase.rpc("get_paper_account_position_page", {
+    p_page_size: limit + 1,
+    p_position_id: cursor?.id ?? null,
+    p_scope: scope,
+    p_sort_at: cursor?.sortAt ?? null,
+  });
 
   if (positions.error) {
     throw new Error("Unable to load simulated positions.");
   }
 
-  return positions.data as unknown as PositionRow[];
+  const rows = positions.data as unknown as PositionRow[];
+  const hasNextPage = rows.length > limit;
+  const visibleRows = rows.slice(0, limit);
+  const visibleIds = visibleRows.map((position) => position.id);
+  const [legRows, lifecycleRows] = await Promise.all([
+    loadLegs(supabase, visibleIds),
+    loadLatestLifecycleEvents(supabase, visibleIds),
+  ]);
+  const legsByPosition = groupByPositionId(legRows);
+  const lifecycleByPosition = groupByPositionId(lifecycleRows.map(toEvent));
+  const summaries = visibleRows.map((position) =>
+    toPositionSummary(
+      position,
+      (legsByPosition.get(position.id) ?? []).map(toLeg),
+      lifecycleByPosition.get(position.id) ?? [],
+    )
+  );
+  const last = hasNextPage ? visibleRows.at(-1) : null;
+
+  return {
+    nextCursor: last
+      ? createPositionCursor({
+          id: last.id,
+          ownerId: userId,
+          scope,
+          sortAt: last.opened_at,
+          watermark,
+        })
+      : null,
+    positions: summaries,
+    scope,
+  };
+}
+
+async function loadLatestLifecycleEvents(
+  supabase: SupabaseClient,
+  positionIds: string[],
+) {
+  if (positionIds.length === 0) {
+    return [];
+  }
+
+  const events = await supabase.rpc(
+    "get_latest_simulated_position_lifecycle_events",
+    { p_position_ids: positionIds },
+  );
+
+  if (events.error) {
+    throw new Error("Unable to load simulated position lifecycle.");
+  }
+
+  return events.data as unknown as EventRow[];
 }
 
 async function loadLegs(supabase: SupabaseClient, positionIds: string[]) {
@@ -505,65 +593,56 @@ async function loadLegs(supabase: SupabaseClient, positionIds: string[]) {
   return legs.data as unknown as LegRow[];
 }
 
-async function loadEvents(supabase: SupabaseClient, userId: string) {
-  const events = await supabase
-    .from("simulated_position_events")
-    .select(eventColumns)
-    .eq("user_id", userId)
-    .order("created_at", { ascending: true });
-
-  if (events.error) {
-    throw new Error("Unable to load simulated position events.");
-  }
-
-  return events.data as unknown as EventRow[];
-}
-
-export async function loadAccountPortfolio(
+export async function loadPaperAccountOverview(
   supabase: SupabaseClient,
   userId: string,
 ) {
   const account = await getOrCreatePaperAccountDetail(supabase, userId);
-  const positions = await loadPositions(supabase, userId);
-  const positionIds = positions.map((position) => position.id);
-  const [legRows, eventRows] = await Promise.all([
-    loadLegs(supabase, positionIds),
-    loadEvents(supabase, userId),
-  ]);
-  const legsByPosition = groupByPositionId(legRows);
-  const events = eventRows.map(toEvent);
-  const eventsByPosition = groupByPositionId(events);
-  const summaries = positions.map((position) =>
-    toPositionSummary(
-      position,
-      (legsByPosition.get(position.id) ?? []).map(toLeg),
-      eventsByPosition.get(position.id) ?? [],
-    )
-  );
-  const accountingPositions = positions.map((position) =>
-    toAccountingPosition(position, (legsByPosition.get(position.id) ?? []).map(toLeg))
-  );
-  const summary = summarizePaperAccount({
-    account: {
-      currentCash: account.currentCash,
-      marginBalance: account.marginBalance,
-      marginInterestRate: account.marginInterestRate,
-      startingCash: account.startingCash,
-    },
-    events: events.map(toAccountingEvent),
-    positions: accountingPositions,
-  });
+  const aggregate = await supabase.rpc("get_paper_account_portfolio_summary");
+
+  if (aggregate.error) {
+    throw new Error("Unable to load paper account summary.");
+  }
+
+  const row = (Array.isArray(aggregate.data) ? aggregate.data[0] : aggregate.data) as
+    | PortfolioSummaryRow
+    | null;
+
+  if (!row) {
+    return {
+      account,
+      historyPositionCount: 0,
+      openPositionCount: 0,
+      positionWatermark: "1970-01-01T00:00:00.000Z",
+      summary: summarizePaperAccount({
+        account: {
+          currentCash: account.currentCash,
+          marginBalance: account.marginBalance,
+          marginInterestRate: account.marginInterestRate,
+          startingCash: account.startingCash,
+        },
+        events: [],
+        positions: [],
+      }),
+    };
+  }
 
   return {
     account,
-    historyPositions: summaries.filter((position) =>
-      !["open", "partially_closed"].includes(position.status)
-    ),
-    openPositions: summaries.filter((position) =>
-      ["open", "partially_closed"].includes(position.status)
-    ),
-    positions: summaries,
-    summary,
+    historyPositionCount: requiredNumber(row.history_position_count),
+    openPositionCount: requiredNumber(row.open_position_count),
+    positionWatermark: row.position_watermark,
+    summary: {
+      cashBalance: requiredNumber(row.cash_balance),
+      marginBalance: requiredNumber(row.margin_balance),
+      marginInterestAccrued: requiredNumber(row.margin_interest_accrued),
+      marginInterestRate: requiredNumber(row.margin_interest_rate),
+      openExposure: requiredNumber(row.open_exposure),
+      realizedPnl: requiredNumber(row.realized_pnl),
+      totalPremiumCollected: requiredNumber(row.total_premium_collected),
+      unrealizedPnl: numberValue(row.unrealized_pnl),
+      unrealizedPnlStatus: row.unrealized_pnl_status,
+    },
   };
 }
 
@@ -571,6 +650,13 @@ export async function loadAccountPositionDetail(
   supabase: SupabaseClient,
   userId: string,
   positionId: string,
+  {
+    eventCursor,
+    eventLimit,
+  }: {
+    eventCursor: EventCursor | null;
+    eventLimit: number;
+  },
 ) {
   const position = await supabase
     .from("simulated_positions")
@@ -590,12 +676,12 @@ export async function loadAccountPositionDetail(
   const row = position.data as unknown as PositionRow;
   const [legs, events] = await Promise.all([
     loadLegs(supabase, [row.id]),
-    supabase
-      .from("simulated_position_events")
-      .select(eventColumns)
-      .eq("position_id", row.id)
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true }),
+    supabase.rpc("get_simulated_position_event_page", {
+      p_event_id: eventCursor?.id ?? null,
+      p_page_size: eventLimit + 1,
+      p_position_id: row.id,
+      p_sort_at: eventCursor?.sortAt ?? null,
+    }),
   ]);
 
   if (!Array.isArray(legs)) {
@@ -607,11 +693,22 @@ export async function loadAccountPositionDetail(
   }
 
   const normalizedLegs = legs.map(toLeg);
-  const normalizedEvents = (events.data as unknown as EventRow[]).map(toEvent);
+  const eventRows = events.data as unknown as EventRow[];
+  const hasNextEventPage = eventRows.length > eventLimit;
+  const normalizedEvents = eventRows.slice(0, eventLimit).map(toEvent);
+  const lastEvent = hasNextEventPage ? normalizedEvents.at(-1) : null;
 
   return {
     ...toPositionSummary(row, normalizedLegs, normalizedEvents),
     events: normalizedEvents,
     legs: normalizedLegs,
+    nextEventCursor: lastEvent
+      ? createEventCursor({
+          id: lastEvent.id,
+          ownerId: userId,
+          positionId: row.id,
+          sortAt: lastEvent.createdAt,
+        })
+      : null,
   };
 }

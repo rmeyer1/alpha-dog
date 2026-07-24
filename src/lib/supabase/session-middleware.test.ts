@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   createSupabaseRouteClient: vi.fn(),
   getSupabaseAuthConfig: vi.fn(),
   getUser: vi.fn(),
-  loadAccountPortfolio: vi.fn(),
+  loadPaperAccountOverview: vi.fn(),
 }));
 
 vi.mock("./auth", () => ({
@@ -26,7 +26,7 @@ vi.mock("./server", () => ({
 }));
 
 vi.mock("@/lib/account/simulated-account-portfolio", () => ({
-  loadAccountPortfolio: mocks.loadAccountPortfolio,
+  loadPaperAccountOverview: mocks.loadPaperAccountOverview,
 }));
 
 import { GET as getPaperAccount } from "@/app/api/account/paper-account/route";
@@ -60,11 +60,10 @@ describe("session proxy routing", () => {
     mocks.createSupabaseRouteClient.mockReturnValue({
       auth: { getUser: mocks.getUser },
     });
-    mocks.loadAccountPortfolio.mockResolvedValue({
+    mocks.loadPaperAccountOverview.mockResolvedValue({
       account: { id: "paper-account-1" },
-      historyPositions: [],
-      openPositions: [],
-      positions: [],
+      historyPositionCount: 0,
+      openPositionCount: 0,
       summary: { cashBalance: 1_000 },
     });
   });
@@ -332,7 +331,7 @@ describe("session proxy routing", () => {
     expect(proxyRefreshCalls).toBe(1);
     expect(authoritativeCalls).toBe(1);
     expect(redundantRefreshCalls).toBe(0);
-    expect(mocks.loadAccountPortfolio).toHaveBeenCalledOnce();
+    expect(mocks.loadPaperAccountOverview).toHaveBeenCalledOnce();
   });
 
   it("fails open at the proxy boundary for an expired session", async () => {

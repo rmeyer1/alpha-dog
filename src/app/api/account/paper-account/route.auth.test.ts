@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   createSupabaseRouteClient: vi.fn(),
   getUser: vi.fn(),
-  loadAccountPortfolio: vi.fn(),
+  loadPaperAccountOverview: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -13,7 +13,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/account/simulated-account-portfolio", () => ({
-  loadAccountPortfolio: mocks.loadAccountPortfolio,
+  loadPaperAccountOverview: mocks.loadPaperAccountOverview,
 }));
 
 import { GET } from "./route";
@@ -68,11 +68,10 @@ function supabaseClient({
 describe("GET /api/account/paper-account authoritative auth", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.loadAccountPortfolio.mockResolvedValue({
+    mocks.loadPaperAccountOverview.mockResolvedValue({
       account: { id: "paper-account-1" },
-      historyPositions: [],
-      openPositions: [],
-      positions: [],
+      historyPositionCount: 0,
+      openPositionCount: 0,
       summary: { cashBalance: 1_000 },
     });
   });
@@ -86,7 +85,7 @@ describe("GET /api/account/paper-account authoritative auth", () => {
     expect(await response.json()).toMatchObject({
       error: { code: "UNAUTHENTICATED" },
     });
-    expect(mocks.loadAccountPortfolio).not.toHaveBeenCalled();
+    expect(mocks.loadPaperAccountOverview).not.toHaveBeenCalled();
   });
 
   it("rejects an expired session after authoritative getUser validation", async () => {
@@ -101,7 +100,7 @@ describe("GET /api/account/paper-account authoritative auth", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.getUser).toHaveBeenCalledOnce();
-    expect(mocks.loadAccountPortfolio).not.toHaveBeenCalled();
+    expect(mocks.loadPaperAccountOverview).not.toHaveBeenCalled();
   });
 
   it("does not trust a crafted proxy-bypass header", async () => {
@@ -117,7 +116,7 @@ describe("GET /api/account/paper-account authoritative auth", () => {
 
     expect(response.status).toBe(401);
     expect(mocks.getUser).toHaveBeenCalledOnce();
-    expect(mocks.loadAccountPortfolio).not.toHaveBeenCalled();
+    expect(mocks.loadPaperAccountOverview).not.toHaveBeenCalled();
   });
 
   it("returns protected data and preserves refresh cookies and safety headers", async () => {
@@ -139,7 +138,10 @@ describe("GET /api/account/paper-account authoritative auth", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.getUser).toHaveBeenCalledOnce();
-    expect(mocks.loadAccountPortfolio).toHaveBeenCalledWith(client, "user-1");
+    expect(mocks.loadPaperAccountOverview).toHaveBeenCalledWith(
+      client,
+      "user-1",
+    );
     expect(response.cookies.get("sb-project-ref-auth-token.0")?.value)
       .toBe("refreshed");
     expect(response.headers.get("cache-control")).toContain("no-store");

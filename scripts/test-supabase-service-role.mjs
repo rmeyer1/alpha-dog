@@ -51,7 +51,7 @@ async function createTestUser(client, runId, label) {
   };
 }
 
-async function assertLifecycleFunctionsDenied(client) {
+async function assertUserFunctionsDenied(client) {
   const calls = [
     [
       "open_simulated_position_atomic",
@@ -90,6 +90,32 @@ async function assertLifecycleFunctionsDenied(client) {
         p_positions: [],
         p_summary: {},
         p_user_id: randomUUID(),
+      },
+    ],
+    [
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [randomUUID()] },
+    ],
+    [
+      "get_paper_account_portfolio_summary",
+      {},
+    ],
+    [
+      "get_paper_account_position_page",
+      {
+        p_page_size: 1,
+        p_position_id: null,
+        p_scope: "open",
+        p_sort_at: null,
+      },
+    ],
+    [
+      "get_simulated_position_event_page",
+      {
+        p_event_id: null,
+        p_page_size: 1,
+        p_position_id: randomUUID(),
+        p_sort_at: null,
       },
     ],
   ];
@@ -182,10 +208,11 @@ requireSuccess(
   "create profiled spare owner",
 );
 
-await assertLifecycleFunctionsDenied(serviceClient);
+await assertUserFunctionsDenied(serviceClient);
 
 process.stdout.write(
   `${JSON.stringify({
+    profiledSpare,
     profiledUserId: profiledSpare.userId,
     unprofiledUserId: unprofiledSpare.userId,
     userA,

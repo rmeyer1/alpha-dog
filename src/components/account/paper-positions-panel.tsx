@@ -85,23 +85,43 @@ type PositionEvent = {
 type PositionDetail = PositionSummary & {
   events: PositionEvent[];
   legs: SavedPositionLegSnapshot[];
+  nextEventCursor: string | null;
+};
+
+type PositionPage = {
+  items: PositionSummary[];
+  nextCursor: string | null;
+  total: number;
 };
 
 type PositionsPayload = {
-  historyPositions: PositionSummary[];
-  openPositions: PositionSummary[];
+  pages: {
+    history: PositionPage;
+    open: PositionPage;
+  };
 };
 
 type LoadState =
   | { status: "loading" }
   | { message: string; status: "error" }
-  | { data: PositionsPayload; status: "ready" };
+  | {
+    announcement: string;
+    data: PositionsPayload;
+    pageError: Partial<Record<PositionTab, string>>;
+    pageLoading: PositionTab | null;
+    status: "ready";
+  };
 
 type DetailState =
   | { status: "idle" }
   | { id: string; status: "loading" }
-  | { message: string; status: "error" }
-  | { data: PositionDetail; status: "ready" };
+  | { code?: string; message: string; status: "error" }
+  | {
+    data: PositionDetail;
+    eventError?: string;
+    eventsLoading?: boolean;
+    status: "ready";
+  };
 
 type CloseSubmitState =
   | { status: "idle" }
@@ -182,6 +202,42 @@ function labelize(value: string) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function mergePositionRows(
+  current: PositionSummary[],
+  incoming: PositionSummary[],
+) {
+  const rows = new Map(current.map((position) => [position.id, position]));
+
+  for (const position of incoming) {
+    rows.set(position.id, position);
+  }
+
+  return [...rows.values()];
+}
+
+export function reconcilePositionPages(
+  pages: PositionsPayload["pages"],
+  scope: PositionTab,
+  incoming: PositionPage,
+) {
+  const otherScope = scope === "open" ? "history" : "open";
+  const incomingIds = new Set(incoming.items.map((position) => position.id));
+
+  return {
+    ...pages,
+    [otherScope]: {
+      ...pages[otherScope],
+      items: pages[otherScope].items.filter(
+        (position) => !incomingIds.has(position.id),
+      ),
+    },
+    [scope]: {
+      ...incoming,
+      items: mergePositionRows(pages[scope].items, incoming.items),
+    },
+  };
 }
 
 function numberMetadata(
@@ -560,6 +616,61 @@ function PositionsList({
         Showing {positions.length} {activeTab === "open" ? "open" : "historical"} simulated positions.
       </p>
     </>
+  );
+}
+
+function LoadMoreControl({
+  error,
+  isLoading,
+  nextCursor,
+  onLoadMore,
+  scopeLabel,
+}: {
+  error?: string;
+  isLoading: boolean;
+  nextCursor: string | null;
+  onLoadMore: () => void;
+  scopeLabel: string;
+}) {
+  const isComplete = nextCursor == null && !error;
+  const statusId = `load-more-${scopeLabel.replace(/\s+/g, "-")}-status`;
+
+  return (
+    <div className="mt-4 grid justify-items-center gap-2">
+      <button
+        aria-busy={isLoading}
+        aria-describedby={statusId}
+        aria-disabled={isLoading || isComplete}
+        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.04] px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/[0.08] aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+        onClick={() => {
+          if (!isLoading && !isComplete) {
+            onLoadMore();
+          }
+        }}
+        type="button"
+      >
+        {isLoading ? <Loader2 className="size-4 animate-spin" /> : null}
+        {isLoading
+          ? `Loading more ${scopeLabel}`
+          : error
+            ? `Retry loading more ${scopeLabel}`
+            : isComplete
+              ? `All ${scopeLabel} loaded`
+              : `Load more ${scopeLabel}`}
+      </button>
+      <p
+        aria-live="polite"
+        className={error ? "text-sm text-red-100" : "sr-only"}
+        id={statusId}
+      >
+        {error ??
+          (isLoading
+            ? `Loading another page of ${scopeLabel}.`
+            : isComplete
+              ? `All ${scopeLabel} are loaded.`
+              : `More ${scopeLabel} are available.`)}
+      </p>
+    </div>
   );
 }
 
@@ -1124,10 +1235,12 @@ function ClosePositionForm({
 
 function PositionDetailDrawer({
   detailState,
+  onLoadMoreEvents,
   onRequestClose,
   onClose,
 }: {
   detailState: DetailState;
+  onLoadMoreEvents: () => void;
   onRequestClose: (position: PositionDetail) => void;
   onClose: () => void;
 }) {
@@ -1182,6 +1295,9 @@ function PositionDetailDrawer({
         ) : null}
         {detailState.status === "ready" ? (
           <PositionDetailContent
+            eventError={detailState.eventError}
+            eventsLoading={detailState.eventsLoading ?? false}
+            onLoadMoreEvents={onLoadMoreEvents}
             onRequestClose={() => onRequestClose(detailState.data)}
             position={detailState.data}
           />
@@ -1192,9 +1308,15 @@ function PositionDetailDrawer({
 }
 
 function PositionDetailContent({
+  eventError,
+  eventsLoading,
+  onLoadMoreEvents,
   onRequestClose,
   position,
 }: {
+  eventError?: string;
+  eventsLoading: boolean;
+  onLoadMoreEvents: () => void;
   onRequestClose: () => void;
   position: PositionDetail;
 }) {
@@ -1286,6 +1408,15 @@ function PositionDetailContent({
           Events
         </div>
         <EventHistory events={position.events} />
+        {position.events.length > 0 ? (
+          <LoadMoreControl
+            error={eventError}
+            isLoading={eventsLoading}
+            nextCursor={position.nextEventCursor}
+            onLoadMore={onLoadMoreEvents}
+            scopeLabel="position events"
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1304,10 +1435,16 @@ export function PaperPositionsPanel() {
         cache: "no-store",
       });
       const payload = await response.json().catch(() => null) as
-        | (Partial<PositionsPayload> & { error?: { message?: string } })
+        | (Partial<PositionsPayload> & {
+          error?: { code?: string; message?: string };
+        })
         | null;
 
-      if (!response.ok || !payload) {
+      if (
+        !response.ok ||
+        !payload?.pages?.open ||
+        !payload.pages.history
+      ) {
         return {
           message: payload?.error?.message ?? "Unable to load simulated positions.",
           status: "error",
@@ -1315,10 +1452,15 @@ export function PaperPositionsPanel() {
       }
 
       return {
+        announcement: "Loaded the first page of open and historical positions.",
         data: {
-          historyPositions: payload.historyPositions ?? [],
-          openPositions: payload.openPositions ?? [],
+          pages: {
+            history: payload.pages.history,
+            open: payload.pages.open,
+          },
         },
+        pageError: {},
+        pageLoading: null,
         status: "ready",
       };
     } catch {
@@ -1334,23 +1476,151 @@ export function PaperPositionsPanel() {
     setLoadState(await fetchPositions());
   }
 
-  async function fetchPositionDetail(positionId: string): Promise<DetailState> {
+  async function loadMorePositions(scope: PositionTab) {
+    if (loadState.status !== "ready" || loadState.pageLoading) {
+      return;
+    }
+
+    const cursor = loadState.data.pages[scope].nextCursor;
+
+    if (!cursor) {
+      return;
+    }
+
+    setLoadState({
+      ...loadState,
+      announcement: `Loading more ${scope === "open" ? "open" : "historical"} positions.`,
+      pageError: { ...loadState.pageError, [scope]: undefined },
+      pageLoading: scope,
+    });
+
     try {
-      const response = await fetch(`/api/account/positions/${positionId}`, {
+      const cursorName = scope === "open" ? "openCursor" : "historyCursor";
+      const url = new URL("/api/account/positions", window.location.origin);
+      url.searchParams.set("scope", scope);
+      url.searchParams.set(cursorName, cursor);
+      const response = await fetch(`${url.pathname}${url.search}`, {
         cache: "no-store",
       });
       const payload = await response.json().catch(() => null) as
-        | { error?: { message?: string }; position?: PositionDetail }
+        | {
+          error?: { code?: string; message?: string };
+          pages?: Partial<Record<PositionTab, PositionPage>>;
+        }
+        | null;
+
+      if (
+        response.status === 409 &&
+        payload?.error?.code === "STALE_POSITION_CURSOR"
+      ) {
+        const refreshed = await fetchPositions();
+
+        if (refreshed.status === "ready") {
+          setLoadState({
+            ...refreshed,
+            announcement: "Positions changed while paging, so the list was refreshed.",
+          });
+        } else {
+          setLoadState(refreshed);
+        }
+        return;
+      }
+
+      const page = payload?.pages?.[scope];
+
+      if (!response.ok || !page) {
+        setLoadState((current) =>
+          current.status === "ready"
+            ? {
+              ...current,
+              announcement: "",
+              pageError: {
+                ...current.pageError,
+                [scope]: payload?.error?.message ??
+                  `Unable to load more ${scope} positions.`,
+              },
+              pageLoading: null,
+            }
+            : current
+        );
+        return;
+      }
+
+      setLoadState((current) => {
+        if (current.status !== "ready") {
+          return current;
+        }
+
+        const previousCount = current.data.pages[scope].items.length;
+        const pages = reconcilePositionPages(current.data.pages, scope, page);
+        const added = pages[scope].items.length - previousCount;
+
+        return {
+          ...current,
+          announcement: added > 0
+            ? `Loaded ${added} more ${scope === "open" ? "open" : "historical"} positions.`
+            : `No additional ${scope === "open" ? "open" : "historical"} positions were added.`,
+          data: { pages },
+          pageError: { ...current.pageError, [scope]: undefined },
+          pageLoading: null,
+        };
+      });
+    } catch {
+      setLoadState((current) =>
+        current.status === "ready"
+          ? {
+            ...current,
+            announcement: "",
+            pageError: {
+              ...current.pageError,
+              [scope]: `Unable to reach the ${scope} position service.`,
+            },
+            pageLoading: null,
+          }
+          : current
+      );
+    }
+  }
+
+  async function fetchPositionDetail(
+    positionId: string,
+    eventCursor?: string,
+  ): Promise<DetailState> {
+    try {
+      const url = new URL(
+        `/api/account/positions/${positionId}`,
+        window.location.origin,
+      );
+
+      if (eventCursor) {
+        url.searchParams.set("eventCursor", eventCursor);
+      }
+
+      const response = await fetch(`${url.pathname}${url.search}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null) as
+        | {
+          error?: { code?: string; message?: string };
+          position?: PositionDetail;
+        }
         | null;
 
       if (!response.ok || !payload?.position) {
         return {
+          code: payload?.error?.code,
           message: payload?.error?.message ?? "Unable to load position detail.",
           status: "error",
         };
       }
 
-      return { data: payload.position, status: "ready" };
+      return {
+        data: {
+          ...payload.position,
+          nextEventCursor: payload.position.nextEventCursor ?? null,
+        },
+        status: "ready",
+      };
     } catch {
       return {
         message: "Unable to reach the position detail service.",
@@ -1362,6 +1632,62 @@ export function PaperPositionsPanel() {
   async function openDetail(position: PositionSummary) {
     setDetailState({ id: position.id, status: "loading" });
     setDetailState(await fetchPositionDetail(position.id));
+  }
+
+  async function loadMoreEvents() {
+    if (
+      detailState.status !== "ready" ||
+      detailState.eventsLoading ||
+      !detailState.data.nextEventCursor
+    ) {
+      return;
+    }
+
+    const currentDetail = detailState.data;
+    setDetailState({
+      ...detailState,
+      eventError: undefined,
+      eventsLoading: true,
+    });
+    const next = await fetchPositionDetail(
+      currentDetail.id,
+      currentDetail.nextEventCursor ?? undefined,
+    );
+
+    if (next.status !== "ready") {
+      if (next.status === "error" && next.code === "STALE_EVENT_CURSOR") {
+        setDetailState(await fetchPositionDetail(currentDetail.id));
+        return;
+      }
+
+      setDetailState({
+        data: currentDetail,
+        eventError: next.status === "error"
+          ? next.message
+          : "Unable to load more position events.",
+        eventsLoading: false,
+        status: "ready",
+      });
+      return;
+    }
+
+    const events = new Map(
+      currentDetail.events.map((event) => [event.id, event]),
+    );
+
+    for (const event of next.data.events) {
+      events.set(event.id, event);
+    }
+
+    setDetailState({
+      data: {
+        ...currentDetail,
+        events: [...events.values()],
+        nextEventCursor: next.data.nextEventCursor,
+      },
+      eventsLoading: false,
+      status: "ready",
+    });
   }
 
   function closeDetail() {
@@ -1424,16 +1750,17 @@ export function PaperPositionsPanel() {
   }, []);
 
   const positions = loadState.status === "ready"
-    ? activeTab === "open"
-      ? loadState.data.openPositions
-      : loadState.data.historyPositions
+    ? loadState.data.pages[activeTab].items
     : [];
   const openCount = loadState.status === "ready"
-    ? loadState.data.openPositions.length
+    ? loadState.data.pages.open.total
     : 0;
   const historyCount = loadState.status === "ready"
-    ? loadState.data.historyPositions.length
+    ? loadState.data.pages.history.total
     : 0;
+  const activePage = loadState.status === "ready"
+    ? loadState.data.pages[activeTab]
+    : null;
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
@@ -1496,15 +1823,32 @@ export function PaperPositionsPanel() {
         />
       ) : null}
       {loadState.status === "ready" ? (
-        <PositionsList
-          activeTab={activeTab}
-          onSelect={(position) => void openDetail(position)}
-          positions={positions}
-        />
+        <>
+          <PositionsList
+            activeTab={activeTab}
+            onSelect={(position) => void openDetail(position)}
+            positions={positions}
+          />
+          {positions.length > 0 && activePage ? (
+            <LoadMoreControl
+              error={loadState.pageError[activeTab]}
+              isLoading={loadState.pageLoading === activeTab}
+              nextCursor={activePage.nextCursor}
+              onLoadMore={() => void loadMorePositions(activeTab)}
+              scopeLabel={activeTab === "open"
+                ? "open positions"
+                : "historical positions"}
+            />
+          ) : null}
+          <p aria-live="polite" className="sr-only">
+            {loadState.announcement}
+          </p>
+        </>
       ) : null}
 
       <PositionDetailDrawer
         detailState={detailState}
+        onLoadMoreEvents={() => void loadMoreEvents()}
         onClose={closeDetail}
         onRequestClose={requestClosePosition}
       />

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createClient } from "@supabase/supabase-js";
+import { summarizePaperAccount } from "../src/lib/account/simulated-accounting.ts";
 
 import {
   ACCOUNT_TABLES,
@@ -470,11 +471,344 @@ async function verifyAnonymousRpcDenials(anonymousClient) {
         p_user_id: randomUUID(),
       },
     ],
+    [
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [randomUUID()] },
+    ],
+    [
+      "get_paper_account_portfolio_summary",
+      {},
+    ],
+    [
+      "get_paper_account_position_page",
+      {
+        p_page_size: 1,
+        p_position_id: null,
+        p_scope: "open",
+        p_sort_at: null,
+      },
+    ],
+    [
+      "get_simulated_position_event_page",
+      {
+        p_event_id: null,
+        p_page_size: 1,
+        p_position_id: randomUUID(),
+        p_sort_at: null,
+      },
+    ],
   ];
 
   for (const [name, args] of calls) {
     requireDenied(await anonymousClient.rpc(name, args), `anon RPC ${name}`);
   }
+}
+
+async function verifyPaginationRpcIsolation(
+  anonymousClient,
+  clientA,
+  clientB,
+  graphA,
+  graphB,
+) {
+  requireDenied(
+    await anonymousClient.rpc("get_paper_account_portfolio_summary"),
+    "anon RPC get_paper_account_portfolio_summary",
+  );
+  requireDenied(
+    await anonymousClient.rpc(
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [graphA.rows.simulated_positions.id] },
+    ),
+    "anon RPC get_latest_simulated_position_lifecycle_events",
+  );
+  requireDenied(
+    await anonymousClient.rpc("get_paper_account_position_page", {
+      p_page_size: 1,
+      p_position_id: null,
+      p_scope: "open",
+      p_sort_at: null,
+    }),
+    "anon RPC get_paper_account_position_page",
+  );
+  requireDenied(
+    await anonymousClient.rpc("get_simulated_position_event_page", {
+      p_event_id: null,
+      p_page_size: 1,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_sort_at: null,
+    }),
+    "anon RPC get_simulated_position_event_page",
+  );
+
+  const summaryA = requireRows(
+    await clientA.rpc("get_paper_account_portfolio_summary"),
+    1,
+    "User A portfolio summary",
+  )[0];
+  const summaryB = requireRows(
+    await clientB.rpc("get_paper_account_portfolio_summary"),
+    1,
+    "User B portfolio summary",
+  )[0];
+
+  assert.equal(Number(summaryA.open_position_count), 1);
+  assert.equal(Number(summaryA.history_position_count), 0);
+  assert.equal(Number(summaryA.cash_balance), 25_125);
+  assert.equal(Number(summaryA.open_exposure), 2_500);
+  assert.equal(Number(summaryA.unrealized_pnl), 15);
+  assert.equal(summaryA.unrealized_pnl_status, "available");
+  assert.equal(Number(summaryB.open_position_count), 1);
+  assert.equal(Number(summaryB.cash_balance), 25_125);
+
+  const pageA = requireRows(
+    await clientA.rpc("get_paper_account_position_page", {
+      p_page_size: 101,
+      p_position_id: null,
+      p_scope: "open",
+      p_sort_at: null,
+    }),
+    1,
+    "User A own open page",
+  );
+  assert.equal(pageA[0].id, graphA.rows.simulated_positions.id);
+  requireRows(
+    await clientA.rpc("get_paper_account_position_page", {
+      p_page_size: 101,
+      p_position_id: null,
+      p_scope: "history",
+      p_sort_at: null,
+    }),
+    0,
+    "User A empty history page",
+  );
+  const crossOwnerTuplePage = requireSuccess(
+    await clientB.rpc("get_paper_account_position_page", {
+      p_page_size: 101,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_scope: "open",
+      p_sort_at: graphA.rows.simulated_positions.opened_at,
+    }),
+  );
+  assert.ok(
+    crossOwnerTuplePage.every((row) => row.user_id === graphB.owner.userId),
+    "a foreign tuple can only page through the authenticated owner's rows",
+  );
+
+  requireRows(
+    await clientA.rpc("get_simulated_position_event_page", {
+      p_event_id: null,
+      p_page_size: 101,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_sort_at: null,
+    }),
+    1,
+    "User A own event page",
+  );
+  requireRows(
+    await clientA.rpc("get_simulated_position_event_page", {
+      p_event_id: null,
+      p_page_size: 101,
+      p_position_id: graphB.rows.simulated_positions.id,
+      p_sort_at: null,
+    }),
+    0,
+    "User A cannot read User B event page",
+  );
+
+  const oversizedPositionPage = await clientA.rpc(
+    "get_paper_account_position_page",
+    {
+      p_page_size: 102,
+      p_position_id: null,
+      p_scope: "open",
+      p_sort_at: null,
+    },
+  );
+  assert.ok(
+    oversizedPositionPage.error,
+    "oversized position page is rejected",
+  );
+
+  const nullPositionPageSize = await clientA.rpc(
+    "get_paper_account_position_page",
+    {
+      p_page_size: null,
+      p_position_id: null,
+      p_scope: "history",
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullPositionPageSize.error?.message,
+    "INVALID_POSITION_PAGE: Position page must contain 1 to 101 rows.",
+    "null position page size returns the stable boundary error",
+  );
+  assert.equal(
+    nullPositionPageSize.data,
+    null,
+    "null position page size returns no data",
+  );
+
+  const nullPositionScope = await clientA.rpc(
+    "get_paper_account_position_page",
+    {
+      p_page_size: 1,
+      p_position_id: null,
+      p_scope: null,
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullPositionScope.error?.message,
+    "INVALID_POSITION_SCOPE: Position scope is invalid.",
+    "null position scope returns the stable boundary error",
+  );
+  assert.equal(
+    nullPositionScope.data,
+    null,
+    "null position scope returns no data",
+  );
+
+  const nullEventPageSize = await clientA.rpc(
+    "get_simulated_position_event_page",
+    {
+      p_event_id: null,
+      p_page_size: null,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_sort_at: null,
+    },
+  );
+  assert.equal(
+    nullEventPageSize.error?.message,
+    "INVALID_EVENT_PAGE: Event page must contain 1 to 101 rows.",
+    "null event page size returns the stable boundary error",
+  );
+  assert.equal(
+    nullEventPageSize.data,
+    null,
+    "null event page size returns no data",
+  );
+
+  const incompleteEventTuple = await clientA.rpc(
+    "get_simulated_position_event_page",
+    {
+      p_event_id: randomUUID(),
+      p_page_size: 1,
+      p_position_id: graphA.rows.simulated_positions.id,
+      p_sort_at: null,
+    },
+  );
+  assert.ok(incompleteEventTuple.error, "incomplete event tuple is rejected");
+
+  const lifecycleEvent = requireRows(
+    await clientA
+      .from("simulated_position_events")
+      .insert({
+        id: randomUUID(),
+        user_id: graphA.owner.userId,
+        paper_account_id: graphA.rows.paper_accounts.id,
+        position_id: graphA.rows.simulated_positions.id,
+        event_type: "manual_adjustment",
+        quantity: 1,
+        price: 0,
+        cash_delta: 0,
+        realized_pnl_delta: 0,
+        margin_delta: 0,
+        metadata: { reason: "pagination-isolation" },
+      })
+      .select("*"),
+    1,
+    "User A create lifecycle event",
+  )[0];
+
+  const ownLifecycle = requireRows(
+    await clientA.rpc(
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [graphA.rows.simulated_positions.id] },
+    ),
+    1,
+    "User A own lifecycle lookup",
+  );
+  assert.equal(ownLifecycle[0].id, lifecycleEvent.id);
+
+  requireRows(
+    await clientA.rpc(
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [graphB.rows.simulated_positions.id] },
+    ),
+    0,
+    "User A cannot read User B lifecycle",
+  );
+  requireRows(
+    await clientA.rpc(
+      "get_latest_simulated_position_lifecycle_events",
+      {
+        p_position_ids: [
+          graphA.rows.simulated_positions.id,
+          graphB.rows.simulated_positions.id,
+        ],
+      },
+    ),
+    1,
+    "mixed-owner lifecycle lookup returns only User A",
+  );
+  requireRows(
+    await clientB.rpc(
+      "get_latest_simulated_position_lifecycle_events",
+      { p_position_ids: [graphA.rows.simulated_positions.id] },
+    ),
+    0,
+    "User B cannot read User A lifecycle",
+  );
+
+  const oversized = await clientA.rpc(
+    "get_latest_simulated_position_lifecycle_events",
+    { p_position_ids: Array.from({ length: 101 }, () => randomUUID()) },
+  );
+  assert.ok(oversized.error, "oversized lifecycle page is rejected");
+}
+
+async function verifyEmptyAggregate(client, ownerId) {
+  const account = requireRows(
+    await client
+      .from("paper_accounts")
+      .insert({
+        current_cash: 50_000,
+        margin_balance: 0,
+        margin_interest_rate: 0.05,
+        starting_cash: 50_000,
+        user_id: ownerId,
+      })
+      .select("*"),
+    1,
+    "empty-owner paper account",
+  )[0];
+  const summary = requireRows(
+    await client.rpc("get_paper_account_portfolio_summary"),
+    1,
+    "empty-owner portfolio summary",
+  )[0];
+
+  assert.equal(Number(summary.open_position_count), 0);
+  assert.equal(Number(summary.history_position_count), 0);
+  assert.equal(Number(summary.cash_balance), 50_000);
+  assert.equal(Number(summary.margin_balance), 0);
+  assert.equal(Number(summary.total_premium_collected), 0);
+  assert.equal(Number(summary.realized_pnl), 0);
+  assert.equal(Number(summary.open_exposure), 0);
+  assert.equal(Number(summary.unrealized_pnl), 0);
+  assert.equal(summary.unrealized_pnl_status, "available");
+
+  requireRows(
+    await client
+      .from("paper_accounts")
+      .delete()
+      .eq("id", account.id)
+      .select("*"),
+    1,
+    "delete empty-owner paper account",
+  );
 }
 
 async function verifyLifecycleRpcIsolation(
@@ -775,6 +1109,277 @@ async function verifyLifecycleRpcIsolation(
   );
 }
 
+async function verifyAggregateParity(clientA, graphA) {
+  const partialPayload = openPayload("partial", {
+    contracts: 2,
+    legs: [{
+      contractSymbol: "PARTIAL260821P00025000",
+      currentMark: 0.9,
+      expirationDate: "2026-08-21",
+      legIndex: 0,
+      openPrice: 1.25,
+      optionType: "put",
+      quantity: 2,
+      side: "short",
+      snapshot: {},
+      strike: 25,
+    }],
+  });
+  const partial = requireSuccess(
+    await clientA.rpc("open_simulated_position_atomic", {
+      p_input: partialPayload,
+    }),
+    "open partial-close parity position",
+  ).position;
+  requireSuccess(
+    await clientA.rpc("close_simulated_position_atomic", {
+      p_close_price: 0.5,
+      p_closed_at: "2026-07-02T15:00:00.000Z",
+      p_contracts_to_close: 1,
+      p_notes: "aggregate parity",
+      p_position_id: partial.id,
+    }),
+    "partially close parity position",
+  );
+
+  requireSuccess(
+    await clientA.rpc("open_simulated_position_atomic", {
+      p_input: openPayload("spread", {
+        legs: [
+          {
+            contractSymbol: "SPREAD260821P00095000",
+            currentMark: 1.8,
+            expirationDate: "2026-08-21",
+            legIndex: 0,
+            openPrice: 2,
+            optionType: "put",
+            quantity: 1,
+            side: "short",
+            snapshot: {},
+            strike: 95,
+          },
+          {
+            contractSymbol: "SPREAD260821P00090000",
+            currentMark: 0.9,
+            expirationDate: "2026-08-21",
+            legIndex: 1,
+            openPrice: 0.8,
+            optionType: "put",
+            quantity: 1,
+            side: "long",
+            snapshot: {},
+            strike: 90,
+          },
+        ],
+        netCredit: 1.2,
+        strategyType: "put_credit_spread",
+      }),
+    }),
+    "open multi-leg spread parity position",
+  );
+
+  const unavailable = requireSuccess(
+    await clientA.rpc("open_simulated_position_atomic", {
+      p_input: openPayload("nomark"),
+    }),
+    "open unavailable-mark parity position",
+  );
+  assert.equal(
+    unavailable.legs[0].current_mark,
+    null,
+    "unavailable-mark fixture has no current mark",
+  );
+
+  const assigned = requireSuccess(
+    await clientA.rpc("open_simulated_position_atomic", {
+      p_input: openPayload("assign", {
+        expirationDate: "2020-01-17",
+        legs: [{
+          contractSymbol: "ASSIGN200117P00025000",
+          currentMark: 5,
+          expirationDate: "2020-01-17",
+          legIndex: 0,
+          openPrice: 1.25,
+          optionType: "put",
+          quantity: 1,
+          side: "short",
+          snapshot: {},
+          strike: 25,
+        }],
+        openedAt: "2020-01-01",
+      }),
+    }),
+    "open assignment parity position",
+  ).position;
+  requireSuccess(
+    await clientA.rpc("expire_simulated_position_atomic", {
+      p_expired_at: "2020-01-18T15:00:00.000Z",
+      p_notes: "assignment parity",
+      p_position_id: assigned.id,
+      p_underlying_price_at_expiration: 20,
+    }),
+    "assign parity position",
+  );
+
+  requireRows(
+    await clientA
+      .from("simulated_equity_lots")
+      .insert({
+        id: randomUUID(),
+        user_id: graphA.owner.userId,
+        paper_account_id: graphA.rows.paper_accounts.id,
+        symbol: "CALL",
+        shares: 100,
+        cost_basis: 15,
+        source_position_id: graphA.rows.simulated_positions.id,
+        acquired_at: "2020-01-01T15:00:00.000Z",
+        source_fingerprint: `parity-call-${randomUUID()}`,
+      })
+      .select("*"),
+    1,
+    "insert called-away parity lot",
+  );
+  const calledAway = requireSuccess(
+    await clientA.rpc("open_simulated_position_atomic", {
+      p_input: openPayload("call", {
+        expirationDate: "2020-02-21",
+        legs: [{
+          contractSymbol: "CALL200221C00020000",
+          currentMark: 12,
+          expirationDate: "2020-02-21",
+          legIndex: 0,
+          openPrice: 1.25,
+          optionType: "call",
+          quantity: 1,
+          side: "short",
+          snapshot: {},
+          strike: 20,
+        }],
+        openedAt: "2020-02-01",
+        strategyType: "covered_call",
+        symbol: "CALL",
+      }),
+    }),
+    "open called-away parity position",
+  ).position;
+  requireSuccess(
+    await clientA.rpc("expire_simulated_position_atomic", {
+      p_expired_at: "2020-02-22T15:00:00.000Z",
+      p_notes: "called-away parity",
+      p_position_id: calledAway.id,
+      p_underlying_price_at_expiration: 30,
+    }),
+    "call away parity position",
+  );
+
+  requireRows(
+    await clientA
+      .from("simulated_position_events")
+      .insert({
+        id: randomUUID(),
+        user_id: graphA.owner.userId,
+        paper_account_id: graphA.rows.paper_accounts.id,
+        position_id: graphA.rows.simulated_positions.id,
+        event_type: "margin_interest",
+        quantity: null,
+        price: null,
+        cash_delta: -4.25,
+        realized_pnl_delta: 0,
+        margin_delta: 0,
+        metadata: { parity: true },
+      })
+      .select("*"),
+    1,
+    "insert margin-interest parity event",
+  );
+
+  const [accounts, positions, legs, events, aggregate] = await Promise.all([
+    clientA.from("paper_accounts").select("*"),
+    clientA.from("simulated_positions").select("*"),
+    clientA.from("simulated_position_legs").select("*").order("leg_index"),
+    clientA.from("simulated_position_events").select("*"),
+    clientA.rpc("get_paper_account_portfolio_summary"),
+  ]);
+  const accountRows = requireSuccess(accounts, "load parity account");
+  const positionRows = requireSuccess(positions, "load parity positions");
+  const legRows = requireSuccess(legs, "load parity legs");
+  const eventRows = requireSuccess(events, "load parity events");
+  const aggregateRow = requireRows(aggregate, 1, "load parity aggregate")[0];
+  const account = accountRows[0];
+  const oracle = summarizePaperAccount({
+    account: {
+      currentCash: Number(account.current_cash),
+      marginBalance: Number(account.margin_balance),
+      marginInterestRate: Number(account.margin_interest_rate),
+      startingCash: Number(account.starting_cash),
+    },
+    events: eventRows.map((event) => ({
+      cashDelta: Number(event.cash_delta),
+      eventType: event.event_type,
+      marginDelta: Number(event.margin_delta),
+      realizedPnlDelta: Number(event.realized_pnl_delta),
+    })),
+    positions: positionRows.map((position) => ({
+      contractsOpened: position.contracts_opened,
+      contractsRemaining: position.contracts_remaining,
+      id: position.id,
+      legs: legRows
+        .filter((leg) => leg.position_id === position.id)
+        .map((leg) => ({
+          askPrice: leg.ask_price == null ? null : Number(leg.ask_price),
+          bidPrice: leg.bid_price == null ? null : Number(leg.bid_price),
+          currentMark: leg.current_mark == null
+            ? null
+            : Number(leg.current_mark),
+          midPrice: leg.mid_price == null ? null : Number(leg.mid_price),
+          openPrice: Number(leg.open_price),
+          optionType: leg.option_type,
+          quantity: leg.quantity,
+          side: leg.side,
+          strike: leg.strike == null ? null : Number(leg.strike),
+        })),
+      netCredit: Number(position.net_credit),
+      status: position.status,
+      strategyType: position.strategy_type,
+    })),
+  });
+  const sqlSummary = {
+    cashBalance: Number(aggregateRow.cash_balance),
+    marginBalance: Number(aggregateRow.margin_balance),
+    marginInterestAccrued: Number(aggregateRow.margin_interest_accrued),
+    marginInterestRate: Number(aggregateRow.margin_interest_rate),
+    openExposure: Number(aggregateRow.open_exposure),
+    realizedPnl: Number(aggregateRow.realized_pnl),
+    totalPremiumCollected: Number(aggregateRow.total_premium_collected),
+    unrealizedPnl: aggregateRow.unrealized_pnl == null
+      ? null
+      : Number(aggregateRow.unrealized_pnl),
+    unrealizedPnlStatus: aggregateRow.unrealized_pnl_status,
+  };
+
+  assert.deepEqual(
+    sqlSummary,
+    oracle,
+    "SQL aggregate matches the TypeScript accounting oracle across partial close, " +
+      "spread, expiration, assignment, called-away, margin interest, and unavailable marks",
+  );
+  assert.equal(
+    Number(aggregateRow.open_position_count),
+    positionRows.filter((position) =>
+      ["open", "partially_closed"].includes(position.status)
+    ).length,
+    "aggregate open count matches complete account data",
+  );
+  assert.equal(
+    Number(aggregateRow.history_position_count),
+    positionRows.filter((position) =>
+      ["assigned", "called_away", "closed", "expired", "manual_review"]
+        .includes(position.status)
+    ).length,
+    "aggregate history count matches complete account data",
+  );
+}
+
 async function verifyAuthenticatedDeleteMatrix(
   clientA,
   clientB,
@@ -914,6 +1519,11 @@ const bootstrap = JSON.parse(bootstrapLines.at(-1));
 const anonymousClient = publicClient(url, anonKey);
 const clientA = await authenticatedClient(url, anonKey, bootstrap.userA);
 const clientB = await authenticatedClient(url, anonKey, bootstrap.userB);
+const emptyClient = await authenticatedClient(
+  url,
+  anonKey,
+  bootstrap.profiledSpare,
+);
 
 const graphA = await insertOwnerGraph(clientA, bootstrap.userA, "A");
 const graphB = await insertOwnerGraph(clientB, bootstrap.userB, "B");
@@ -943,6 +1553,14 @@ await verifyAuthenticatedUpdateMatrix(
   graphB,
   spareUsers,
 );
+await verifyPaginationRpcIsolation(
+  anonymousClient,
+  clientA,
+  clientB,
+  graphA,
+  graphB,
+);
+await verifyEmptyAggregate(emptyClient, bootstrap.profiledSpare.userId);
 await verifyLifecycleRpcIsolation(
   anonymousClient,
   clientA,
@@ -950,6 +1568,7 @@ await verifyLifecycleRpcIsolation(
   graphA,
   graphB,
 );
+await verifyAggregateParity(clientA, graphA);
 await verifyAuthenticatedDeleteMatrix(
   clientA,
   clientB,
@@ -959,5 +1578,6 @@ await verifyAuthenticatedDeleteMatrix(
 
 process.stdout.write(
   `AD-009 Data API isolation passed for ${ACCOUNT_TABLES.length} tables, ` +
-    "two authenticated users, anon, isolated service_role, and four lifecycle RPCs.\n",
+    "two authenticated users, anon, isolated service_role, four lifecycle RPCs, " +
+    "and four bounded account-pagination RPCs.\n",
 );

@@ -5,7 +5,8 @@ import { GET, POST } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
 const createSimulatedPosition = vi.hoisted(() => vi.fn());
-const loadAccountPortfolio = vi.hoisted(() => vi.fn());
+const loadAccountPositionPage = vi.hoisted(() => vi.fn());
+const loadPaperAccountOverview = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -26,7 +27,8 @@ vi.mock("@/lib/account/simulated-positions", async (importOriginal) => {
 });
 
 vi.mock("@/lib/account/simulated-account-portfolio", () => ({
-  loadAccountPortfolio,
+  loadAccountPositionPage,
+  loadPaperAccountOverview,
 }));
 
 function positionRequest(body: unknown) {
@@ -146,15 +148,22 @@ describe("POST /api/account/positions", () => {
 describe("GET /api/account/positions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    loadAccountPortfolio.mockResolvedValue({
-      historyPositions: [{ id: "position-2", status: "closed" }],
-      openPositions: [{ id: "position-1", status: "open" }],
-      positions: [
-        { id: "position-1", status: "open" },
-        { id: "position-2", status: "closed" },
-      ],
+    loadPaperAccountOverview.mockResolvedValue({
+      historyPositionCount: 1,
+      openPositionCount: 1,
+      positionWatermark: "2026-07-24T12:00:00.000Z",
       summary: { cashBalance: 1_000 },
     });
+    loadAccountPositionPage.mockImplementation(
+      (_supabase, _userId, input: { scope: "history" | "open" }) =>
+        Promise.resolve({
+          nextCursor: `${input.scope}-next`,
+          positions: input.scope === "open"
+            ? [{ id: "position-1", status: "open" }]
+            : [{ id: "position-2", status: "closed" }],
+          scope: input.scope,
+        }),
+    );
   });
 
   it("requires an authenticated account session", async () => {
@@ -165,10 +174,11 @@ describe("GET /api/account/positions", () => {
 
     expect(response.status).toBe(401);
     expect(json.error.code).toBe(UNAUTHENTICATED);
-    expect(loadAccountPortfolio).not.toHaveBeenCalled();
+    expect(loadPaperAccountOverview).not.toHaveBeenCalled();
+    expect(loadAccountPositionPage).not.toHaveBeenCalled();
   });
 
-  it("returns open and historical positions for the authenticated user", async () => {
+  it("returns independently paged open and historical positions", async () => {
     const supabase = {};
     getRequiredAccountSession.mockResolvedValue({
       response: NextResponse.next(),
@@ -180,9 +190,76 @@ describe("GET /api/account/positions", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(loadAccountPortfolio).toHaveBeenCalledWith(supabase, "user-1");
+    expect(loadPaperAccountOverview).toHaveBeenCalledWith(supabase, "user-1");
+    expect(loadAccountPositionPage).toHaveBeenCalledTimes(2);
+    expect(loadAccountPositionPage).toHaveBeenCalledWith(
+      supabase,
+      "user-1",
+      {
+        cursor: null,
+        limit: 25,
+        scope: "open",
+        watermark: "2026-07-24T12:00:00.000Z",
+      },
+    );
     expect(json.openPositions).toHaveLength(1);
     expect(json.historyPositions).toHaveLength(1);
+    expect(json.pages.open).toEqual({
+      items: [{ id: "position-1", status: "open" }],
+      nextCursor: "open-next",
+      total: 1,
+    });
+    expect(json.pages.history.total).toBe(1);
     expect(json.summary.cashBalance).toBe(1_000);
+  });
+
+  it("loads only the requested collection on load-more requests", async () => {
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "user-1" },
+    });
+
+    const response = await GET(new Request(
+      "https://alpha-dog.test/api/account/positions?scope=history&historyPageSize=10",
+    ));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(loadAccountPositionPage).toHaveBeenCalledTimes(1);
+    expect(loadAccountPositionPage).toHaveBeenCalledWith(
+      {},
+      "user-1",
+      expect.objectContaining({ limit: 10, scope: "history" }),
+    );
+    expect(json.pages.open).toBeUndefined();
+    expect(json.openPositions).toBeUndefined();
+  });
+
+  it("rejects malformed cursor and page state before portfolio queries", async () => {
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    });
+
+    const malformedCursor = await GET(new Request(
+      "https://alpha-dog.test/api/account/positions?scope=open&openCursor=not%2Bbase64",
+    ));
+    const malformedJson = await malformedCursor.json();
+
+    expect(malformedCursor.status).toBe(400);
+    expect(malformedJson.error.code).toBe("INVALID_POSITION_CURSOR");
+    expect(loadPaperAccountOverview).not.toHaveBeenCalled();
+    expect(loadAccountPositionPage).not.toHaveBeenCalled();
+
+    const invalidPage = await GET(new Request(
+      "https://alpha-dog.test/api/account/positions?openPageSize=101",
+    ));
+    const invalidPageJson = await invalidPage.json();
+
+    expect(invalidPage.status).toBe(400);
+    expect(invalidPageJson.error.code).toBe("INVALID_PAGE_SIZE");
+    expect(loadPaperAccountOverview).not.toHaveBeenCalled();
   });
 });

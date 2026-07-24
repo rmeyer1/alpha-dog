@@ -1,5 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { loadAccountPortfolio } from "@/lib/account/simulated-account-portfolio";
+import {
+  loadAccountPositionPage,
+  loadPaperAccountOverview,
+} from "@/lib/account/simulated-account-portfolio";
+import {
+  AccountPaginationError,
+  DEFAULT_POSITION_PAGE_SIZE,
+  MAX_POSITION_PAGE_SIZE,
+  parsePageSize,
+  parsePositionCursor,
+  parsePositionScope,
+} from "@/lib/account/pagination";
 import {
   createSimulatedPosition,
   SimulatedPositionValidationError,
@@ -12,6 +23,38 @@ import {
 } from "@/lib/supabase/account-session";
 
 export async function GET(request: NextRequest) {
+  const searchParams = new URL(request.url).searchParams;
+  let historyLimit: number;
+  let openLimit: number;
+  let scope: ReturnType<typeof parsePositionScope>;
+
+  try {
+    scope = parsePositionScope(searchParams.get("scope"));
+    historyLimit = parsePageSize(
+      searchParams.get("historyPageSize"),
+      {
+        defaultSize: DEFAULT_POSITION_PAGE_SIZE,
+        maxSize: MAX_POSITION_PAGE_SIZE,
+      },
+    );
+    openLimit = parsePageSize(
+      searchParams.get("openPageSize"),
+      {
+        defaultSize: DEFAULT_POSITION_PAGE_SIZE,
+        maxSize: MAX_POSITION_PAGE_SIZE,
+      },
+    );
+  } catch (error) {
+    if (error instanceof AccountPaginationError) {
+      return NextResponse.json(
+        { error: { code: error.code, message: error.message } },
+        { status: error.status },
+      );
+    }
+
+    throw error;
+  }
+
   const authResponse = NextResponse.next();
   const auth = await getRequiredAccountSession(request, authResponse);
 
@@ -23,14 +66,83 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const portfolio = await loadAccountPortfolio(auth.supabase, auth.user.id);
+  try {
+    const historyCursor = scope === "open"
+      ? null
+      : parsePositionCursor(
+        searchParams.get("historyCursor"),
+        "history",
+        auth.user.id,
+      );
+    const openCursor = scope === "history"
+      ? null
+      : parsePositionCursor(
+        searchParams.get("openCursor"),
+        "open",
+        auth.user.id,
+      );
+    const overview = await loadPaperAccountOverview(
+      auth.supabase,
+      auth.user.id,
+    );
+    const [historyPage, openPage] = await Promise.all([
+      scope === "open"
+        ? null
+        : loadAccountPositionPage(auth.supabase, auth.user.id, {
+          cursor: historyCursor,
+          limit: historyLimit,
+          scope: "history",
+          watermark: overview.positionWatermark,
+        }),
+      scope === "history"
+        ? null
+        : loadAccountPositionPage(auth.supabase, auth.user.id, {
+          cursor: openCursor,
+          limit: openLimit,
+          scope: "open",
+          watermark: overview.positionWatermark,
+        }),
+    ]);
+    const pages = {
+      ...(historyPage
+        ? {
+          history: {
+            items: historyPage.positions,
+            nextCursor: historyPage.nextCursor,
+            total: overview.historyPositionCount,
+          },
+        }
+        : {}),
+      ...(openPage
+        ? {
+          open: {
+            items: openPage.positions,
+            nextCursor: openPage.nextCursor,
+            total: overview.openPositionCount,
+          },
+        }
+        : {}),
+    };
 
-  return copyAuthCookies(auth.response, NextResponse.json({
-    historyPositions: portfolio.historyPositions,
-    openPositions: portfolio.openPositions,
-    positions: portfolio.positions,
-    summary: portfolio.summary,
-  }));
+    return copyAuthCookies(auth.response, NextResponse.json({
+      historyPositions: historyPage?.positions,
+      openPositions: openPage?.positions,
+      pages,
+      summary: overview.summary,
+    }));
+  } catch (error) {
+    if (error instanceof AccountPaginationError) {
+      return copyAuthCookies(
+        auth.response,
+        NextResponse.json(
+          { error: { code: error.code, message: error.message } },
+          { status: error.status },
+        ),
+      );
+    }
+
+    throw error;
+  }
 }
 
 export async function POST(request: NextRequest) {
