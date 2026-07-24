@@ -124,6 +124,85 @@ const recover = await service.rpc(
 assert.ifError(recover.error);
 assert.equal(recover.data?.[0]?.outcome, "recovered");
 
+const importTrigger = await service.rpc(
+  "record_observability_alert_sample",
+  {
+    p_alert_key: "import_finalization_failure",
+    p_value: 1,
+  },
+);
+
+assert.ifError(importTrigger.error);
+assert.equal(importTrigger.data?.[0]?.outcome, "triggered");
+
+const importDedup = await service.rpc(
+  "record_observability_alert_sample",
+  {
+    p_alert_key: "import_finalization_failure",
+    p_value: 1,
+  },
+);
+
+assert.ifError(importDedup.error);
+assert.equal(importDedup.data?.length, 0);
+
+const importRecover = await service.rpc(
+  "record_observability_alert_sample",
+  {
+    p_alert_key: "import_finalization_failure",
+    p_value: 0,
+  },
+);
+
+assert.ifError(importRecover.error);
+assert.equal(importRecover.data?.[0]?.outcome, "recovered");
+
+const staleHeartbeatAt = new Date(Date.now() - 16 * 60_000).toISOString();
+const staleHeartbeat = await service
+  .from("observability_readiness_state")
+  .update({ updated_at: staleHeartbeatAt })
+  .eq("state_key", "current");
+
+assert.ifError(staleHeartbeat.error);
+
+const cronMissing = await service.rpc(
+  "evaluate_observability_alerts",
+  { p_now: new Date().toISOString() },
+);
+
+assert.ifError(cronMissing.error);
+assert.equal(
+  cronMissing.data?.find(
+    (event) => event.alert_key === "cron_refresh_missing",
+  )?.outcome,
+  "triggered",
+);
+
+const heartbeatOwner = randomUUID();
+const resumeHeartbeat = await service.rpc(
+  "claim_observability_readiness_refresh",
+  {
+    p_lease_seconds: 10,
+    p_owner: heartbeatOwner,
+  },
+);
+
+assert.ifError(resumeHeartbeat.error);
+assert.equal(resumeHeartbeat.data, true);
+
+const cronRecovered = await service.rpc(
+  "evaluate_observability_alerts",
+  { p_now: new Date().toISOString() },
+);
+
+assert.ifError(cronRecovered.error);
+assert.equal(
+  cronRecovered.data?.find(
+    (event) => event.alert_key === "cron_refresh_missing",
+  )?.outcome,
+  "recovered",
+);
+
 console.log(
-  `Observability Data API verifier passed (${tables.length} private tables, 4 service-role control-plane operations).`,
+  `Observability Data API verifier passed (${tables.length} private tables, 11 service-role control-plane operations).`,
 );

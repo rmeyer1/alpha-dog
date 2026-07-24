@@ -82,7 +82,14 @@ async function POSTHandler(request: NextRequest) {
       parsed.rows,
       groups,
     );
-    await emitStatementImportTelemetry({ outcome: "finalized" });
+    await emitStatementImportTelemetry({
+      alert: result.status === "imported" && !result.isDuplicate,
+      operation:
+        result.status === "imported" && !result.isDuplicate
+          ? "statement_import_finalize"
+          : "statement_import",
+      outcome: "finalized",
+    });
 
     return copyAuthCookies(auth.response, NextResponse.json(result));
   } catch (error) {
@@ -112,6 +119,7 @@ async function POSTHandler(request: NextRequest) {
         alert: true,
         error,
         errorCode: error.code,
+        operation: "statement_import_finalize",
         outcome: "failed",
       });
       logAuthAccountFailure({

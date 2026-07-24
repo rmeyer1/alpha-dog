@@ -369,7 +369,31 @@ begin
     from public.observability_alert_rules as r
     order by r.alert_key
   loop
-    if v_rule.metric_kind = 'ratio' then
+    if v_rule.alert_key = 'cron_refresh_missing' then
+      select s.value
+      into v_metric_value
+      from public.observability_alert_samples as s
+      where s.alert_key = v_rule.alert_key
+        and s.occurred_at >
+          p_now - pg_catalog.make_interval(secs => v_rule.window_seconds)
+        and s.occurred_at <= p_now
+      order by s.occurred_at desc, s.id desc
+      limit 1;
+
+      v_sample_count := 1;
+      v_metric_value := coalesce(v_metric_value, 0);
+
+      if not exists (
+        select 1
+        from public.observability_readiness_state as r
+        where r.state_key = 'current'
+          and r.updated_at >
+            p_now - pg_catalog.make_interval(secs => v_rule.window_seconds)
+          and r.updated_at <= p_now
+      ) then
+        v_metric_value := greatest(v_metric_value, 1::numeric);
+      end if;
+    elsif v_rule.metric_kind = 'ratio' then
       select count(*)::integer, avg(s.value)
       into v_sample_count, v_metric_value
       from public.observability_alert_samples as s

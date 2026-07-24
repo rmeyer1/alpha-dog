@@ -73,6 +73,35 @@ describe("operational failure paths", () => {
     error.mockRestore();
   });
 
+  it("emits import recovery only after an alerted finalization succeeds", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    await emitStatementImportTelemetry({
+      alert: true,
+      operation: "statement_import_finalize",
+      outcome: "finalized",
+    });
+
+    expect(scheduleAlertSample).toHaveBeenCalledWith(
+      "import_finalization_failure",
+      0,
+    );
+
+    info.mockRestore();
+  });
+
+  it("does not recover an import alert for a non-finalization lifecycle event", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    await emitStatementImportTelemetry({
+      outcome: "finalized",
+    });
+
+    expect(scheduleAlertSample).not.toHaveBeenCalled();
+
+    info.mockRestore();
+  });
+
   it("contains thrown cron details while preserving a durable failure signal", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
 

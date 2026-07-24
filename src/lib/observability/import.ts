@@ -17,7 +17,11 @@ export async function emitStatementImportTelemetry(options: {
     severity: options.outcome === "failed" ? "error" : "info",
   });
 
-  if (options.outcome === "failed" && options.alert) {
-    await dispatchAlert("import_finalization_failure", "triggered");
+  if (options.alert) {
+    if (options.outcome === "failed") {
+      await dispatchAlert("import_finalization_failure", "triggered");
+    } else if (options.outcome === "finalized") {
+      await dispatchAlert("import_finalization_failure", "recovered");
+    }
   }
 }

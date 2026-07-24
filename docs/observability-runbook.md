@@ -90,17 +90,20 @@ in source-controlled parity:
 | Alert | Threshold and window | Minimum samples | Severity | Cooldown / recovery |
 | --- | --- | --- | --- | --- |
 | stale screener snapshot | age ≥ 30 minutes in 15 minutes | 1 | warning | 15 minutes / 1 healthy sample |
-| missing or failed cron refresh | ≥ 1 in 15 minutes | 1 | error | 15 minutes / 1 healthy sample |
+| missing readiness cron heartbeat or observed wheel-cron failure | no readiness refresh heartbeat for 15 minutes, or ≥ 1 failed invocation in 15 minutes | 1 | error | 15 minutes / 1 healthy heartbeat or invocation |
 | provider error rate | ≥ 10% in 5 minutes | 20 | warning | 5 minutes / 3 healthy samples |
 | paid-route denial/unavailable anomaly | ≥ 20% in 15 minutes | 20 | warning | 15 minutes / 3 healthy samples |
 | Workflow failure | ≥ 1 in 5 minutes | 1 | error | 5 minutes / 1 healthy sample |
 | import finalization failure | ≥ 1 in 5 minutes | 1 | error | 5 minutes / 1 healthy sample |
 
-Provider, paid-route, cron, Workflow, and import samples are persisted with
-Vercel background work, so business responses and durable work do not wait on
-the alert control plane. The database evaluator atomically applies thresholds,
-minimum samples, cooldown, dedup, and recovery, inserts a durable event, and
-publishes a native Postgres notification. Inspect
+Provider, paid-route, wheel-cron, Workflow, and import samples are persisted
+with Vercel background work, so business responses and durable work do not
+wait on the alert control plane. The every-minute protected readiness refresh
+also updates the shared `observability_readiness_state.updated_at` heartbeat.
+The database evaluator treats that durable heartbeat as missing after 15
+minutes even when no application invocation produced a sample. It atomically
+applies thresholds, minimum samples, cooldown, dedup, and recovery, inserts a
+durable event, and publishes a native Postgres notification. Inspect
 `observability_alert_state` for active conditions and
 `observability_alert_events` for the delivery history; both contain only
 bounded operational dimensions.
@@ -134,9 +137,10 @@ npm run test:supabase
 The suite inventories every API route, tests final serialized redaction with
 canaries, injects all five failure classes through each real Alpaca, Finnhub,
 Polymarket, OpenAI, and Supabase client, proves parent/child trace linkage,
-exercises durable cron/Workflow/import trigger and recovery events, verifies
-distributed readiness lease behavior, measures critical observability paths
-above the enforced 80% threshold, and checks route-boundary overhead/body-byte
+exercises durable cron/Workflow/import trigger, deduplication, and recovery
+events, verifies distributed readiness lease and cron-heartbeat absence
+behavior, enforces at least 80% statements, branches, functions, and lines for
+every observability source file, and checks route-boundary overhead/body-byte
 parity.
 
 Implementation follows the official

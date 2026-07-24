@@ -206,6 +206,107 @@ set
 
 do $$
 declare
+  v_evaluated_at timestamptz := pg_catalog.clock_timestamp();
+begin
+  update public.observability_readiness_state
+  set updated_at = v_evaluated_at - interval '16 minutes'
+  where state_key = 'current';
+
+  perform *
+  from public.evaluate_observability_alerts(v_evaluated_at);
+end;
+$$;
+
+select is(
+  (
+    select count(*)::integer
+    from public.observability_alert_events
+    where alert_key = 'cron_refresh_missing'
+      and outcome = 'triggered'
+  ),
+  1,
+  'an absent readiness cron heartbeat creates one durable trigger event'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.evaluate_observability_alerts(
+      pg_catalog.clock_timestamp()
+    )
+    where alert_key = 'cron_refresh_missing'
+  ),
+  0,
+  'an absent readiness cron heartbeat is deduplicated while active'
+);
+
+do $$
+declare
+  v_recovery_at timestamptz := pg_catalog.clock_timestamp();
+begin
+  update public.observability_readiness_state
+  set updated_at = v_recovery_at
+  where state_key = 'current';
+
+  perform *
+  from public.evaluate_observability_alerts(v_recovery_at);
+end;
+$$;
+
+select is(
+  (
+    select count(*)::integer
+    from public.observability_alert_events
+    where alert_key = 'cron_refresh_missing'
+      and outcome = 'recovered'
+  ),
+  1,
+  'a resumed readiness cron heartbeat creates one recovery event'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.record_observability_alert_sample(
+      'import_finalization_failure',
+      1,
+      pg_catalog.clock_timestamp()
+    )
+    where outcome = 'triggered'
+  ),
+  1,
+  'an import finalization failure creates an immediate trigger event'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.record_observability_alert_sample(
+      'import_finalization_failure',
+      1,
+      pg_catalog.clock_timestamp()
+    )
+  ),
+  0,
+  'a duplicate import finalization failure is suppressed while active'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.record_observability_alert_sample(
+      'import_finalization_failure',
+      0,
+      pg_catalog.clock_timestamp()
+    )
+    where outcome = 'recovered'
+  ),
+  1,
+  'a successful import finalization creates one recovery event'
+);
+
+do $$
+declare
   v_index integer;
 begin
   for v_index in 1..18 loop

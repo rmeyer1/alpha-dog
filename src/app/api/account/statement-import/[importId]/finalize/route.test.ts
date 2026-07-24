@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UNAUTHENTICATED } from "@/lib/supabase/account-session";
 import { POST } from "./route";
 
 const getRequiredAccountSession = vi.hoisted(() => vi.fn());
 const finalizeStatementImport = vi.hoisted(() => vi.fn());
+const getSupabaseAdminClient = vi.hoisted(() => vi.fn());
+const waitUntil = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/supabase/account-session")>();
@@ -18,6 +20,16 @@ vi.mock("@/lib/supabase/account-session", async (importOriginal) => {
 vi.mock("@/lib/account/statement-import-staging", () => ({
   finalizeStatementImport,
 }));
+vi.mock("@/lib/supabase/admin", () => ({
+  getSupabaseAdminClient,
+}));
+vi.mock("@vercel/functions", () => ({
+  waitUntil,
+}));
+
+import {
+  flushScheduledAlertSamplesForTests,
+} from "@/lib/observability/alert-control-plane";
 
 function request() {
   return new Request("https://alpha-dog.test/api/account/statement-import/import-1/finalize", {
@@ -28,11 +40,16 @@ function request() {
 describe("POST /api/account/statement-import/:importId/finalize", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getSupabaseAdminClient.mockReturnValue(null);
     finalizeStatementImport.mockResolvedValue({
       importId: "import-1",
       status: "imported",
       summary: { importedRecords: 1, reviewGroups: 0 },
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("requires an authenticated account session", async () => {
@@ -77,5 +94,77 @@ describe("POST /api/account/statement-import/:importId/finalize", () => {
 
     expect(response.status).toBe(409);
     expect(json.error.code).toBe("STATEMENT_IMPORT_REVIEW_INCOMPLETE");
+  });
+
+  it("traverses trigger, deduplication, and recovery through the real route adapter", async () => {
+    vi.stubEnv("ALPHA_DOG_TEST_ALERT_CONTROL_PLANE", "true");
+    getRequiredAccountSession.mockResolvedValue({
+      response: NextResponse.next(),
+      supabase: {},
+      user: { id: "user-1" },
+    });
+
+    const alertEvents = [
+      [{
+        alert_key: "import_finalization_failure",
+        event_id: crypto.randomUUID(),
+        outcome: "triggered",
+        severity: "error",
+      }],
+      [],
+      [{
+        alert_key: "import_finalization_failure",
+        event_id: crypto.randomUUID(),
+        outcome: "recovered",
+        severity: "info",
+      }],
+    ];
+    const rpc = vi.fn(async () => ({
+      data: alertEvents.shift() ?? [],
+      error: null,
+    }));
+    getSupabaseAdminClient.mockReturnValue({ rpc });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    finalizeStatementImport
+      .mockRejectedValueOnce(new Error("first finalization failure"))
+      .mockRejectedValueOnce(new Error("duplicate finalization failure"))
+      .mockResolvedValueOnce({
+        importId: "import-1",
+        status: "imported",
+        summary: { importedRecords: 1, reviewGroups: 0 },
+      });
+
+    const firstFailure = await POST(request(), {
+      params: Promise.resolve({ importId: "import-1" }),
+    });
+    const duplicateFailure = await POST(request(), {
+      params: Promise.resolve({ importId: "import-1" }),
+    });
+    const recovery = await POST(request(), {
+      params: Promise.resolve({ importId: "import-1" }),
+    });
+
+    await flushScheduledAlertSamplesForTests();
+
+    expect(firstFailure.status).toBe(500);
+    expect(duplicateFailure.status).toBe(500);
+    expect(recovery.status).toBe(200);
+    expect(rpc.mock.calls.map(([, parameters]) => parameters.p_value)).toEqual([
+      1,
+      1,
+      0,
+    ]);
+    expect(waitUntil).toHaveBeenCalledTimes(3);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('"alertKey":"import_finalization_failure"'),
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('"outcome":"recovered"'),
+    );
+
+    error.mockRestore();
+    info.mockRestore();
   });
 });

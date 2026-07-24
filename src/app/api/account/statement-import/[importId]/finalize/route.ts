@@ -33,6 +33,7 @@ async function POSTHandler(request: NextRequest, context: RouteContext) {
     });
     const statementImport = await finalizeStatementImport(auth.supabase, auth.user.id, importId);
     await emitStatementImportTelemetry({
+      alert: true,
       operation: "statement_import_finalize",
       outcome: "finalized",
     });
