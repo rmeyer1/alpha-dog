@@ -1,4 +1,4 @@
-import { safeRedirectPath } from "./oauth";
+import { safeRedirectPath } from "./redirect";
 
 export interface ManualAccountFields {
   email: string;

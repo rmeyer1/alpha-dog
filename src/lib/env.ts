@@ -1,4 +1,17 @@
 import { z } from "zod";
+import type {
+  DeploymentHealth,
+  DeploymentMode,
+  MarketDataConfigurationError,
+  ProviderConfigurationStatus,
+} from "./env-types";
+
+export type {
+  DeploymentHealth,
+  DeploymentMode,
+  MarketDataConfigurationError,
+  ProviderConfigurationStatus,
+} from "./env-types";
 
 const emptyStringToUndefined = (value: unknown) =>
   value === "" ? undefined : value;
@@ -175,42 +188,11 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
 });
 
-export type DeploymentMode = z.infer<typeof deploymentModeSchema>;
 export type AppEnv = Omit<
   z.infer<typeof envSchema>,
   "ALPHA_DOG_DEPLOYMENT_MODE"
 > & {
   ALPHA_DOG_DEPLOYMENT_MODE: DeploymentMode;
-};
-
-export type ProviderConfigurationStatus = {
-  configured: boolean;
-  detail: string;
-  required: boolean;
-};
-
-export type DeploymentHealth = {
-  issues: Array<{
-    code: string;
-    message: string;
-    provider: keyof DeploymentHealth["providers"];
-  }>;
-  mode: DeploymentMode;
-  providers: {
-    alpaca: ProviderConfigurationStatus;
-    earnings: ProviderConfigurationStatus;
-    openai: ProviderConfigurationStatus;
-    supabaseAuth: ProviderConfigurationStatus;
-    supabaseServer: ProviderConfigurationStatus;
-  };
-  status: "degraded" | "demo" | "invalid" | "ready";
-};
-
-export type MarketDataConfigurationError = {
-  code:
-    | "ALPACA_CREDENTIALS_NOT_CONFIGURED"
-    | "ALPHA_DOG_SUPABASE_NOT_CONFIGURED";
-  message: string;
 };
 
 let cachedEnv: AppEnv | null = null;

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, FlaskConical } from "lucide-react";
-import type { DeploymentHealth } from "@/lib/env";
+import type { DeploymentHealth } from "@/lib/env-types";
 
 type BannerState =
   | { status: "hidden" }

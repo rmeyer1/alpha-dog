@@ -20,8 +20,14 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/e2e/configuration-safety.spec.ts",
+    "test:supabase": "supabase db reset --local --no-seed && npm run test:supabase:catalog && npm run test:supabase:data-api && npm run test:supabase:advisors && supabase db lint --local --schema public --level warning --fail-on error",
+    "test:supabase:advisors": "supabase db advisors --local --type all --level warn --fail-on error",
+    "test:supabase:catalog": "supabase test db --local supabase/tests/database/account_isolation_catalog.test.sql",
+    "test:supabase:data-api": "node scripts/test-supabase-isolation.mjs",
     "test:watch": "vitest",
+    "supabase:start:test": "supabase start --exclude edge-runtime,imgproxy,logflare,mailpit,postgres-meta,realtime,storage-api,studio,supavisor,vector --yes",
     "verify:market-calendar": "node scripts/verify-market-calendar.mjs",
+    "verify:browser-secrets": "node scripts/verify-browser-secret-containment.mjs",
     "verify:toolchain": "node scripts/verify-toolchain.mjs"
   },
   "dependencies": {
@@ -44,6 +50,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
     "jsdom": "^26.1.0",
+    "supabase": "2.109.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.7"

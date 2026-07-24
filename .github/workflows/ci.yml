@@ -35,6 +35,8 @@ jobs:
             command: npm audit --audit-level=high
           - gate: market-calendar
             command: npm run verify:market-calendar
+          - gate: browser-secret-containment
+            command: npm run verify:browser-secrets
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
@@ -53,13 +55,14 @@ jobs:
       - name: Run ${{ matrix.gate }}
         run: ${{ matrix.command }}
 
-  e2e-smoke:
-    name: Quality / Playwright smoke
+  e2e:
+    name: Quality / Playwright
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       CI: "1"
       NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA"
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -77,15 +80,43 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Build production application
         run: npm run build
-      - name: Run deterministic smoke suite
-        run: npm run test:e2e:smoke
+      - name: Run deterministic browser suite
+        run: npm run test:e2e
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: playwright-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          name: playwright-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  supabase-isolation:
+    name: Quality / Supabase isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      SUPABASE_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify toolchain
+        run: npm run verify:toolchain
+      - name: Install frozen dependencies
+        run: npm ci
+      - name: Start disposable Supabase stack
+        run: npm run supabase:start:test
+      - name: Reset and verify account isolation
+        run: npm run test:supabase
+      - name: Stop disposable Supabase stack
+        if: always()
+        run: npx supabase stop --no-backup

@@ -1,5 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
+const turnstileTestToken = "playwright-turnstile-token";
+
 const baseFilters = {
   dteMin: 21,
   dteMax: 30,
@@ -15,6 +17,41 @@ const baseFilters = {
   excludeEarnings: true,
   includeWeeklies: false,
 };
+
+async function mockTurnstile(page: Page) {
+  await page.route(
+    "https://challenges.cloudflare.com/turnstile/v0/api.js*",
+    async (route) => {
+      await route.fulfill({
+        body: "",
+        contentType: "application/javascript",
+      });
+    },
+  );
+  await page.addInitScript((token) => {
+    const callbacks = new Map<string, (nextToken: string) => void>();
+    let nextWidgetId = 0;
+
+    window.turnstile = {
+      remove(widgetId) {
+        callbacks.delete(widgetId);
+      },
+      render(_container, options) {
+        const widgetId = `playwright-turnstile-${nextWidgetId}`;
+        nextWidgetId += 1;
+        callbacks.set(widgetId, options.callback);
+        queueMicrotask(() => options.callback(token));
+        return widgetId;
+      },
+      reset(widgetId) {
+        const callback = callbacks.get(widgetId);
+        if (callback) {
+          queueMicrotask(() => callback(token));
+        }
+      },
+    };
+  }, turnstileTestToken);
+}
 
 async function mockAccountState(page: Page, account: unknown) {
   await page.route("**/api/auth/account-state", async (route) => {
@@ -112,6 +149,7 @@ test("account page shows profile-required callback notice", async ({ page }) => 
 });
 
 test("manual account form handles validation, server errors, and success announcements", async ({ page }) => {
+  await mockTurnstile(page);
   await mockAccountState(page, { status: "unauthenticated" });
   let manualAccountRequests = 0;
   const manualAccountBodies: Record<string, unknown>[] = [];
@@ -162,7 +200,11 @@ test("manual account form handles validation, server errors, and success announc
   await expect(page.getByText("If this email is eligible, an invitation will arrive shortly. Check your inbox to continue."))
     .toBeVisible();
   expect(manualAccountBodies).toHaveLength(2);
+  expect(manualAccountBodies[0]).toMatchObject({
+    captchaToken: turnstileTestToken,
+  });
   expect(manualAccountBodies[1]).toMatchObject({
+    captchaToken: turnstileTestToken,
     email: "desk@example.com",
     nextPath: "/screeners",
   });

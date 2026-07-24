@@ -3,6 +3,9 @@ import {
   isAccountProfileComplete,
   normalizeAccountEmail,
 } from "./auth";
+import { safeRedirectPath } from "./redirect";
+
+export { safeRedirectPath } from "./redirect";
 
 export type SupportedOAuthProvider = "apple" | "google";
 
@@ -62,14 +65,6 @@ function namePartsFromFullName(fullName: string | null) {
 
 export function parseOAuthProvider(value: string | undefined) {
   return value === "google" || value === "apple" ? value : null;
-}
-
-export function safeRedirectPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/account";
-  }
-
-  return value;
 }
 
 function firstForwardedValue(value: string | null) {
