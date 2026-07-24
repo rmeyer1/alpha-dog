@@ -1,4 +1,8 @@
 import { getEnv } from "@/lib/env";
+import {
+  getUsEquitiesMarketState,
+  type UsEquitiesMarketState,
+} from "@/lib/market/us-equities-calendar";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import {
   getMaterializedWheelScreenerResponse,
@@ -16,13 +20,6 @@ import { companyStrategySchema, personaIdSchema } from "./validation";
 const RUNNING_SNAPSHOT_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_REFRESH_BATCH_SIZE = 8;
 const DEFAULT_REFRESH_LIMIT = 50;
-const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  weekday: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
 
 export interface ScreenerRefreshDecision {
   ageMs: number | null;
@@ -49,13 +46,7 @@ export interface ScreenerRefreshHealthSummary {
   }[];
 }
 
-export interface EasternMarketHoursState {
-  easternMinutes: number;
-  isMarketDay: boolean;
-  isOpen: boolean;
-  isWeekendPrewarm: boolean;
-  weekday: string;
-}
+export type EasternMarketHoursState = UsEquitiesMarketState;
 
 function markRefreshInProgress(
   response: WheelScreenerResponse,
@@ -93,36 +84,7 @@ function unique<T>(values: T[]) {
 export function getEasternMarketHoursState(
   date = new Date(),
 ): EasternMarketHoursState {
-  const parts = Object.fromEntries(
-    easternTimeFormatter
-      .formatToParts(date)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
-  );
-  const weekday = parts.weekday ?? "";
-  const easternMinutes =
-    Number.parseInt(parts.hour ?? "0", 10) * 60 +
-    Number.parseInt(parts.minute ?? "0", 10);
-  const isMarketDay = !["Sat", "Sun"].includes(weekday);
-  const isWeekend = ["Sat", "Sun"].includes(weekday);
-  const marketOpenMinutes = 9 * 60 + 30;
-  const marketCloseMinutes = 16 * 60;
-  const weekendPrewarmOpenMinutes = 16 * 60;
-  const weekendPrewarmCloseMinutes = 18 * 60;
-
-  return {
-    easternMinutes,
-    isMarketDay,
-    isOpen:
-      isMarketDay &&
-      easternMinutes >= marketOpenMinutes &&
-      easternMinutes <= marketCloseMinutes,
-    isWeekendPrewarm:
-      isWeekend &&
-      easternMinutes >= weekendPrewarmOpenMinutes &&
-      easternMinutes <= weekendPrewarmCloseMinutes,
-    weekday,
-  };
+  return getUsEquitiesMarketState(date);
 }
 
 export function getScreenerRefreshMaxRuns() {

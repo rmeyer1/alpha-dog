@@ -25,7 +25,7 @@ spreadPctOfMid = spread / midpoint
 ### 1.3 Days to Expiration
 
 ```text
-dte = calendar_days(expirationDate - currentDate)
+dte = ceil(applicable_us_equities_session_close(expirationDate) - currentInstant)
 ```
 
 Use market date in America/New_York. Exclude expired contracts.

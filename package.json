@@ -21,6 +21,7 @@
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/e2e/configuration-safety.spec.ts",
     "test:watch": "vitest",
+    "verify:market-calendar": "node scripts/verify-market-calendar.mjs",
     "verify:toolchain": "node scripts/verify-toolchain.mjs"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCandidate,
+  getDte,
   liquidityQuality,
   midpoint,
   premiumYield,
@@ -59,6 +60,24 @@ describe("wheel calculations", () => {
     expect(premiumYield("call", 1.5, 105, 100)).toBe(0.015);
   });
 
+  it("calculates DTE from the applicable New York session close", () => {
+    expect(
+      getDte("2026-01-16", new Date("2026-01-15T21:00:00.000Z")),
+    ).toBe(1);
+    expect(
+      getDte("2026-06-18", new Date("2026-06-17T20:00:00.000Z")),
+    ).toBe(1);
+    expect(
+      getDte("2026-06-18", new Date("2026-06-18T19:59:00.000Z")),
+    ).toBe(1);
+    expect(
+      getDte("2026-06-18", new Date("2026-06-18T20:01:00.000Z")),
+    ).toBe(0);
+    expect(
+      getDte("2026-06-19", new Date("2026-06-18T19:59:00.000Z")),
+    ).toBe(1);
+  });
+
   it("classifies liquidity from open interest, volume, and spread width", () => {
     expect(liquidityQuality(600, 250, 0.04)).toBe("excellent");
     expect(liquidityQuality(600, 250, 0.08)).toBe("good");
@@ -79,7 +98,7 @@ describe("wheel calculations", () => {
     expect(candidate).toMatchObject({
       optionType: "put",
       strike: 95,
-      dte: 24,
+      dte: 23,
       midpoint: 1.5,
       spread: 0.1,
       breakeven: 93.5,
@@ -87,7 +106,7 @@ describe("wheel calculations", () => {
       liquidityQuality: "good",
     });
     expect(candidate?.premiumYield).toBe(0.0158);
-    expect(candidate?.annualizedYield).toBe(0.2401);
+    expect(candidate?.annualizedYield).toBe(0.2506);
   });
 
   it("rejects contracts outside executable or strategy bounds", () => {

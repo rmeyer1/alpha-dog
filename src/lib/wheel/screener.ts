@@ -1,5 +1,6 @@
 import { getWheelAssetUniverse } from "@/lib/alpaca/client";
 import { getEnv, isDemoMode } from "@/lib/env";
+import { getNextUsEquitiesRefreshAt } from "@/lib/market/us-equities-calendar";
 import { analyzeWheelCandidates } from "./analyze";
 import { getPersona, mergeFilters } from "./personas";
 import { analyzeStagedUniverseWheelCompanies } from "./universe-scanner";
@@ -136,10 +137,6 @@ function stableStringify(value: unknown): string {
       `${JSON.stringify(key)}:${stableStringify(entryValue)}`,
     )
     .join(",")}}`;
-}
-
-function addMinutes(date: Date, minutes: number) {
-  return new Date(date.getTime() + minutes * 60 * 1000).toISOString();
 }
 
 function cloneResponse(response: WheelScreenerResponse): WheelScreenerResponse {
@@ -679,7 +676,9 @@ export async function analyzeTopWheelCompanies(
         cacheStatus: feed === "demo" ? "demo" : "fresh",
         asOf: responses.at(-1)?.dataFreshness.asOf ?? now.toISOString(),
         nextSuggestedRefreshAt:
-          nextCursor == null ? addMinutes(now, 5) : null,
+          nextCursor == null && feed !== "demo"
+            ? getNextUsEquitiesRefreshAt(now, 5 * 60 * 1000)
+            : null,
       },
       companies,
       screenedCount: processedCount,

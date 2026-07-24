@@ -6,20 +6,13 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
 import { getScheduledScreenerRefreshRequests } from "@/lib/wheel/screener-refresh";
 import type { UniverseDeepScanCoverageRequest } from "@/lib/wheel/universe-scanner";
 import { wheelDeepScanWorkflow } from "@/workflows/wheel-deep-scan";
 
 export const dynamic = "force-dynamic";
-
-const easternTimeFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  weekday: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
 
 interface StartedDeepScan {
   completionStatus: "complete" | "pending";
@@ -67,28 +60,20 @@ function verifyCronRequest(request: Request) {
 }
 
 function getEasternCoverageHoursState(date = new Date()) {
-  const parts = Object.fromEntries(
-    easternTimeFormatter
-      .formatToParts(date)
-      .filter((part) => part.type !== "literal")
-      .map((part) => [part.type, part.value]),
-  );
-  const weekday = parts.weekday ?? "";
-  const easternMinutes =
-    Number.parseInt(parts.hour ?? "0", 10) * 60 +
-    Number.parseInt(parts.minute ?? "0", 10);
-  const isWeekday = !["Sat", "Sun"].includes(weekday);
+  const marketSession = getUsEquitiesMarketState(date);
   const windowStartMinutes = 8 * 60;
-  const windowEndMinutes = 20 * 60;
+  const windowEndMinutes = marketSession.closeMinutes;
 
   return {
-    easternMinutes,
+    easternMinutes: marketSession.easternMinutes,
     isOpen:
-      isWeekday &&
-      easternMinutes >= windowStartMinutes &&
-      easternMinutes < windowEndMinutes,
-    isWeekday,
-    weekday,
+      marketSession.isMarketDay &&
+      windowEndMinutes != null &&
+      marketSession.easternMinutes >= windowStartMinutes &&
+      marketSession.easternMinutes < windowEndMinutes,
+    isWeekday: !["Sat", "Sun"].includes(marketSession.weekday),
+    marketSession,
+    weekday: marketSession.weekday,
   };
 }
 
@@ -151,7 +136,8 @@ async function handleDeepScanCoverage(request: Request) {
       ok: true,
       skippedCoverageHours: true,
       coverageHours,
-      message: "Deep scan coverage skipped outside 8 a.m.-8 p.m. New York time.",
+      message:
+        "Deep scan coverage skipped outside the current US equities session.",
       started: [],
     });
   }

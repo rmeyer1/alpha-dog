@@ -25,18 +25,27 @@ are due on the next eligible cron request.
 
 ## Off-Hours Behavior
 
-The cron route skips outside US market hours unless the request is explicitly
-forced. This avoids spending option-data calls on overnight data that can look
-fresh while the market is closed.
+The cron route uses the shared versioned US equities calendar and skips outside
+the current core session unless the request is explicitly forced. Holidays and
+exceptional closures never report as sessions, and early-close days stop at
+1:00 p.m. New York time.
 
-The GitHub schedule is also bounded to the weekday UTC hours that overlap the
-guarded market window. Invocations run at minutes `7`, `22`, `37`, and `52`
-instead of clock-quarter boundaries to avoid contention with market-data
-publication and the deep-scan trigger. The route-level New York time check
-remains authoritative across daylight-saving changes.
+The GitHub schedule is bounded to UTC hours that can overlap either the guarded
+session or prewarm window. Invocations run at minutes `7`, `22`, `37`, and
+`52` instead of clock-quarter boundaries to avoid contention with market-data
+publication and the deep-scan trigger. The route-level calendar remains
+authoritative across daylight-saving changes.
 
 Weekend prewarm is controlled separately by
-`WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS`, which also defaults to `4`.
+`WHEEL_SCREENER_WEEKEND_REFRESH_MAX_RUNS`, which also defaults to `4`. It is
+eligible only from 4:00–6:00 p.m. New York time on the final closed day before
+the next session. A normal Sunday can prewarm Monday, while Sunday before a
+Monday exchange holiday is skipped and the holiday Monday becomes the final
+prewarm opportunity.
+
+Calendar ownership, coverage, authoritative sources, and the annual update
+procedure are documented in
+[`market-calendar-operations.md`](./market-calendar-operations.md).
 
 ## Health Summary
 

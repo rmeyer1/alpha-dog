@@ -129,7 +129,7 @@ describe("screener refresh scheduling", () => {
     ).toMatchObject({
       isMarketDay: false,
       isOpen: false,
-      isWeekendPrewarm: true,
+      isWeekendPrewarm: false,
       weekday: "Sat",
     });
     expect(
@@ -145,7 +145,7 @@ describe("screener refresh scheduling", () => {
     ).toMatchObject({
       isMarketDay: false,
       isOpen: false,
-      isWeekendPrewarm: true,
+      isWeekendPrewarm: false,
       weekday: "Sat",
     });
   });

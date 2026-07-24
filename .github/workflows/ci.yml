@@ -33,6 +33,8 @@ jobs:
             command: npm run build
           - gate: dependency-audit
             command: npm audit --audit-level=high
+          - gate: market-calendar
+            command: npm run verify:market-calendar
     env:
       NEXT_TELEMETRY_DISABLED: "1"
     steps:

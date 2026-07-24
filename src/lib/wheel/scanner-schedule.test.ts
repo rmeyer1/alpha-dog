@@ -12,13 +12,13 @@ function workflow(name: string) {
 describe("scanner schedules", () => {
   it("offsets scanner triggers from high-contention clock boundaries", () => {
     expect(workflow("wheel-screener-refresh.yml")).toContain(
-      'cron: "7,22,37,52 13-21 * * 1-5"',
+      'cron: "7,22,37,52 13-23 * * 1-5"',
+    );
+    expect(workflow("wheel-screener-refresh.yml")).toContain(
+      'cron: "7,22,37,52 20-23 * * 0"',
     );
     expect(workflow("wheel-deep-scan-coverage.yml")).toContain(
-      'cron: "10 12-23 * * 1-5"',
-    );
-    expect(workflow("wheel-deep-scan-coverage.yml")).toContain(
-      'cron: "10 0-1 * * 2-6"',
+      'cron: "10 12-21 * * 1-5"',
     );
   });
 

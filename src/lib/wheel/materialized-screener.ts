@@ -1,4 +1,5 @@
 import { getEnv, isDemoMode } from "@/lib/env";
+import { getNextUsEquitiesRefreshAt } from "@/lib/market/us-equities-calendar";
 import { requestSupabaseRest } from "@/lib/supabase/rest";
 import { getPersona, mergeFilters } from "./personas";
 import type {
@@ -307,9 +308,10 @@ function nextSuggestedRefreshAt(
     return null;
   }
 
-  return new Date(
-    new Date(snapshot.completed_at).getTime() + MATERIALIZED_FRESH_TTL_MS,
-  ).toISOString();
+  return getNextUsEquitiesRefreshAt(
+    new Date(snapshot.completed_at),
+    MATERIALIZED_FRESH_TTL_MS,
+  );
 }
 
 function rowToCompanyScore(
