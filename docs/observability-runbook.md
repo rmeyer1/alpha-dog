@@ -47,9 +47,11 @@ into logs or incident notes.
 The readiness probes cannot place trades, write database rows, start
 Workflows, or issue paid OpenAI generations. Output contains only aggregate
 required/optional counts, status, and bounded duration. A database lease and
-shared 30-second healthy/10-second failed snapshot prevent cold instances,
-regions, and scale-out from multiplying provider traffic. Public traffic can
-only read the shared aggregate.
+shared 120-second healthy/10-second failed snapshot prevent cold instances,
+regions, and scale-out from multiplying provider traffic. The healthy TTL
+exceeds the 60-second refresh cadence, a 30-second runtime/jitter budget, and
+the public route's 5-second fresh plus 10-second stale-while-revalidate CDN
+window. Public traffic can only read the shared aggregate.
 
 During an outage, keep liveness HTTP 200. A required dependency failure should
 change readiness to HTTP 503. Recover only after a fresh readiness response is

@@ -16,10 +16,12 @@ import {
   elapsedMilliseconds,
   monotonicNow,
 } from "./telemetry";
+import {
+  FAILED_READINESS_TTL_SECONDS,
+  HEALTHY_READINESS_TTL_SECONDS,
+} from "./readiness-policy";
 
 const PROBE_TIMEOUT_MS = 1_500;
-const PROBE_CACHE_TTL_MS = 30_000;
-const FAILED_PROBE_CACHE_TTL_MS = 10_000;
 
 export interface DependencyProbe {
   name: string;
@@ -431,16 +433,16 @@ export async function refreshSharedReadinessSummary(options: {
   }
 
   const summary = await (options.refresh ?? refreshReadiness)();
-  const ttlMs = summary.status === "ready"
-    ? PROBE_CACHE_TTL_MS
-    : FAILED_PROBE_CACHE_TTL_MS;
+  const ttlSeconds = summary.status === "ready"
+    ? HEALTHY_READINESS_TTL_SECONDS
+    : FAILED_READINESS_TTL_SECONDS;
   const completion = await client.rpc(
     "complete_observability_readiness_refresh",
     {
       p_owner: owner,
       p_status: summary.status,
       p_summary: summary,
-      p_ttl_seconds: Math.ceil(ttlMs / 1_000),
+      p_ttl_seconds: ttlSeconds,
     },
   );
 

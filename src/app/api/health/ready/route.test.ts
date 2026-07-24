@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { READINESS_CACHE_CONTROL } from "@/lib/observability/readiness-policy";
 import { GET } from "./route";
 
 const getReadinessSummary = vi.hoisted(() => vi.fn());
@@ -27,7 +28,7 @@ describe("GET /api/health/ready", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe(
-      "public, s-maxage=5, stale-while-revalidate=10",
+      READINESS_CACHE_CONTROL,
     );
     expect(payload).toEqual({
       checks: {
