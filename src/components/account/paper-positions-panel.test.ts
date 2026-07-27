@@ -11,6 +11,7 @@ import {
   reconcilePositionPages,
   validateClosePositionInput,
 } from "./paper-positions-panel";
+import { paperPositionsRequestReducer } from "./paper-positions/request-state";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -321,5 +322,24 @@ describe("position page accumulation", () => {
     act(() => root.unmount());
     container.remove();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("paperPositionsRequestReducer", () => {
+  it("keeps request transitions scoped to their position page", () => {
+    const ready = {
+      announcement: "Loaded",
+      data: { pages: { history: { items: [], nextCursor: null, total: 0 }, open: { items: [], nextCursor: "next", total: 1 } } },
+      pageError: {},
+      pageLoading: null,
+      status: "ready" as const,
+    };
+    const state = paperPositionsRequestReducer(
+      { detail: { status: "idle" }, positions: ready },
+      { scope: "open", type: "positions/page-loading" },
+    );
+
+    expect(state.positions).toMatchObject({ pageLoading: "open" });
+    expect(state.detail).toEqual({ status: "idle" });
   });
 });

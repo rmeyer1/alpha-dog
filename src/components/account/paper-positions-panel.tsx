@@ -13,233 +13,21 @@ import {
 import {
   legSnapshotFromSavedLeg,
   PositionLegSnapshotList,
-  type SavedPositionLegSnapshot,
 } from "@/components/wheel-dashboard/position-leg-snapshot";
 import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
+import { validateClosePositionInput } from "./paper-positions/close-validation";
+import type { CloseSubmitState, DetailState, LoadState, PositionDetail, PositionEvent, PositionLifecycleSummary, PositionPage, PositionSummary, PositionTab, PositionsPayload } from "./paper-positions/contracts";
+import { closeDateTimestamp, formatCompactDate, formatCount, formatCurrency, formatDate, formatNumber, labelize, positionKind, provenanceLabel, strategyLabel, todayInputDate } from "./paper-positions/formatting";
+import { mergePositionEvents, reconcilePositionPages } from "./paper-positions/reconciliation";
+import { usePaperPositionsRequestState } from "./paper-positions/request-state";
+import { PositionStatusPill } from "./paper-positions/presentation";
 
-type PositionValuation = {
-  markStatus: "available" | "unavailable";
-  markToClose: number | null;
-  openExposure: number;
-  premiumRemaining: number;
-  unrealizedPnl: number | null;
-};
-
-type PositionDataProvenance = {
-  asOf: string | null;
-  cacheSource: string | null;
-  cacheStatus: string | null;
-  feed: string | null;
-  sourceMode: "demo" | "live" | "unknown";
-};
-
-type PositionLifecycleOutcome =
-  | "assigned"
-  | "called_away"
-  | "expired_otm"
-  | "manual_review";
-
-type PositionLifecycleSummary = {
-  cashDelta: number;
-  effectiveAt: string;
-  eventId: string;
-  eventType: string;
-  marginDelta: number;
-  metadata: Record<string, unknown>;
-  outcome: PositionLifecycleOutcome;
-  price: number | null;
-  quantity: number | null;
-  realizedPnlDelta: number;
-};
-
-type PositionSummary = {
-  closedAt: string | null;
-  contractsOpened: number;
-  contractsRemaining: number;
-  dataProvenance: PositionDataProvenance;
-  expirationDate: string | null;
-  id: string;
-  lifecycle: PositionLifecycleSummary | null;
-  netCredit: number;
-  notes: string | null;
-  openedAt: string;
-  source: string;
-  status: string;
-  strategyType: string;
-  symbol: string;
-  underlyingPriceAtOpen: number | null;
-  valuation: PositionValuation;
-};
-
-type PositionEvent = {
-  cashDelta: number;
-  createdAt: string;
-  eventType: string;
-  id: string;
-  marginDelta: number;
-  metadata: Record<string, unknown>;
-  price: number | null;
-  quantity: number | null;
-  realizedPnlDelta: number;
-};
-
-type PositionDetail = PositionSummary & {
-  events: PositionEvent[];
-  legs: SavedPositionLegSnapshot[];
-  nextEventCursor: string | null;
-};
-
-type PositionPage = {
-  items: PositionSummary[];
-  nextCursor: string | null;
-  total: number;
-};
-
-type PositionsPayload = {
-  pages: {
-    history: PositionPage;
-    open: PositionPage;
-  };
-};
-
-type LoadState =
-  | { status: "loading" }
-  | { message: string; status: "error" }
-  | {
-    announcement: string;
-    data: PositionsPayload;
-    pageError: Partial<Record<PositionTab, string>>;
-    pageLoading: PositionTab | null;
-    status: "ready";
-  };
-
-type DetailState =
-  | { status: "idle" }
-  | { id: string; status: "loading" }
-  | { code?: string; message: string; status: "error" }
-  | {
-    data: PositionDetail;
-    eventError?: string;
-    eventsLoading?: boolean;
-    status: "ready";
-  };
-
-type CloseSubmitState =
-  | { status: "idle" }
-  | { message: string; stale?: boolean; status: "error" }
-  | { message: string; status: "success" }
-  | { status: "submitting" };
-
-type ClosePositionValidationResult =
-  | { valid: true }
-  | { message: string; stale?: boolean; valid: false };
-
-type PositionTab = "history" | "open";
+export type { ClosePositionValidationResult } from "./paper-positions/close-validation";
+export { lifecycleLabel } from "./paper-positions/formatting";
+export { mergePositionRows, reconcilePositionPages } from "./paper-positions/reconciliation";
+export { validateClosePositionInput } from "./paper-positions/close-validation";
 
 const PAPER_ACCOUNT_REFRESH_EVENT = "paper-account:refresh";
-
-function formatCurrency(value: number | null | undefined) {
-  if (value == null) {
-    return "Unavailable";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 2,
-    style: "currency",
-  }).format(value);
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "Unavailable";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-  }).format(new Date(value));
-}
-
-function formatCompactDate(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    day: "2-digit",
-    month: "short",
-    year: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatCount(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
-}
-
-function formatNumber(value: number | null | undefined) {
-  if (value == null) {
-    return "Unavailable";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function todayInputDate() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function closeDateTimestamp(value: string) {
-  return `${value}T12:00:00.000Z`;
-}
-
-function labelize(value: string) {
-  return value
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-export function mergePositionRows(
-  current: PositionSummary[],
-  incoming: PositionSummary[],
-) {
-  const rows = new Map(current.map((position) => [position.id, position]));
-
-  for (const position of incoming) {
-    rows.set(position.id, position);
-  }
-
-  return [...rows.values()];
-}
-
-export function reconcilePositionPages(
-  pages: PositionsPayload["pages"],
-  scope: PositionTab,
-  incoming: PositionPage,
-) {
-  const otherScope = scope === "open" ? "history" : "open";
-  const incomingIds = new Set(incoming.items.map((position) => position.id));
-
-  return {
-    ...pages,
-    [otherScope]: {
-      ...pages[otherScope],
-      items: pages[otherScope].items.filter(
-        (position) => !incomingIds.has(position.id),
-      ),
-    },
-    [scope]: {
-      ...incoming,
-      items: mergePositionRows(pages[scope].items, incoming.items),
-    },
-  };
-}
 
 function numberMetadata(
   metadata: Record<string, unknown>,
@@ -258,134 +46,6 @@ function stringMetadata(
   const value = metadata[key];
 
   return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-export function lifecycleLabel(
-  status: string,
-  lifecycle?: PositionLifecycleSummary | null,
-) {
-  switch (lifecycle?.outcome) {
-    case "assigned":
-      return "Assigned";
-    case "called_away":
-      return "Called away";
-    case "expired_otm":
-      return "Expired OTM";
-    case "manual_review":
-      return "Manual review";
-    default:
-      return status === "closed" ? "Closed" : labelize(status);
-  }
-}
-
-export function validateClosePositionInput({
-  closePrice,
-  closedAt,
-  contracts,
-  remainingContracts,
-}: {
-  closePrice: string;
-  closedAt: string;
-  contracts: string;
-  remainingContracts: number;
-}): ClosePositionValidationResult {
-  const contractsToClose = Number(contracts);
-  const parsedClosePrice = Number(closePrice);
-
-  if (!Number.isInteger(contractsToClose) || contractsToClose <= 0) {
-    return {
-      message: "Contracts bought back must be a whole number above zero.",
-      valid: false,
-    };
-  }
-
-  if (contractsToClose > remainingContracts) {
-    return {
-      message: "Contracts bought back cannot exceed the remaining quantity.",
-      stale: true,
-      valid: false,
-    };
-  }
-
-  if (!Number.isFinite(parsedClosePrice) || parsedClosePrice < 0) {
-    return {
-      message: "Buyback price must be zero or greater.",
-      valid: false,
-    };
-  }
-
-  if (!closedAt) {
-    return {
-      message: "Close date is required.",
-      valid: false,
-    };
-  }
-
-  return { valid: true };
-}
-
-function statusTone(
-  status: string,
-  lifecycle?: PositionLifecycleSummary | null,
-) {
-  if (lifecycle?.outcome === "expired_otm") {
-    return "border-sky-300/25 bg-sky-300/10 text-sky-100";
-  }
-
-  if (lifecycle?.outcome === "manual_review" || status === "manual_review") {
-    return "border-red-300/25 bg-red-300/10 text-red-100";
-  }
-
-  if (
-    lifecycle?.outcome === "assigned" ||
-    lifecycle?.outcome === "called_away" ||
-    ["assigned", "called_away"].includes(status)
-  ) {
-    return "border-amber-300/25 bg-amber-300/10 text-amber-100";
-  }
-
-  if (["open", "partially_closed"].includes(status)) {
-    return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
-  }
-
-  return "border-white/10 bg-white/[0.04] text-zinc-200";
-}
-
-function StatusPill({
-  lifecycle,
-  status,
-}: {
-  lifecycle?: PositionLifecycleSummary | null;
-  status: string;
-}) {
-  return (
-    <span className={`inline-flex w-fit items-center rounded-md border px-2 py-1 text-xs font-semibold ${statusTone(status, lifecycle)}`}>
-      {lifecycleLabel(status, lifecycle)}
-    </span>
-  );
-}
-
-function strategyLabel(value: string) {
-  return labelize(value);
-}
-
-function positionKind(value: string) {
-  return value === "simulated" ? "Paper" : labelize(value);
-}
-
-function provenanceLabel(provenance: PositionDataProvenance) {
-  if (provenance.sourceMode === "unknown") {
-    return "Provenance unavailable";
-  }
-
-  return [
-    provenance.sourceMode === "demo" ? "Demo" : "Live",
-    provenance.feed ? labelize(provenance.feed) : null,
-    provenance.cacheStatus
-      ? `${labelize(provenance.cacheStatus)} cache`
-      : null,
-    provenance.cacheSource ? labelize(provenance.cacheSource) : null,
-  ].filter(Boolean).join(" · ");
 }
 
 function LoadingState() {
@@ -517,7 +177,7 @@ function DesktopPositionTable({
                 </button>
               </td>
               <td className="px-3 py-3">
-                <StatusPill
+                <PositionStatusPill
                   lifecycle={position.lifecycle}
                   status={position.status}
                 />
@@ -576,7 +236,7 @@ function MobilePositionCards({
                 {provenanceLabel(position.dataProvenance)}
               </div>
             </div>
-            <StatusPill
+            <PositionStatusPill
               lifecycle={position.lifecycle}
               status={position.status}
             />
@@ -1324,7 +984,7 @@ function PositionDetailContent({
     <div className="mt-5 grid gap-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill
+          <PositionStatusPill
             lifecycle={position.lifecycle}
             status={position.status}
           />
@@ -1420,8 +1080,22 @@ function PositionDetailContent({
 
 export function PaperPositionsPanel() {
   const [activeTab, setActiveTab] = useState<PositionTab>("open");
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
-  const [detailState, setDetailState] = useState<DetailState>({ status: "idle" });
+  const [{ detail: detailState, positions: loadState }, dispatchRequest] =
+    usePaperPositionsRequestState();
+  const setLoadState = (next: LoadState | ((current: LoadState) => LoadState)) => {
+    if (typeof next === "function") {
+      dispatchRequest({ type: "positions/update", update: next });
+    } else {
+      dispatchRequest({ state: next, type: "positions/received" });
+    }
+  };
+  const setDetailState = (next: DetailState | ((current: DetailState) => DetailState)) => {
+    if (typeof next === "function") {
+      dispatchRequest({ type: "detail/update", update: next });
+    } else {
+      dispatchRequest({ state: next, type: "detail/received" });
+    }
+  };
   const [closePosition, setClosePosition] = useState<PositionDetail | null>(null);
   const closeTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -1468,7 +1142,7 @@ export function PaperPositionsPanel() {
   }
 
   async function loadPositions() {
-    setLoadState({ status: "loading" });
+    dispatchRequest({ type: "positions/loading" });
     setLoadState(await fetchPositions());
   }
 
@@ -1483,12 +1157,7 @@ export function PaperPositionsPanel() {
       return;
     }
 
-    setLoadState({
-      ...loadState,
-      announcement: `Loading more ${scope === "open" ? "open" : "historical"} positions.`,
-      pageError: { ...loadState.pageError, [scope]: undefined },
-      pageLoading: scope,
-    });
+    dispatchRequest({ scope, type: "positions/page-loading" });
 
     try {
       const cursorName = scope === "open" ? "openCursor" : "historyCursor";
@@ -1626,7 +1295,7 @@ export function PaperPositionsPanel() {
   }
 
   async function openDetail(position: PositionSummary) {
-    setDetailState({ id: position.id, status: "loading" });
+    dispatchRequest({ id: position.id, type: "detail/loading" });
     setDetailState(await fetchPositionDetail(position.id));
   }
 
@@ -1667,18 +1336,10 @@ export function PaperPositionsPanel() {
       return;
     }
 
-    const events = new Map(
-      currentDetail.events.map((event) => [event.id, event]),
-    );
-
-    for (const event of next.data.events) {
-      events.set(event.id, event);
-    }
-
     setDetailState({
       data: {
         ...currentDetail,
-        events: [...events.values()],
+        events: mergePositionEvents(currentDetail.events, next.data.events),
         nextEventCursor: next.data.nextEventCursor,
       },
       eventsLoading: false,
@@ -1687,7 +1348,7 @@ export function PaperPositionsPanel() {
   }
 
   function closeDetail() {
-    setDetailState({ status: "idle" });
+    dispatchRequest({ type: "detail/closed" });
     closeClosePositionModal();
   }
 
@@ -1734,7 +1395,7 @@ export function PaperPositionsPanel() {
       const nextState = await fetchPositions();
 
       if (!cancelled) {
-        setLoadState(nextState);
+        dispatchRequest({ state: nextState, type: "positions/received" });
       }
     }
 
@@ -1743,7 +1404,7 @@ export function PaperPositionsPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dispatchRequest]);
 
   const positions = loadState.status === "ready"
     ? loadState.data.pages[activeTab].items
