@@ -11,6 +11,7 @@ describe("account data lifecycle migration", () => {
     for (
       const signature of [
         "public.export_account_data()",
+        "public.prepare_account_deletion_request",
         "public.delete_account_application_data(uuid)",
         "public.run_account_data_retention()",
       ]
@@ -18,13 +19,16 @@ describe("account data lifecycle migration", () => {
       expect(migration).toContain(`function ${signature}`);
     }
 
-    expect(migration.match(/security invoker/g)).toHaveLength(3);
-    expect(migration.match(/set search_path = ''/g)).toHaveLength(3);
+    expect(migration.match(/security invoker/g)).toHaveLength(4);
+    expect(migration.match(/set search_path = ''/g)).toHaveLength(5);
     expect(migration).toContain(
       "grant execute on function public.export_account_data()\n  to authenticated",
     );
     expect(migration).toContain(
       "grant execute on function public.delete_account_application_data(uuid)\n  to service_role",
+    );
+    expect(migration).toContain(
+      "grant execute on function public.prepare_account_deletion_request(",
     );
     expect(migration).toContain(
       "grant execute on function public.run_account_data_retention()\n  to service_role",
@@ -43,6 +47,18 @@ describe("account data lifecycle migration", () => {
     );
     expect(migration).toContain(
       "revoke all on table public.account_deletion_requests\n  from public, anon, authenticated",
+    );
+    expect(migration).toContain(
+      "create unique index if not exists account_deletion_requests_active_user_idx",
+    );
+    expect(migration).toContain(
+      "create or replace function private.reject_tombstoned_account_write()",
+    );
+    expect(migration).toContain(
+      "create trigger account_write_reject_deletion_tombstone",
+    );
+    expect(migration).toContain(
+      "where account_deletion_requests.completed_at is not null",
     );
   });
 
@@ -64,6 +80,10 @@ describe("account data lifecycle migration", () => {
       "'alpha-dog-account-data-retention',\n    '15 3 * * *'",
     );
     expect(migration).toContain("perform cron.unschedule(v_job_id)");
+    expect(migration).toContain(
+      "row_hash = 'retained:' || statement_row.id::text",
+    );
+    expect(migration).toContain("'rawImportRowsRedacted'");
   });
 
   it("exports every account-owned data category through auth.uid", () => {

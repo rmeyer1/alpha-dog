@@ -56,13 +56,13 @@ function requestRow(
 }
 
 function adminClient({
-  insertData = requestRow(),
-  insertError = null,
+  prepareData = requestRow(),
+  prepareError = null,
   retryData = null,
   retryError = null,
 }: {
-  insertData?: ReturnType<typeof requestRow> | null;
-  insertError?: unknown;
+  prepareData?: ReturnType<typeof requestRow> | null;
+  prepareError?: unknown;
   retryData?: ReturnType<typeof requestRow> | null;
   retryError?: unknown;
 } = {}) {
@@ -72,25 +72,22 @@ function adminClient({
   });
   const retryEq = vi.fn(() => ({ maybeSingle }));
   const retrySelect = vi.fn(() => ({ eq: retryEq }));
-  const single = vi.fn().mockResolvedValue({
-    data: insertData,
-    error: insertError,
+  const rpc = vi.fn().mockResolvedValue({
+    data: prepareData,
+    error: prepareError,
   });
-  const insertSelect = vi.fn(() => ({ single }));
-  const insert = vi.fn(() => ({ select: insertSelect }));
   const from = vi.fn(() => ({
-    insert,
     select: retrySelect,
   }));
-  const admin = { from } as unknown as SupabaseClient;
+  const admin = { from, rpc } as unknown as SupabaseClient;
 
   mocks.getSupabaseAdminClient.mockReturnValue(admin);
 
   return {
     from,
-    insert,
     maybeSingle,
     retryEq,
+    rpc,
   };
 }
 
@@ -304,27 +301,27 @@ describe("account deletion authorization", () => {
     });
     expect(result.status === "authorized" && result.retryToken.length)
       .toBeGreaterThan(32);
-    expect(admin.insert).toHaveBeenCalledWith(
+    expect(admin.rpc).toHaveBeenCalledWith(
+      "prepare_account_deletion_request",
       expect.objectContaining({
-        expires_at: "2026-07-28T12:00:00.000Z",
-        reauthenticated_at: now.toISOString(),
-        status: "authorized",
-        user_id: "user-1",
+        p_expires_at: "2026-07-28T12:00:00.000Z",
+        p_reauthenticated_at: now.toISOString(),
+        p_user_id: "user-1",
       }),
     );
-    const inserted = admin.insert.mock.calls[0]?.[0];
-    expect(inserted.token_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(inserted.user_fingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(inserted.confirmation_email_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(inserted.token_hash).not.toContain(result.status === "authorized"
+    const prepared = admin.rpc.mock.calls[0]?.[1];
+    expect(prepared.p_token_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared.p_user_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared.p_confirmation_email_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared.p_token_hash).not.toContain(result.status === "authorized"
       ? result.retryToken
       : "");
   });
 
   it("fails closed when durable request creation fails", async () => {
     adminClient({
-      insertData: null,
-      insertError: { message: "insert failed" },
+      prepareData: null,
+      prepareError: { message: "insert failed" },
     });
     const { client } = userClient();
 
@@ -448,7 +445,7 @@ describe("account deletion authorization", () => {
       status: "authorized",
       userId: "user-1",
     });
-    expect(admin.insert).toHaveBeenCalledOnce();
+    expect(admin.rpc).toHaveBeenCalledOnce();
   });
 
   it("surfaces retry-store failures for the route boundary to contain", async () => {

@@ -444,6 +444,28 @@ requireDenied(
   }),
   "authenticated cross-account deletion",
 );
+const untrustedPrepareArgs = {
+  p_confirmation_email_hash: "untrusted-email-hash",
+  p_expires_at: daysAgo(-1),
+  p_reauthenticated_at: daysAgo(0),
+  p_token_hash: "untrusted-token-hash",
+  p_user_fingerprint: "untrusted-user-hash",
+  p_user_id: accountA.userId,
+};
+requireDenied(
+  await anonymous.rpc(
+    "prepare_account_deletion_request",
+    untrustedPrepareArgs,
+  ),
+  "anonymous deletion-tombstone preparation",
+);
+requireDenied(
+  await userA.rpc(
+    "prepare_account_deletion_request",
+    untrustedPrepareArgs,
+  ),
+  "authenticated deletion-tombstone preparation",
+);
 
 const exportA = requireSuccess(
   await userA.rpc("export_account_data"),
@@ -477,6 +499,49 @@ assertExportMatches(exportB, accountB, graphB, "User B export");
 await assertOwnedGraphCount(service, accountA, graphA, 1, "User A seeded");
 await assertOwnedGraphCount(service, accountB, graphB, 1, "User B seeded");
 
+const deletionRequestA = requireSuccess(
+  await service.rpc("prepare_account_deletion_request", {
+    p_confirmation_email_hash: `email-${runId}`,
+    p_expires_at: daysAgo(-1),
+    p_reauthenticated_at: daysAgo(0),
+    p_token_hash: `token-${runId}-a`,
+    p_user_fingerprint: `user-${runId}`,
+    p_user_id: accountA.userId,
+  }),
+  "create User A deletion tombstone",
+);
+const rotatedDeletionRequestA = requireSuccess(
+  await service.rpc("prepare_account_deletion_request", {
+    p_confirmation_email_hash: `email-${runId}`,
+    p_expires_at: daysAgo(-1),
+    p_reauthenticated_at: daysAgo(0),
+    p_token_hash: `token-${runId}-b`,
+    p_user_fingerprint: `user-${runId}`,
+    p_user_id: accountA.userId,
+  }),
+  "rotate User A deletion retry authorization",
+);
+assert.equal(
+  rotatedDeletionRequestA.id,
+  deletionRequestA.id,
+  "reauthorization rotates one durable tombstone instead of creating another",
+);
+requireDenied(
+  await userA
+    .from("account_profiles")
+    .update({ display_name: "Blocked by tombstone" })
+    .eq("id", accountA.userId),
+  "tombstoned profile update before session revocation",
+);
+requireDenied(
+  await userA.from("saved_presets").insert({
+    base_persona_id: "balanced",
+    name: "blocked-by-tombstone",
+    user_id: accountA.userId,
+  }),
+  "tombstoned dependent write before session revocation",
+);
+
 requireSuccess(
   await service.auth.admin.signOut(signedInA.accessToken, "global"),
   "globally revoke User A refresh sessions",
@@ -502,6 +567,41 @@ assert.equal(deletedA.profilesDeleted, 1);
 assert.equal(deletedA.identitiesDeleted, 1);
 await assertOwnedGraphCount(service, accountA, graphA, 0, "User A deleted");
 await assertOwnedGraphCount(service, accountB, graphB, 1, "User B retained");
+
+const staleProfileRecreation = await revokedAccessUserA
+  .from("account_profiles")
+  .insert({
+    email: accountA.email,
+    first_name: "Stale",
+    id: accountA.userId,
+    last_name: "Session",
+    primary_provider: "email",
+  });
+requireDenied(
+  staleProfileRecreation,
+  "revoked access JWT profile recreation under a deletion tombstone",
+);
+const staleIdentityRecreation = await revokedAccessUserA
+  .from("account_identities")
+  .insert({
+    provider: "email",
+    provider_user_id: `stale-${runId}`,
+    user_id: accountA.userId,
+  });
+requireDenied(
+  staleIdentityRecreation,
+  "revoked access JWT identity recreation under a deletion tombstone",
+);
+assert.ok(
+  (
+    await revokedAccessUserA.from("saved_presets").insert({
+      base_persona_id: "balanced",
+      name: "stale",
+      user_id: accountA.userId,
+    })
+  ).error,
+  "revoked access JWT cannot recreate a profile-dependent account root",
+);
 
 const repeatedDeleteA = requireSuccess(
   await service.rpc("delete_account_application_data", {
@@ -546,6 +646,19 @@ if (repeatedAuthDeleteA.error) {
     "repeat Auth deletion fails only because the user is already absent",
   );
 }
+requireSuccess(
+  await service
+    .from("account_deletion_requests")
+    .update({
+      auth_user_deleted_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      status: "completed",
+      token_hash: null,
+      user_id: null,
+    })
+    .eq("id", deletionRequestA.id),
+  "complete User A deletion audit",
+);
 
 const oldAnalysisId = randomUUID();
 const recentAnalysisId = randomUUID();
@@ -649,19 +762,83 @@ requireSuccess(
   "seed raw-row retention boundaries",
 );
 
+const rawExpiredGroupId = randomUUID();
+const metadataExpiredGroupId = randomUUID();
+const rawExpiredAuditId = randomUUID();
+const metadataExpiredAuditId = randomUUID();
+requireSuccess(
+  await service.from("statement_reconciliation_groups").insert([
+    {
+      group_type: "cash_activity",
+      id: rawExpiredGroupId,
+      import_id: importedRawExpiredId,
+      status: "imported",
+      user_id: accountB.userId,
+    },
+    {
+      group_type: "cash_activity",
+      id: metadataExpiredGroupId,
+      import_id: importedMetadataExpiredId,
+      status: "imported",
+      user_id: accountB.userId,
+    },
+  ]),
+  "seed reconciliation-metadata retention boundaries",
+);
+requireSuccess(
+  await service.from("statement_reconciliation_group_rows").insert([
+    {
+      group_id: rawExpiredGroupId,
+      role: "source",
+      row_id: rawExpiredRowId,
+    },
+    {
+      group_id: metadataExpiredGroupId,
+      role: "source",
+      row_id: metadataExpiredRowId,
+    },
+  ]),
+  "seed reconciliation-membership retention boundaries",
+);
+requireSuccess(
+  await service.from("statement_import_review_audit").insert([
+    {
+      decision: "confirmed",
+      group_id: rawExpiredGroupId,
+      id: rawExpiredAuditId,
+      import_id: importedRawExpiredId,
+      next_status: "imported",
+      previous_status: "needs_review",
+      user_id: accountB.userId,
+    },
+    {
+      decision: "confirmed",
+      group_id: metadataExpiredGroupId,
+      id: metadataExpiredAuditId,
+      import_id: importedMetadataExpiredId,
+      next_status: "imported",
+      previous_status: "needs_review",
+      user_id: accountB.userId,
+    },
+  ]),
+  "seed review-audit retention boundaries",
+);
+
 const oldDeletionRequestId = randomUUID();
 const recentDeletionRequestId = randomUUID();
+const staleActiveDeletionRequestId = randomUUID();
 requireSuccess(
   await service.from("account_deletion_requests").insert([
     {
+      completed_at: daysAgo(100),
       confirmation_email_hash: "old-email-hash",
       expires_at: daysAgo(100),
       id: oldDeletionRequestId,
       reauthenticated_at: daysAgo(101),
-      status: "authorized",
-      token_hash: `old-token-${runId}`,
+      status: "completed",
+      token_hash: null,
       user_fingerprint: "old-user-hash",
-      user_id: accountB.userId,
+      user_id: null,
     },
     {
       confirmation_email_hash: "recent-email-hash",
@@ -672,6 +849,16 @@ requireSuccess(
       token_hash: `recent-token-${runId}`,
       user_fingerprint: "recent-user-hash",
       user_id: accountB.userId,
+    },
+    {
+      confirmation_email_hash: "stale-active-email-hash",
+      expires_at: daysAgo(100),
+      id: staleActiveDeletionRequestId,
+      reauthenticated_at: daysAgo(101),
+      status: "failed",
+      token_hash: `stale-active-token-${runId}`,
+      user_fingerprint: "stale-active-user-hash",
+      user_id: randomUUID(),
     },
   ]),
   "seed deletion-audit retention boundaries",
@@ -698,7 +885,7 @@ assert.deepEqual(retention.deletedCounts, {
   completedImports: 1,
   deletionRequests: 1,
   incompleteImports: 1,
-  rawImportRows: 2,
+  rawImportRowsRedacted: 2,
   retentionRuns: 1,
 });
 assert.equal(
@@ -725,7 +912,52 @@ assert.equal(
 );
 assert.equal(
   await countRows(service, "statement_import_rows", { id: rawExpiredRowId }),
-  0,
+  1,
+);
+const redactedRawRow = requireSuccess(
+  await service
+    .from("statement_import_rows")
+    .select(
+      "row_hash, raw_row, activity_date, process_date, settle_date, instrument, description, trans_code, quantity, price, amount, confidence, classification, status",
+    )
+    .eq("id", rawExpiredRowId)
+    .single(),
+  "read redacted 91-day import row",
+);
+assert.deepEqual(redactedRawRow, {
+  activity_date: null,
+  amount: null,
+  classification: "cash",
+  confidence: null,
+  description: null,
+  instrument: null,
+  price: null,
+  process_date: null,
+  quantity: null,
+  raw_row: {},
+  row_hash: `retained:${rawExpiredRowId}`,
+  settle_date: null,
+  status: "imported",
+  trans_code: null,
+});
+assert.equal(
+  await countRows(service, "statement_reconciliation_groups", {
+    id: rawExpiredGroupId,
+  }),
+  1,
+);
+assert.equal(
+  await countRows(service, "statement_reconciliation_group_rows", {
+    group_id: rawExpiredGroupId,
+    row_id: rawExpiredRowId,
+  }),
+  1,
+);
+assert.equal(
+  await countRows(service, "statement_import_review_audit", {
+    id: rawExpiredAuditId,
+  }),
+  1,
 );
 assert.equal(
   await countRows(service, "statement_imports", {
@@ -740,6 +972,24 @@ assert.equal(
   0,
 );
 assert.equal(
+  await countRows(service, "statement_reconciliation_groups", {
+    id: metadataExpiredGroupId,
+  }),
+  0,
+);
+assert.equal(
+  await countRows(service, "statement_reconciliation_group_rows", {
+    group_id: metadataExpiredGroupId,
+  }),
+  0,
+);
+assert.equal(
+  await countRows(service, "statement_import_review_audit", {
+    id: metadataExpiredAuditId,
+  }),
+  0,
+);
+assert.equal(
   await countRows(service, "account_deletion_requests", {
     id: oldDeletionRequestId,
   }),
@@ -748,6 +998,12 @@ assert.equal(
 assert.equal(
   await countRows(service, "account_deletion_requests", {
     id: recentDeletionRequestId,
+  }),
+  1,
+);
+assert.equal(
+  await countRows(service, "account_deletion_requests", {
+    id: staleActiveDeletionRequestId,
   }),
   1,
 );
@@ -777,7 +1033,7 @@ requireSuccess(
 
 process.stdout.write(
   "AD-014 account lifecycle passed fully populated two-user export/count " +
-    "isolation, least-privilege RPCs, refresh-session revocation, complete " +
-    "cascade deletion, Auth hard deletion, retention boundaries, and " +
-    "observable cleanup.\n",
+    "isolation, least-privilege RPCs, durable tombstone rotation, pre- and " +
+    "post-revocation stale-JWT write denial, complete cascade deletion, Auth " +
+    "hard deletion, 90/365-day relational retention, and observable cleanup.\n",
 );

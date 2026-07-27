@@ -33,7 +33,11 @@ Deletion requires:
 6. a same-origin request.
 
 The server records only hashes of the retry token, confirmed email, and user
-identifier. It then resumes these durable stages:
+identifier. The authorization transaction first creates or rotates one durable
+deletion tombstone. Database triggers then reject inserts and updates across
+all 14 account-owned tables, including profile and identity recreation, even
+if a revoked access JWT remains cryptographically valid. It then resumes these
+durable stages:
 
 1. revoke refresh-token sessions globally;
 2. delete linked application identities and the profile-owned cascade;
@@ -46,7 +50,9 @@ active. Repeating an already-completed application-data deletion returns zero
 deleted rows instead of failing. Auth retries treat only Supabase's specific
 `session_not_found`, `refresh_token_not_found`, and `user_not_found` codes as
 already-completed stages; status-only authorization, validation, and
-administrative failures remain failures.
+administrative failures remain failures. Incomplete deletion tombstones remain
+until Auth deletion completes; only completed pseudonymous audits enter the
+90-day cleanup window.
 
 Supabase documents two boundaries that shape this sequence:
 
@@ -68,17 +74,22 @@ The daily `alpha-dog-account-data-retention` cron runs at 03:15 UTC:
 | Category | Retention |
 | --- | ---: |
 | Failed or unfinished statement imports | 30 days |
-| Raw normalized rows for completed imports | 90 days |
+| Raw financial fields for completed imports | 90 days |
 | Completed import, reconciliation, and review metadata | 365 days |
 | Provider-derived analysis-request history | 90 days |
-| Completed or long-expired deletion requests | 90 days |
+| Completed pseudonymous deletion audits | 90 days |
 | Retention-run history | 90 days |
 
-Profile, preset, and paper-account records remain until account deletion except
-where a shorter category-specific rule applies. Each retention execution writes
-one service-only run row with status, timestamps, bounded deletion counts, and
-an SQLSTATE error code. A failed destructive subtransaction rolls back its
-partial deletes while retaining the failed run for diagnosis.
+At 90 days, raw JSON, dates, instrument text, description, transaction code,
+quantity, price, amount, confidence, and the source-derived row hash are
+redacted. The opaque row identifier, import relationship, row index,
+classification, status, reconciliation membership, and review audit remain
+until the 365-day metadata boundary. Profile, preset, and paper-account records
+remain until account deletion except where a shorter category-specific rule
+applies. Each retention execution writes one service-only run row with status,
+timestamps, bounded deletion/redaction outcome counts, and an SQLSTATE error
+code. A failed destructive subtransaction rolls back its partial work while
+retaining the failed run for diagnosis.
 
 ## Operations and incident response
 
@@ -142,9 +153,10 @@ npm run test:supabase
 That gate reconstructs the database from migrations, runs pgTAP catalog
 contracts, verifies anonymous/authenticated/service-role Data API isolation,
 and executes the two-user account lifecycle verifier. The lifecycle verifier
-proves user-isolated export, service-only destructive RPCs, idempotent
-application deletion, Auth hard deletion, exact retention boundaries, and
-observable run records.
+proves user-isolated export, service-only destructive RPCs, durable tombstone
+rotation, pre-revocation write denial, revoked-JWT profile/identity recreation
+denial, idempotent application deletion, Auth hard deletion, exact relational
+retention boundaries, and observable run records.
 
 Before production release:
 

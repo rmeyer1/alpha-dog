@@ -54,6 +54,10 @@ create index if not exists account_deletion_requests_user_status_idx
   on public.account_deletion_requests (user_id, status, created_at desc)
   where user_id is not null;
 
+create unique index if not exists account_deletion_requests_active_user_idx
+  on public.account_deletion_requests (user_id)
+  where user_id is not null;
+
 create index if not exists account_deletion_requests_expiry_idx
   on public.account_deletion_requests (expires_at)
   where status <> 'completed';
@@ -77,6 +81,218 @@ revoke all on table public.account_deletion_requests
   from public, anon, authenticated;
 grant select, insert, update, delete on table public.account_deletion_requests
   to service_role;
+
+create or replace function public.prepare_account_deletion_request(
+  p_user_id uuid,
+  p_user_fingerprint text,
+  p_token_hash text,
+  p_confirmation_email_hash text,
+  p_reauthenticated_at timestamptz,
+  p_expires_at timestamptz
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_request public.account_deletion_requests;
+begin
+  if p_user_id is null or
+     p_user_fingerprint is null or pg_catalog.btrim(p_user_fingerprint) = '' or
+     p_token_hash is null or pg_catalog.btrim(p_token_hash) = '' or
+     p_confirmation_email_hash is null or
+       pg_catalog.btrim(p_confirmation_email_hash) = '' or
+     p_reauthenticated_at is null or
+     p_expires_at is null or
+     p_expires_at <= p_reauthenticated_at then
+    raise exception 'A valid account-deletion authorization is required.'
+      using errcode = '22023';
+  end if;
+
+  insert into public.account_deletion_requests (
+    user_id,
+    user_fingerprint,
+    token_hash,
+    confirmation_email_hash,
+    status,
+    reauthenticated_at,
+    expires_at
+  ) values (
+    p_user_id,
+    p_user_fingerprint,
+    p_token_hash,
+    p_confirmation_email_hash,
+    'authorized',
+    p_reauthenticated_at,
+    p_expires_at
+  )
+  on conflict (user_id) where user_id is not null
+  do update set
+    token_hash = excluded.token_hash,
+    confirmation_email_hash = excluded.confirmation_email_hash,
+    reauthenticated_at = excluded.reauthenticated_at,
+    expires_at = excluded.expires_at
+  returning * into v_request;
+
+  return pg_catalog.to_jsonb(v_request);
+end;
+$$;
+
+revoke all on function public.prepare_account_deletion_request(
+  uuid,
+  text,
+  text,
+  text,
+  timestamptz,
+  timestamptz
+) from public, anon, authenticated;
+grant execute on function public.prepare_account_deletion_request(
+  uuid,
+  text,
+  text,
+  text,
+  timestamptz,
+  timestamptz
+) to service_role;
+
+create or replace function private.reject_tombstoned_account_write()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_user_id uuid;
+begin
+  if tg_table_name = 'statement_import_rows' and tg_op = 'UPDATE' then
+    if (
+         pg_catalog.to_jsonb(new) - array[
+           'row_hash',
+           'raw_row',
+           'activity_date',
+           'process_date',
+           'settle_date',
+           'instrument',
+           'description',
+           'trans_code',
+           'quantity',
+           'price',
+           'amount',
+           'confidence'
+         ]
+       ) = (
+         pg_catalog.to_jsonb(old) - array[
+           'row_hash',
+           'raw_row',
+           'activity_date',
+           'process_date',
+           'settle_date',
+           'instrument',
+           'description',
+           'trans_code',
+           'quantity',
+           'price',
+           'amount',
+           'confidence'
+         ]
+       ) and
+       new.row_hash = 'retained:' || new.id::text and
+       new.raw_row = '{}'::jsonb and
+       new.activity_date is null and
+       new.process_date is null and
+       new.settle_date is null and
+       new.instrument is null and
+       new.description is null and
+       new.trans_code is null and
+       new.quantity is null and
+       new.price is null and
+       new.amount is null and
+       new.confidence is null then
+      return new;
+    end if;
+  end if;
+
+  case tg_table_name
+    when 'account_profiles' then
+      v_user_id := new.id;
+    when 'account_identities',
+         'saved_presets',
+         'analysis_requests',
+         'paper_accounts',
+         'simulated_positions',
+         'simulated_position_events',
+         'simulated_equity_lots',
+         'statement_imports',
+         'statement_import_rows',
+         'statement_reconciliation_groups',
+         'statement_import_review_audit' then
+      v_user_id := new.user_id;
+    when 'simulated_position_legs' then
+      select position.user_id
+      into v_user_id
+      from public.simulated_positions as position
+      where position.id = new.position_id;
+    when 'statement_reconciliation_group_rows' then
+      select reconciliation_group.user_id
+      into v_user_id
+      from public.statement_reconciliation_groups as reconciliation_group
+      where reconciliation_group.id = new.group_id;
+    else
+      raise exception 'Unexpected account tombstone trigger target.'
+        using errcode = '55000';
+  end case;
+
+  if exists (
+    select 1
+    from public.account_deletion_requests as deletion_request
+    where deletion_request.user_id = v_user_id
+  ) then
+    raise exception 'Account deletion is in progress.'
+      using errcode = '42501';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function private.reject_tombstoned_account_write()
+  from public, anon, authenticated, service_role;
+
+do $$
+declare
+  v_table text;
+begin
+  foreach v_table in array array[
+    'account_profiles',
+    'account_identities',
+    'saved_presets',
+    'analysis_requests',
+    'paper_accounts',
+    'simulated_positions',
+    'simulated_position_legs',
+    'simulated_position_events',
+    'simulated_equity_lots',
+    'statement_imports',
+    'statement_import_rows',
+    'statement_reconciliation_groups',
+    'statement_reconciliation_group_rows',
+    'statement_import_review_audit'
+  ]
+  loop
+    execute pg_catalog.format(
+      'drop trigger if exists account_write_reject_deletion_tombstone on public.%I',
+      v_table
+    );
+    execute pg_catalog.format(
+      'create trigger account_write_reject_deletion_tombstone ' ||
+      'before insert or update on public.%I for each row ' ||
+      'execute function private.reject_tombstoned_account_write()',
+      v_table
+    );
+  end loop;
+end;
+$$;
 
 create table if not exists public.account_data_retention_runs (
   id uuid primary key default gen_random_uuid(),
@@ -355,7 +571,7 @@ as $$
 declare
   v_run_id uuid;
   v_incomplete_imports integer := 0;
-  v_raw_import_rows integer := 0;
+  v_raw_import_rows_redacted integer := 0;
   v_completed_imports integer := 0;
   v_analysis_requests integer := 0;
   v_deletion_requests integer := 0;
@@ -377,15 +593,42 @@ begin
       and statement_imports.updated_at < now() - interval '30 days';
     get diagnostics v_incomplete_imports = row_count;
 
-    delete from public.statement_import_rows as statement_row
-    using public.statement_imports as statement_import
+    update public.statement_import_rows as statement_row
+    set
+      row_hash = 'retained:' || statement_row.id::text,
+      raw_row = '{}'::jsonb,
+      activity_date = null,
+      process_date = null,
+      settle_date = null,
+      instrument = null,
+      description = null,
+      trans_code = null,
+      quantity = null,
+      price = null,
+      amount = null,
+      confidence = null
+    from public.statement_imports as statement_import
     where statement_row.import_id = statement_import.id
       and statement_import.status = 'imported'
       and coalesce(
         statement_import.imported_at,
         statement_import.updated_at
-      ) < now() - interval '90 days';
-    get diagnostics v_raw_import_rows = row_count;
+      ) < now() - interval '90 days'
+      and (
+        statement_row.row_hash <> 'retained:' || statement_row.id::text or
+        statement_row.raw_row <> '{}'::jsonb or
+        statement_row.activity_date is not null or
+        statement_row.process_date is not null or
+        statement_row.settle_date is not null or
+        statement_row.instrument is not null or
+        statement_row.description is not null or
+        statement_row.trans_code is not null or
+        statement_row.quantity is not null or
+        statement_row.price is not null or
+        statement_row.amount is not null or
+        statement_row.confidence is not null
+      );
+    get diagnostics v_raw_import_rows_redacted = row_count;
 
     delete from public.statement_imports
     where statement_imports.status = 'imported'
@@ -400,13 +643,8 @@ begin
     get diagnostics v_analysis_requests = row_count;
 
     delete from public.account_deletion_requests
-    where (
-      account_deletion_requests.completed_at is not null
-      and account_deletion_requests.completed_at < now() - interval '90 days'
-    ) or (
-      account_deletion_requests.completed_at is null
-      and account_deletion_requests.expires_at < now() - interval '90 days'
-    );
+    where account_deletion_requests.completed_at is not null
+      and account_deletion_requests.completed_at < now() - interval '90 days';
     get diagnostics v_deletion_requests = row_count;
 
     delete from public.account_data_retention_runs
@@ -417,8 +655,8 @@ begin
     v_counts := jsonb_build_object(
       'incompleteImports',
       v_incomplete_imports,
-      'rawImportRows',
-      v_raw_import_rows,
+      'rawImportRowsRedacted',
+      v_raw_import_rows_redacted,
       'completedImports',
       v_completed_imports,
       'analysisRequests',

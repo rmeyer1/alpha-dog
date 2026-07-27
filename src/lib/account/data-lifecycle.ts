@@ -377,29 +377,26 @@ export async function authorizeAccountDeletion({
   }
 
   const rawToken = retryToken();
-  const insert = await admin
-    .from("account_deletion_requests")
-    .insert({
-      confirmation_email_hash: privateDigest(
+  const prepared = await admin.rpc(
+    "prepare_account_deletion_request",
+    {
+      p_confirmation_email_hash: privateDigest(
         serviceConfig.serviceRoleKey,
         normalizedEmail(profile.data.email),
       ),
-      expires_at: isoAfterHours(now, ACCOUNT_DELETION_RETRY_HOURS),
-      reauthenticated_at: now.toISOString(),
-      status: "authorized",
-      token_hash: sha256(rawToken),
-      user_fingerprint: privateDigest(
+      p_expires_at: isoAfterHours(now, ACCOUNT_DELETION_RETRY_HOURS),
+      p_reauthenticated_at: now.toISOString(),
+      p_token_hash: sha256(rawToken),
+      p_user_fingerprint: privateDigest(
         serviceConfig.serviceRoleKey,
         user.id,
       ),
-      user_id: user.id,
-    })
-    .select(
-      "id, user_id, token_hash, confirmation_email_hash, status, attempt_count, expires_at, sessions_revoked_at, application_data_deleted_at, auth_user_deleted_at, result",
-    )
-    .single<AccountDeletionRequestRow>();
+      p_user_id: user.id,
+    },
+  );
+  const request = prepared.data as AccountDeletionRequestRow | null;
 
-  if (insert.error || !insert.data) {
+  if (prepared.error || !request) {
     return {
       code: ACCOUNT_DELETION_UNAVAILABLE,
       status: "error",
@@ -408,7 +405,7 @@ export async function authorizeAccountDeletion({
 
   return {
     accessToken,
-    request: insert.data,
+    request,
     retryToken: rawToken,
     status: "authorized",
     userId: user.id,

@@ -110,6 +110,9 @@ select ok(
 
 with service_functions(signature) as (
   values
+    (
+      'public.prepare_account_deletion_request(uuid,text,text,text,timestamptz,timestamptz)'::regprocedure
+    ),
     ('public.delete_account_application_data(uuid)'::regprocedure),
     ('public.run_account_data_retention()'::regprocedure)
 )
@@ -123,6 +126,9 @@ order by signature::text;
 with
 service_functions(signature) as (
   values
+    (
+      'public.prepare_account_deletion_request(uuid,text,text,text,timestamptz,timestamptz)'::regprocedure
+    ),
     ('public.delete_account_application_data(uuid)'::regprocedure),
     ('public.run_account_data_retention()'::regprocedure)
 ),
@@ -140,6 +146,9 @@ order by signature::text, role_name;
 with lifecycle_functions(signature) as (
   values
     ('public.export_account_data()'::regprocedure),
+    (
+      'public.prepare_account_deletion_request(uuid,text,text,text,timestamptz,timestamptz)'::regprocedure
+    ),
     ('public.delete_account_application_data(uuid)'::regprocedure),
     ('public.run_account_data_retention()'::regprocedure)
 )
@@ -154,6 +163,9 @@ order by signature::text;
 with lifecycle_functions(signature) as (
   values
     ('public.export_account_data()'::regprocedure),
+    (
+      'public.prepare_account_deletion_request(uuid,text,text,text,timestamptz,timestamptz)'::regprocedure
+    ),
     ('public.delete_account_application_data(uuid)'::regprocedure),
     ('public.run_account_data_retention()'::regprocedure)
 )
@@ -165,6 +177,54 @@ select is(
 from lifecycle_functions
 join pg_proc procedure on procedure.oid = signature
 order by signature::text;
+
+select ok(
+  (
+    select procedure.prosecdef
+    from pg_proc procedure
+    where procedure.oid =
+      'private.reject_tombstoned_account_write()'::regprocedure
+  ),
+  'the private tombstone trigger can inspect the forced-RLS service table'
+);
+select is(
+  (
+    select procedure.proconfig
+    from pg_proc procedure
+    where procedure.oid =
+      'private.reject_tombstoned_account_write()'::regprocedure
+  ),
+  array['search_path=""'],
+  'the private tombstone trigger has an empty fixed search_path'
+);
+with roles(role_name) as (
+  values ('anon'), ('authenticated'), ('service_role')
+)
+select ok(
+  not has_function_privilege(
+    role_name,
+    'private.reject_tombstoned_account_write()',
+    'EXECUTE'
+  ),
+  format('%s cannot directly execute the private tombstone trigger', role_name)
+)
+from roles
+order by role_name;
+
+select is(
+  (
+    select count(*)::integer
+    from pg_trigger trigger_record
+    join pg_class table_class on table_class.oid = trigger_record.tgrelid
+    join pg_namespace schema on schema.oid = table_class.relnamespace
+    where not trigger_record.tgisinternal
+      and schema.nspname = 'public'
+      and trigger_record.tgname =
+        'account_write_reject_deletion_tombstone'
+  ),
+  14,
+  'all account-owned writes are protected by deletion tombstones'
+);
 
 select is(
   (
