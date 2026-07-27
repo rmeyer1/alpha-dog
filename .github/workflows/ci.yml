@@ -32,7 +32,7 @@ jobs:
           - gate: production-build
             command: npm run build
           - gate: dependency-audit
-            command: npm audit --audit-level=high
+            command: npm run verify:dependency-security
           - gate: market-calendar
             command: npm run verify:market-calendar
           - gate: browser-secret-containment
