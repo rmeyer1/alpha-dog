@@ -51,7 +51,8 @@ violations, console errors, visible content, and client-side navigation.
 compact market-cap formatting for company Client Components. It uses fixed
 arithmetic and punctuation rather than runtime ICU data; this prevents compact
 notation differences such as `$962.0B` on the server and `$962B` in the
-browser.
+browser. Currency uses decimal-safe half-cent rounding, and compact market caps
+promote M→B and B→T when one-decimal rounding crosses a suffix boundary.
 
 ## Supabase Auth cookies
 

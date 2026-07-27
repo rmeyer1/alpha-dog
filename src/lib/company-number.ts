@@ -6,8 +6,40 @@ function finiteNumber(value: number | null | undefined) {
   return value != null && Number.isFinite(value) ? value : null;
 }
 
-function fixedCompact(value: number) {
-  return value.toFixed(1).replace(/\.0$/, "");
+const BIGINT_ONE = BigInt(1);
+const BIGINT_TWO = BigInt(2);
+const BIGINT_TEN = BigInt(10);
+
+function roundDecimal(value: number, fractionDigits: number) {
+  const [coefficient, exponentText = "0"] = value.toString().split("e");
+  const [integer, fraction = ""] = coefficient.split(".");
+  const digits = BigInt(`${integer}${fraction}`);
+  const shift = fractionDigits - fraction.length + Number(exponentText);
+
+  if (shift >= 0) {
+    return digits * BIGINT_TEN ** BigInt(shift);
+  }
+
+  const divisor = BIGINT_TEN ** BigInt(-shift);
+  const quotient = digits / divisor;
+  const remainder = digits % divisor;
+
+  return remainder * BIGINT_TWO >= divisor ? quotient + BIGINT_ONE : quotient;
+}
+
+function decimalParts(value: bigint, fractionDigits: number) {
+  const digits = value.toString().padStart(fractionDigits + 1, "0");
+
+  return {
+    integer: digits.slice(0, -fractionDigits),
+    fraction: digits.slice(-fractionDigits),
+  };
+}
+
+function fixedCompact(value: bigint) {
+  const { integer, fraction } = decimalParts(value, 1);
+
+  return fraction === "0" ? integer : `${integer}.${fraction}`;
 }
 
 /**
@@ -22,7 +54,10 @@ export function formatCompanyCurrency(value: number | null | undefined) {
     return "-";
   }
 
-  const [integer, fraction] = Math.abs(number).toFixed(2).split(".");
+  const { integer, fraction } = decimalParts(
+    roundDecimal(Math.abs(number), 2),
+    2,
+  );
 
   return `${number < 0 ? "-" : ""}$${groupedInteger(integer)}.${fraction}`;
 }
@@ -49,16 +84,29 @@ export function formatCompanyMarketCapFromMillions(
   }
 
   const absoluteMillions = Math.abs(millions);
-  let scaled = absoluteMillions;
-  let suffix = "M";
+  const units = [
+    { divisor: 1, suffix: "M" },
+    { divisor: 1_000, suffix: "B" },
+    { divisor: 1_000_000, suffix: "T" },
+  ];
+  let unitIndex =
+    absoluteMillions >= units[2].divisor
+      ? 2
+      : absoluteMillions >= units[1].divisor
+        ? 1
+        : 0;
+  let compact = roundDecimal(
+    absoluteMillions / units[unitIndex].divisor,
+    1,
+  );
 
-  if (absoluteMillions >= 1_000_000) {
-    scaled = absoluteMillions / 1_000_000;
-    suffix = "T";
-  } else if (absoluteMillions >= 1_000) {
-    scaled = absoluteMillions / 1_000;
-    suffix = "B";
+  if (compact >= BigInt(10_000) && unitIndex < units.length - 1) {
+    unitIndex += 1;
+    compact = roundDecimal(
+      absoluteMillions / units[unitIndex].divisor,
+      1,
+    );
   }
 
-  return `${millions < 0 ? "-" : ""}$${fixedCompact(scaled)}${suffix}`;
+  return `${millions < 0 ? "-" : ""}$${fixedCompact(compact)}${units[unitIndex].suffix}`;
 }
