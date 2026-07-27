@@ -7,6 +7,8 @@ import {
   buildSharedDiscoveryFilters,
   estimateScannerWork,
   marketBatchOptionTypes,
+  marketBatchRawContract,
+  marketBatchUnderlyingContext,
   scoreMarketBatchConsumer,
 } from "./domain";
 import type { WheelCompanyStrategy, WheelScreenerRequest } from "../types";
@@ -148,6 +150,27 @@ describe("shared market batch domain", () => {
     expect(marketBatchOptionTypes(requests)).toEqual(["call", "put"]);
   });
 
+  it("rejects empty consumers and invalid persisted financial facts", () => {
+    expect(() => buildSharedDiscoveryFilters([])).toThrow(
+      "requires at least one scoring consumer",
+    );
+    expect(() => marketBatchUnderlyingContext({
+      ...underlyingRows[0],
+      price: "invalid" as never,
+    })).toThrow("invalid stock price");
+    expect(() => marketBatchUnderlyingContext({
+      ...underlyingRows[0],
+      price: 0,
+    })).toThrow("invalid stock price");
+
+    for (const field of ["strike", "bid", "ask"] as const) {
+      expect(() => marketBatchRawContract({
+        ...optionRows[0],
+        [field]: null,
+      })).toThrow("invalid quote fields");
+    }
+  });
+
   it("adds consumers without repeating shared market-data ingestion", () => {
     const legacy = estimateScannerWork({
       assetCount: 1_000,
@@ -206,4 +229,47 @@ describe("shared market batch domain", () => {
       }).toMatchSnapshot();
     },
   );
+
+  it("reports indicative-feed warnings, skipped rows, and bounded fact errors", () => {
+    const result = scoreMarketBatchConsumer({
+      factErrors: Array.from({ length: 30 }, (_, index) => `error-${index}`),
+      feed: "indicative",
+      now: new Date(capturedAt),
+      optionRows: [],
+      request: requests[0],
+      underlyingRows: [{
+        ...underlyingRows[0],
+        earnings_context: {
+          ...underlyingRows[0].earnings_context,
+          providerEnabled: true,
+        },
+      }, {
+        ...underlyingRows[0],
+        selected_for_scoring: false,
+        symbol: "SKIP",
+        universe_rank: 2,
+      }],
+    });
+
+    expect(result.companies).toEqual([]);
+    expect(result.response.errors).toHaveLength(25);
+    expect(result.response.skippedCount).toBe(2);
+    expect(result.response.warnings).toEqual([
+      expect.objectContaining({ type: "data_quality" }),
+    ]);
+  });
+
+  it("uses current time when a batch has no captured facts", () => {
+    const now = new Date("2026-07-27T15:00:00.000Z");
+    const result = scoreMarketBatchConsumer({
+      feed: "opra",
+      now,
+      optionRows: [],
+      request: requests[0],
+      underlyingRows: [],
+    });
+
+    expect(result.response.dataFreshness.asOf).toBe(now.toISOString());
+    expect(result.response.companies).toEqual([]);
+  });
 });
