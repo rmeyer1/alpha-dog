@@ -114,6 +114,8 @@ for (const path of [
   "/company/BRK.B",
   "/account",
   "/account/manual",
+  "/privacy",
+  "/terms",
   "/__security_headers_missing__",
 ]) {
   test(`page ${path} receives a unique strict nonce policy`, async ({
@@ -246,6 +248,8 @@ test("representative page flows emit no application CSP violations", async ({
       "/company/AAPL",
       "/account",
       "/account/manual",
+      "/privacy",
+      "/terms",
     ]
   ) {
     await page.goto(path);

@@ -29,6 +29,8 @@ const PAGE_PATHS = [
   "/company/BRK.B",
   "/account",
   "/account/manual",
+  "/privacy",
+  "/terms",
   "/__security_headers_missing__",
 ];
 const API_PATHS = [

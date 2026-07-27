@@ -56,6 +56,8 @@ describe("Next.js proxy matcher", () => {
     "/account/",
     "/account?source=header",
     "/account/manual",
+    "/privacy",
+    "/terms",
     "/api/account/positions",
     "/api/account/positions?status=open",
     "/api/account/statement-import/import-1",

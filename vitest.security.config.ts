@@ -11,8 +11,12 @@ export default defineConfig({
     coverage: {
       exclude: ["src/**/*.test.ts"],
       include: [
+        "src/app/api/account/deletion/route.ts",
+        "src/app/api/account/export/route.ts",
         "src/app/api/logos/[symbol]/route.ts",
         "src/app/api/wheel/screener/runs/[runId]/stream/route.ts",
+        "src/lib/account/data-lifecycle-contract.ts",
+        "src/lib/account/data-lifecycle.ts",
         "src/lib/company-date-time.ts",
         "src/lib/company-number.ts",
         "src/lib/http/read-bounded-body.ts",
@@ -33,8 +37,13 @@ export default defineConfig({
     environment: "node",
     globals: false,
     include: [
+      "src/app/api/account/deletion/route.test.ts",
+      "src/app/api/account/export/route.test.ts",
       "src/app/api/logos/[symbol]/route.test.ts",
       "src/app/api/wheel/screener/runs/[runId]/stream/route.test.ts",
+      "src/lib/account/data-lifecycle-execution.test.ts",
+      "src/lib/account/data-lifecycle-authorization.test.ts",
+      "src/lib/account/data-lifecycle.test.ts",
       "src/lib/company-date-time.test.ts",
       "src/lib/company-number.test.ts",
       "src/lib/http/read-bounded-body.test.ts",

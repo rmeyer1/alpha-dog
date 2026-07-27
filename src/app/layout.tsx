@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { DeploymentStatusBanner } from "@/components/deployment-status-banner";
+import { LegalFooter } from "@/components/legal-footer";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -37,6 +38,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <DeploymentStatusBanner />
         {children}
+        <LegalFooter />
       </body>
     </html>
   );

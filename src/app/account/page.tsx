@@ -9,6 +9,7 @@ import {
   UserCircle,
 } from "lucide-react";
 import { AccountShell } from "@/components/account/account-shell";
+import { AccountLifecyclePanel } from "@/components/account/account-lifecycle-panel";
 import { GoogleSignInButton } from "@/components/account/google-sign-in-button";
 import { PaperAccountPanel } from "@/components/account/paper-account-panel";
 import { PaperPositionsPanel } from "@/components/account/paper-positions-panel";
@@ -285,6 +286,7 @@ function ReadyState({
           <PaperAccountPanel />
           <StatementImportPanel />
           <PaperPositionsPanel />
+          <AccountLifecyclePanel email={state.email} />
 
           <section className="rounded-lg border border-white/10 bg-[#151718] p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
