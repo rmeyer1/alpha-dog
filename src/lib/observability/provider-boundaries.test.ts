@@ -3,22 +3,29 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const boundaries = {
-  alpaca: "src/lib/alpaca/client.ts",
-  finnhub: "src/lib/finnhub/client.ts",
-  openai: "src/lib/trade-analysis/provider.ts",
-  polymarket: "src/lib/polymarket/client.ts",
-  supabase: "src/lib/supabase/rest.ts",
+  alpaca: [
+    "src/lib/alpaca/transport.ts",
+    "src/lib/alpaca/live-market.ts",
+  ],
+  finnhub: ["src/lib/finnhub/client.ts"],
+  openai: ["src/lib/trade-analysis/provider.ts"],
+  polymarket: ["src/lib/polymarket/client.ts"],
+  supabase: ["src/lib/supabase/rest.ts"],
 } as const;
 
 describe("provider boundary inventory", () => {
   it("keeps all five provider clients behind the shared telemetry boundary", () => {
-    for (const [provider, file] of Object.entries(boundaries)) {
-      const source = readFileSync(join(process.cwd(), file), "utf8");
+    for (const [provider, files] of Object.entries(boundaries)) {
+      const source = files
+        .map((file) => readFileSync(join(process.cwd(), file), "utf8"))
+        .join("\n");
 
-      expect(source, file).toContain(
+      expect(source, files.join(", ")).toContain(
         'from "@/lib/observability/provider"',
       );
-      expect(source, file).toContain(`observeProviderCall("${provider}"`);
+      expect(source, files.join(", ")).toContain(
+        `observeProviderCall("${provider}"`,
+      );
     }
   });
 
@@ -39,7 +46,8 @@ describe("provider boundary inventory", () => {
   it("suppresses automatic raw-URL spans for every server provider fetch", () => {
     for (const file of [
       "src/app/api/logos/[symbol]/route.ts",
-      "src/lib/alpaca/client.ts",
+      "src/lib/alpaca/transport.ts",
+      "src/lib/alpaca/live-market.ts",
       "src/lib/company-profile.ts",
       "src/lib/finnhub/client.ts",
       "src/lib/observability/health.ts",
