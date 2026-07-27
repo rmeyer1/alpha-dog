@@ -1,19 +1,14 @@
 "use client";
 
 import {
-  AlertTriangle,
-  Database,
-  ListChecks,
-  ShieldAlert,
-} from "lucide-react";
-import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
+  useReducer,
   useState,
 } from "react";
-import type { ComponentType, FormEvent, ReactNode } from "react";
+import type { FormEvent } from "react";
 import type {
   PersonaConfig,
   PersonaId,
@@ -49,21 +44,29 @@ import {
 } from "@/lib/request-lifecycle";
 import { DashboardHeader } from "./wheel-dashboard/dashboard-header";
 import { FilterPanel } from "./wheel-dashboard/filter-panel";
-import {
-  FreshnessStatusPill,
-  getFreshnessView,
-} from "./wheel-dashboard/freshness-status";
-import {
-  MarketSessionStatusTile,
-} from "./wheel-dashboard/market-session-status";
 import { MarketOverview } from "./wheel-dashboard/market-overview";
 import {
   mergePresetFilters,
   personaById,
 } from "./wheel-dashboard/persona-utils";
 import { PresetsPanel } from "./wheel-dashboard/presets-panel";
-import type { RequestState, StrategyTab } from "./wheel-dashboard/types";
+import type { StrategyTab } from "./wheel-dashboard/types";
 import { useCompanyInsights } from "./wheel-dashboard/use-company-insights";
+import { ScreenerStatusStrip } from "./wheel-dashboard/screener-status-strip";
+import {
+  analysisStrategyForTab,
+  dashboardRequestReducer,
+  initialDashboardRequestState,
+  requestIdentity,
+} from "./wheel-dashboard/dashboard-request-state";
+import {
+  isApiErrorPayload,
+  isScreenerRunResponse,
+  responseErrorMessage,
+  type ApiErrorPayload,
+} from "./wheel-dashboard/request-payloads";
+
+export { ScreenerStatusStrip } from "./wheel-dashboard/screener-status-strip";
 
 interface WheelDashboardProps {
   initialMarketState: UsEquitiesMarketState;
@@ -73,34 +76,12 @@ interface WheelDashboardProps {
 const defaultTicker = "";
 const defaultScreenerStrategy: WheelCompanyStrategy = "short_put";
 
-type ApiErrorPayload = {
-  error: {
-    code?: string;
-    message: string;
-  };
-};
-
 type PresetOperation = "deleting" | "idle" | "loading" | "saving";
 
 type PresetFeedback = {
   message: string;
   tone: "error" | "success";
 };
-
-function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof (payload as ApiErrorPayload).error?.message === "string"
-  );
-}
-
-function isScreenerRunResponse(
-  payload: WheelScreenerResponse | WheelScreenerRunResponse,
-): payload is WheelScreenerRunResponse {
-  return "runId" in payload;
-}
 
 function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
   switch (strategy) {
@@ -113,122 +94,6 @@ function tabForStrategy(strategy: WheelCompanyStrategy): StrategyTab {
     case "short_put":
       return "puts";
   }
-}
-
-function ScreenerStatusTile({
-  icon: Icon,
-  label,
-  tone,
-  value,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  tone: string;
-  value: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-12 items-center gap-3 rounded-lg border border-white/10 bg-black/20 px-3">
-      <Icon className={`size-4 shrink-0 ${tone}`} />
-      <div className="min-w-0">
-        <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
-          {label}
-        </div>
-        <div className="truncate text-sm font-medium text-zinc-100">
-          {value}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function ScreenerStatusStrip({
-  activePersona,
-  error,
-  filters,
-  marketState,
-  response,
-  screenerResponse,
-  strategy,
-  tab,
-  ticker,
-  requestState,
-}: {
-  activePersona: PersonaConfig;
-  error: string | null;
-  filters: WheelFilters;
-  marketState: UsEquitiesMarketState;
-  response: WheelAnalysisResponse | null;
-  screenerResponse: WheelScreenerResponse | null;
-  strategy: WheelCompanyStrategy;
-  tab: StrategyTab;
-  ticker: string;
-  requestState: RequestState;
-}) {
-  const freshness = response?.dataFreshness ?? screenerResponse?.dataFreshness;
-  const warningCount = response
-    ? response.warnings.length
-    : screenerResponse?.warnings.length ?? 0;
-  const rankedCount = response
-    ? response.shortPuts.length +
-      response.coveredCalls.length +
-      response.putCreditSpreads.length +
-      response.callCreditSpreads.length
-    : screenerResponse?.companies.length ?? 0;
-  const feed = freshness?.feed.toUpperCase() ?? "Pending";
-  const freshnessView = getFreshnessView(freshness, requestState);
-  const riskValue = error
-    ? "Action needed"
-    : warningCount
-      ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
-      : "None";
-  const riskTone = error
-    ? "text-red-200"
-    : warningCount
-      ? "text-amber-200"
-      : "text-emerald-200";
-
-  return (
-    <section className="border-b border-white/10 bg-[#0f1112]">
-      <div className="mx-auto grid max-w-[1600px] gap-2 px-4 py-3 md:grid-cols-5 md:px-6 xl:px-8">
-        <ScreenerStatusTile
-          icon={Database}
-          label="Feed"
-          tone="text-cyan-200"
-          value={feed}
-        />
-        <ScreenerStatusTile
-          icon={freshnessView.icon}
-          label="Freshness"
-          tone={freshnessView.tone.icon}
-          value={<FreshnessStatusPill className="w-full" view={freshnessView} />}
-        />
-        <MarketSessionStatusTile initialState={marketState} />
-        <ScreenerStatusTile
-          icon={ListChecks}
-          label="Ranked"
-          tone="text-zinc-200"
-          value={`${rankedCount} candidates`}
-        />
-        <ScreenerStatusTile
-          icon={warningCount || error ? AlertTriangle : ShieldAlert}
-          label="Risk flags"
-          tone={riskTone}
-          value={riskValue}
-        />
-        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 md:col-span-5">
-          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-zinc-500">
-            Results generated with
-          </div>
-          <div className="mt-1 text-sm text-zinc-300">
-            {activePersona.name} · {ticker || strategy.replaceAll("_", " ")} ·
-            {" "}DTE {filters.dteMin}-{filters.dteMax} · Delta{" "}
-            {filters.deltaMin}-{filters.deltaMax} ·{" "}
-            {ticker ? tab : strategy.replaceAll("_", " ")}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
 }
 
 export function WheelDashboard({
@@ -244,13 +109,8 @@ export function WheelDashboard({
   const [draftFilters, setDraftFilters] =
     useState<WheelFilters>(defaultPersona.filters);
   const [activeTab, setActiveTab] = useState<StrategyTab>("puts");
-  const [response, setResponse] = useState<WheelAnalysisResponse | null>(null);
-  const [screenerResponse, setScreenerResponse] =
-    useState<WheelScreenerResponse | null>(null);
   const [screenerStrategy, setScreenerStrategy] =
     useState<WheelCompanyStrategy>(defaultScreenerStrategy);
-  const [requestState, setRequestState] = useState<RequestState>("idle");
-  const [error, setError] = useState<string | null>(null);
   const [presets, setPresets] = useState<SavedPreset[]>([]);
   const [presetAccessState, setPresetAccessState] =
     useState<PresetAccessState>({
@@ -265,14 +125,18 @@ export function WheelDashboard({
     useState<PresetOperation>("loading");
   const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
   const [urlReady, setUrlReady] = useState(false);
-  const [resultIdentity, setResultIdentity] =
-    useState<WheelDashboardUrlState>({
+  const [requestDomain, dispatchRequest] = useReducer(
+    dashboardRequestReducer,
+    {
       filters: defaultPersona.filters,
       personaId: defaultPersona.id,
       screenerStrategy: defaultScreenerStrategy,
       tab: "puts",
       ticker: defaultTicker,
-    });
+    },
+    initialDashboardRequestState,
+  );
+  const { error, requestState, response, resultIdentity, screenerResponse } = requestDomain;
   const didLoadPresets = useRef(false);
   const didAutoRefreshInitialScreener = useRef(false);
   const requestLifecycle = useRef(new LatestRequestLifecycle());
@@ -394,15 +258,7 @@ export function WheelDashboard({
     }) => {
       const token = requestLifecycle.current.begin();
 
-      setRequestState((current) =>
-        showAsRefresh ||
-        current === "successFresh" ||
-        current === "successStale" ||
-        current === "refreshing"
-          ? "refreshing"
-          : "loading"
-      );
-      setError(null);
+      dispatchRequest({ type: "requestStarted", refresh: showAsRefresh });
 
       try {
         const apiResponse = await fetch("/api/wheel/screener", {
@@ -437,20 +293,13 @@ export function WheelDashboard({
           : payload;
 
         const committed = requestLifecycle.current.commit(token, () => {
-          setResponse(null);
-          setScreenerResponse(nextResponse);
-          setResultIdentity({
+          dispatchRequest({ type: "screenerLoaded", response: nextResponse, identity: requestIdentity({
             filters: nextFilters,
             personaId: nextPersonaId,
             screenerStrategy: nextStrategy,
             tab: tabForStrategy(nextStrategy),
             ticker: "",
-          });
-          setRequestState(
-            nextResponse.dataFreshness.cacheStatus === "stale"
-              ? "successStale"
-              : "successFresh",
-          );
+          }) });
         });
 
         return committed ? nextResponse : null;
@@ -463,12 +312,7 @@ export function WheelDashboard({
         }
 
         requestLifecycle.current.commit(token, () => {
-          setRequestState("errorNoCache");
-          setError(
-            caught instanceof Error
-              ? caught.message
-              : "Unable to load top companies.",
-          );
+          dispatchRequest({ type: "requestFailed", message: caught instanceof Error ? caught.message : "Unable to load top companies." });
         });
 
         return null;
@@ -500,14 +344,7 @@ export function WheelDashboard({
 
     const token = requestLifecycle.current.begin();
 
-    setRequestState((current) =>
-      current === "successFresh" ||
-      current === "successStale" ||
-      current === "refreshing"
-        ? "refreshing"
-        : "loading"
-    );
-    setError(null);
+    dispatchRequest({ type: "requestStarted", refresh: false });
 
     try {
       const apiResponse = await fetch("/api/wheel/analyze", {
@@ -518,14 +355,7 @@ export function WheelDashboard({
         body: JSON.stringify({
           ticker: symbol,
           persona: nextPersonaId,
-          strategy:
-            nextActiveTab === "calls"
-              ? "covered_call"
-              : nextActiveTab === "putSpreads"
-                ? "put_credit_spread"
-                : nextActiveTab === "callSpreads"
-                  ? "call_credit_spread"
-                  : "short_put",
+          strategy: analysisStrategyForTab(nextActiveTab),
           filters: nextFilters,
           resultLimit: 25,
           forceRefresh,
@@ -536,35 +366,20 @@ export function WheelDashboard({
         | WheelAnalysisResponse
         | { error: { message: string } };
 
-      if (!apiResponse.ok || "error" in payload) {
-        throw new Error(
-          "error" in payload ? payload.error.message : "Analysis failed.",
-        );
+      if (!apiResponse.ok || isApiErrorPayload(payload)) {
+        throw new Error(responseErrorMessage(payload, "Analysis failed."));
       }
+      const analysisResponse = payload as WheelAnalysisResponse;
 
       requestLifecycle.current.commit(token, () => {
-        setTicker(payload.ticker);
-        setScreenerResponse(null);
-        setResponse(payload);
-        setResultIdentity({
+        setTicker(analysisResponse.ticker);
+        dispatchRequest({ type: "analysisLoaded", response: analysisResponse, identity: requestIdentity({
           filters: nextFilters,
           personaId: nextPersonaId,
-          screenerStrategy:
-            nextActiveTab === "calls"
-              ? "covered_call"
-              : nextActiveTab === "putSpreads"
-                ? "put_credit_spread"
-                : nextActiveTab === "callSpreads"
-                  ? "call_credit_spread"
-                  : "short_put",
+          screenerStrategy: analysisStrategyForTab(nextActiveTab),
           tab: nextActiveTab,
-          ticker: payload.ticker,
-        });
-        setRequestState(
-          payload.dataFreshness.cacheStatus === "stale"
-            ? "successStale"
-            : "successFresh",
-        );
+          ticker: analysisResponse.ticker,
+        }) });
       });
     } catch (caught) {
       if (
@@ -575,8 +390,7 @@ export function WheelDashboard({
       }
 
       requestLifecycle.current.commit(token, () => {
-        setRequestState("errorNoCache");
-        setError(caught instanceof Error ? caught.message : "Analysis failed.");
+        dispatchRequest({ type: "requestFailed", message: caught instanceof Error ? caught.message : "Analysis failed." });
       });
     } finally {
       requestLifecycle.current.finish(token);
@@ -789,7 +603,7 @@ export function WheelDashboard({
       return;
     }
 
-    setScreenerResponse(null);
+    dispatchRequest({ type: "clearScreener" });
     setAppliedTicker(nextTicker);
     writeDashboardUrl({
       filters,
@@ -804,7 +618,7 @@ export function WheelDashboard({
     setTicker(nextTicker);
 
     if (!nextTicker.trim() && appliedTicker) {
-      setResponse(null);
+      dispatchRequest({ type: "clearAnalysis" });
       setAppliedTicker("");
       writeDashboardUrl({
         filters,
@@ -844,7 +658,7 @@ export function WheelDashboard({
     const nextActiveTab = tabForStrategy(strategy);
 
     setTicker(nextTicker);
-    setScreenerResponse(null);
+    dispatchRequest({ type: "clearScreener" });
     setAppliedTicker(nextTicker);
     setActiveTab(nextActiveTab);
     writeDashboardUrl({
@@ -901,9 +715,9 @@ export function WheelDashboard({
 
       lifecycle.abort();
       if (restored.ticker) {
-        setScreenerResponse(null);
+        dispatchRequest({ type: "clearScreener" });
       } else {
-        setResponse(null);
+        dispatchRequest({ type: "clearAnalysis" });
       }
       setTicker(restored.ticker);
       setAppliedTicker(restored.ticker);
@@ -912,7 +726,7 @@ export function WheelDashboard({
       setDraftFilters(restored.filters);
       setActiveTab(restored.tab);
       setScreenerStrategy(restored.screenerStrategy);
-      setError(null);
+      dispatchRequest({ type: "clearError" });
       setUrlReady(true);
     }
 
