@@ -46,17 +46,27 @@ import {
   LatestRequestLifecycle,
 } from "@/lib/request-lifecycle";
 import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
+import { FilterControls } from "./trader-intelligence/filter-controls";
+import { ListPresentation } from "./trader-intelligence/list-presentation";
+import {
+  appliedFilterLabel,
+  defaultTraderFilters,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+  labelClass,
+  scoreClass,
+  shortWallet,
+  walletPattern,
+} from "./trader-intelligence/domain";
+import { useAsyncRequestState, type RequestState } from "./trader-intelligence/request-state";
 
 type DashboardTab = TraderDashboardTab;
-type RequestState = "idle" | "loading" | "refreshing" | "success" | "error";
-
 interface ApiErrorPayload {
   error: {
     message: string;
   };
 }
-
-const walletPattern = /^0x[a-fA-F0-9]{40}$/;
 
 function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
   return (
@@ -67,55 +77,6 @@ function isApiErrorPayload(payload: unknown): payload is ApiErrorPayload {
   );
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: Math.abs(value) >= 1000 ? 0 : 2,
-    style: "currency",
-  }).format(value);
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function formatPercent(value: number | null) {
-  if (value == null || !Number.isFinite(value)) {
-    return "n/a";
-  }
-
-  return `${(value * 100).toFixed(2)}%`;
-}
-
-function shortWallet(wallet: string) {
-  return `${wallet.slice(0, 6)}...${wallet.slice(-4)}`;
-}
-
-function scoreClass(score: number) {
-  if (score >= 75) {
-    return "text-emerald-200";
-  }
-
-  if (score >= 55) {
-    return "text-cyan-200";
-  }
-
-  return "text-amber-200";
-}
-
-function labelClass(label: string) {
-  if (label === "Capital with edge" || label === "Recent momentum") {
-    return "border-emerald-300/30 bg-emerald-400/10 text-emerald-100";
-  }
-
-  if (label === "Concentrated exposure" || label === "Thin evidence") {
-    return "border-amber-300/30 bg-amber-400/10 text-amber-100";
-  }
-
-  return "border-cyan-300/30 bg-cyan-400/10 text-cyan-100";
-}
 
 function freshnessLabel(
   response:
@@ -334,7 +295,7 @@ function Header({
   );
 }
 
-function Filters({
+function LegacyFilters({
   appliedFilters,
   category,
   hasUnappliedChanges,
@@ -448,6 +409,8 @@ function Filters({
     </section>
   );
 }
+
+void LegacyFilters;
 
 function SignalBriefing({ activeTab }: { activeTab: DashboardTab }) {
   const copy = activeTab === "whales"
@@ -1031,23 +994,11 @@ export function WalletDrawer({
   );
 }
 
-const defaultTraderFilters: TraderAppliedFilters = {
-  category: "OVERALL",
-  limit: 25,
-  minValue: 10000,
-  orderBy: "PNL",
-  timePeriod: "WEEK",
-};
-
 const defaultTraderUrlState: TraderDashboardUrlState = {
   filters: defaultTraderFilters,
   tab: "smart",
   wallet: "",
 };
-
-function appliedFilterLabel(filters: TraderAppliedFilters) {
-  return `${filters.category} · ${filters.timePeriod} · ${filters.orderBy} · ${filters.limit} rows`;
-}
 
 export function TraderIntelligence() {
   const [activeTab, setActiveTab] = useState<DashboardTab>("smart");
@@ -1060,14 +1011,32 @@ export function TraderIntelligence() {
   const [whales, setWhales] = useState<PolymarketWhalesResponse | null>(null);
   const [sharpPlays, setSharpPlays] =
     useState<PolymarketSharpPlaysResponse | null>(null);
-  const [requestState, setRequestState] = useState<RequestState>("idle");
-  const [listError, setListError] = useState<string | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
+  const [request, dispatchRequest] = useAsyncRequestState();
+  const requestState = request.listState;
+  const listError = request.listError;
+  const profileError = request.profileError;
+  const profileLoading = request.profileLoading;
+  const setRequestState = (next: RequestState | ((current: RequestState) => RequestState)) => {
+    const value = typeof next === "function" ? next(request.listState) : next;
+    if (value === "loading" || value === "refreshing") dispatchRequest({ type: "list/start", refreshing: value === "refreshing" });
+    else if (value === "success") dispatchRequest({ type: "list/success" });
+    else if (value === "idle") dispatchRequest({ type: "list/reset" });
+    else dispatchRequest({ type: "list/error", message: request.listError ?? "Unable to load trader data." });
+  };
+  const setListError = (message: string | null) => {
+    if (message) dispatchRequest({ type: "list/error", message });
+  };
+  const setProfileError = (message: string | null) => {
+    if (message) dispatchRequest({ type: "profile/error", message });
+    else dispatchRequest({ type: "profile/reset" });
+  };
+  const setProfileLoading = (loading: boolean) => {
+    dispatchRequest({ type: loading ? "profile/start" : "profile/success" });
+  };
   const [lookupWallet, setLookupWallet] = useState("");
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] =
     useState<TraderWalletProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
   const [profileRequestRevision, setProfileRequestRevision] = useState(0);
   const [resultFilters, setResultFilters] =
     useState<Partial<Record<DashboardTab, TraderAppliedFilters>>>({});
@@ -1138,6 +1107,8 @@ export function TraderIntelligence() {
     } finally {
       listLifecycle.current.finish(token);
     }
+  // The reducer dispatcher is stable; local transition adapters intentionally do not trigger requests.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters, params]);
 
   const loadWhales = useCallback(async (forceRefresh = false) => {
@@ -1192,6 +1163,7 @@ export function TraderIntelligence() {
     } finally {
       listLifecycle.current.finish(token);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters, params]);
 
   const loadSharpPlays = useCallback(async (forceRefresh = false) => {
@@ -1244,6 +1216,7 @@ export function TraderIntelligence() {
     } finally {
       listLifecycle.current.finish(token);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters, params]);
 
   const loadWalletProfile = useCallback(async (
@@ -1297,6 +1270,7 @@ export function TraderIntelligence() {
       });
       profileLifecycle.current.finish(token);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1341,6 +1315,7 @@ export function TraderIntelligence() {
       listRequests.abort();
       profileRequests.abort();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1512,7 +1487,7 @@ export function TraderIntelligence() {
       <div className="mx-auto grid max-w-[1600px] gap-4 px-4 py-5 md:px-6 xl:px-8">
         {activeTab !== "lookup" ? (
           <>
-            <Filters
+            <FilterControls
               appliedFilters={appliedFilters}
               category={draftFilters.category}
               hasUnappliedChanges={hasUnappliedFilterChanges}
@@ -1580,64 +1555,34 @@ export function TraderIntelligence() {
               <Metric label="Observed Volume" value={formatMoney(totalVolume)} />
               <Metric label="Top Score" value={String(topScore)} valueClassName={scoreClass(topScore)} />
             </section>
-            <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-              <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <TrendingUp className="size-4 text-emerald-200" />
-                  Smart Traders
-                </div>
-                <div className="text-right text-xs text-zinc-500">
-                  <div>{freshnessLabel(leaderboard)}</div>
-                  <div>Generated with {appliedFilterLabel(leaderboardFilters)}</div>
-                </div>
-              </div>
+            <ListPresentation filterLabel={appliedFilterLabel(leaderboardFilters)} freshness={freshnessLabel(leaderboard)} icon={<TrendingUp className="size-4 text-emerald-200" />} title="Smart Traders">
               <TraderRows
                 onSelectWallet={handleSelectWallet}
                 requestState={requestState}
                 traders={leaderboard?.traders ?? []}
               />
-            </section>
+            </ListPresentation>
           </>
         ) : null}
 
         {activeTab === "whales" ? (
-          <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <Waves className="size-4 text-cyan-200" />
-                Whale Edge
-              </div>
-              <div className="text-right text-xs text-zinc-500">
-                <div>{freshnessLabel(whales)}</div>
-                <div>Generated with {appliedFilterLabel(whaleFilters)}</div>
-              </div>
-            </div>
+          <ListPresentation filterLabel={appliedFilterLabel(whaleFilters)} freshness={freshnessLabel(whales)} icon={<Waves className="size-4 text-cyan-200" />} title="Whale Edge">
             <WhaleRows
               onSelectWallet={handleSelectWallet}
               requestState={requestState}
               whales={whales?.whales ?? []}
             />
-          </section>
+          </ListPresentation>
         ) : null}
 
         {activeTab === "sharp" ? (
-          <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151718]">
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                <Crosshair className="size-4 text-cyan-200" />
-                Sharp Plays
-              </div>
-              <div className="text-right text-xs text-zinc-500">
-                <div>{freshnessLabel(sharpPlays)}</div>
-                <div>Generated with {appliedFilterLabel(sharpFilters)}</div>
-              </div>
-            </div>
+          <ListPresentation filterLabel={appliedFilterLabel(sharpFilters)} freshness={freshnessLabel(sharpPlays)} icon={<Crosshair className="size-4 text-cyan-200" />} title="Sharp Plays">
             <SharpPlayRows
               onSelectWallet={handleSelectWallet}
               plays={sharpPlays?.plays ?? []}
               requestState={requestState}
             />
-          </section>
+          </ListPresentation>
         ) : null}
 
         {activeTab === "lookup" && selectedProfile ? (
