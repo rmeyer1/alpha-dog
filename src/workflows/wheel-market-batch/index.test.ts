@@ -144,4 +144,35 @@ describe("wheel market batch workflow", () => {
       "all option providers failed",
     );
   });
+
+  it("joins the canonical batch without repeating provider ingestion", async () => {
+    stepMocks.prepare.mockResolvedValueOnce({
+      batch: {
+        batchId: "batch-1",
+        batchKey: "batch-key",
+        created: false,
+        status: "running",
+      },
+      discoveryFilters: { dteMin: 7, dteMax: 45 },
+      optionTypes: ["put", "call"],
+      requests,
+    });
+    const { wheelMarketBatchWorkflow } = await import("./index");
+
+    await expect(
+      wheelMarketBatchWorkflow({
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+        requests,
+      }),
+    ).resolves.toEqual({
+      batchId: "batch-1",
+      canonicalStatus: "running",
+      status: "deduplicated",
+    });
+    expect(stepMocks.stageUnderlyings).not.toHaveBeenCalled();
+    expect(stepMocks.stageOption).not.toHaveBeenCalled();
+    expect(stepMocks.score).not.toHaveBeenCalled();
+    expect(stepMocks.publish).not.toHaveBeenCalled();
+    expect(stepMocks.fail).not.toHaveBeenCalled();
+  });
 });

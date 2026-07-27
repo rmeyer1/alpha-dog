@@ -225,7 +225,7 @@ export interface SharedMarketBatchWorkflowInput {
   requests: WheelScreenerRequest[];
 }
 
-export interface SharedMarketBatchWorkflowResult {
+export interface CompletedSharedMarketBatchWorkflowResult {
   batchId: string;
   ingestion: Omit<MarketBatchIngestionSummary, "metrics">;
   snapshots: Array<{
@@ -236,6 +236,16 @@ export interface SharedMarketBatchWorkflowResult {
   }>;
   status: "complete";
 }
+
+export interface DeduplicatedSharedMarketBatchWorkflowResult {
+  batchId: string;
+  canonicalStatus: MarketBatchStatus;
+  status: "deduplicated";
+}
+
+export type SharedMarketBatchWorkflowResult =
+  | CompletedSharedMarketBatchWorkflowResult
+  | DeduplicatedSharedMarketBatchWorkflowResult;
 
 export interface ScoredMarketBatchConsumer {
   companies: WheelCompanyScore[];

@@ -25,6 +25,19 @@ export async function wheelMarketBatchWorkflow(
   const prepared = await prepareMarketBatchStep(input);
   const batchId = prepared.batch.batchId;
 
+  if (!prepared.batch.created) {
+    console.info("[wheelMarketBatch] DEDUPLICATED", {
+      batchId,
+      canonicalStatus: prepared.batch.status,
+    });
+
+    return {
+      batchId,
+      canonicalStatus: prepared.batch.status,
+      status: "deduplicated",
+    };
+  }
+
   try {
     const underlyingStage = await stageMarketBatchUnderlyingsStep(batchId);
     const optionStages = await Promise.all(

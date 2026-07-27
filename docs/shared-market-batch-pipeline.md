@@ -23,7 +23,9 @@ functions; they are not serialized through the workflow.
 
 1. `create_wheel_market_batch` takes an interval and options feed. An
    advisory transaction lock plus the interval/feed unique constraint returns
-   one canonical batch to concurrent callers.
+   one canonical batch to concurrent callers. Only the caller that created the
+   canonical identity performs ingestion; competing workflow attempts return
+   the canonical batch identity without entering provider steps.
 2. The underlying step refreshes the asset universe, stock snapshots,
    technical context, and cached earnings once. A durable completion
    checkpoint makes later workflow replays read the persisted facts.
