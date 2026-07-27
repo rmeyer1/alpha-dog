@@ -26,6 +26,7 @@ const PAGE_PATHS = [
   "/screeners",
   "/traders",
   "/company/AAPL",
+  "/company/BRK.B",
   "/account",
   "/account/manual",
   "/__security_headers_missing__",

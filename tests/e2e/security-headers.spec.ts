@@ -111,6 +111,7 @@ for (const path of [
   "/screeners",
   "/traders",
   "/company/AAPL",
+  "/company/BRK.B",
   "/account",
   "/account/manual",
   "/__security_headers_missing__",
@@ -226,8 +227,13 @@ test("representative page flows emit no application CSP violations", async ({
       writable: false,
     });
     document.addEventListener("securitypolicyviolation", (event) => {
+      const target =
+        event.target instanceof Element
+          ? event.target.outerHTML.slice(0, 200)
+          : event.sourceFile || "document";
+
       violations.push(
-        `${event.effectiveDirective}:${event.blockedURI || "inline"}`,
+        `${event.effectiveDirective}:${event.blockedURI || "inline"}:${target}`,
       );
     });
   });
@@ -253,6 +259,94 @@ test("representative page flows emit no application CSP violations", async ({
   );
 
   expect(violations).toEqual([]);
+});
+
+test("dotted ticker document executes the nonce-authorized framework runtime", async ({
+  page,
+}) => {
+  const consoleErrors: string[] = [];
+
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  await page.addInitScript(() => {
+    const violations: string[] = [];
+
+    Object.defineProperty(window, "__alphaDogCspViolations", {
+      configurable: false,
+      value: violations,
+      writable: false,
+    });
+    document.addEventListener("securitypolicyviolation", (event) => {
+      const target =
+        event.target instanceof Element
+          ? event.target.outerHTML.slice(0, 200)
+          : event.sourceFile || "document";
+
+      violations.push(
+        `${event.effectiveDirective}:${event.blockedURI || "inline"}:${target}`,
+      );
+    });
+  });
+
+  await page.route("**/api/health/configuration", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      json: { mode: "live", status: "ready" },
+      status: 200,
+    });
+  });
+  await page.route("**/api/logos/BRK.B?v=1", async (route) => {
+    await route.fulfill({
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xn8NAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+      contentType: "image/png",
+      status: 200,
+    });
+  });
+
+  await page.goto("/company/BRK.B?source=security-regression");
+  await expect(page.getByRole("heading", { name: "BRK.B" })).toBeVisible();
+
+  const runtime = await page.evaluate(() => {
+    const currentWindow = window as typeof window & {
+      __alphaDogCspViolations?: string[];
+      __alphaDogDottedDocument?: boolean;
+    };
+    const staticScripts = [...document.scripts].filter((script) =>
+      script.src.includes("/_next/static/"),
+    );
+
+    currentWindow.__alphaDogDottedDocument = true;
+
+    return {
+      staticScriptCount: staticScripts.length,
+      violations: currentWindow.__alphaDogCspViolations ?? [],
+    };
+  });
+
+  expect(runtime.staticScriptCount).toBeGreaterThan(0);
+  expect(runtime.violations).toEqual([]);
+
+  await page.getByRole("link", { name: "Dashboard" }).click();
+  await expect(page).toHaveURL("/");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as typeof window & {
+            __alphaDogDottedDocument?: boolean;
+          }).__alphaDogDottedDocument,
+      ),
+    )
+    .toBe(true);
+
+  expect(consoleErrors).toEqual([]);
 });
 
 test("CSP blocks deliberate unapproved browser capabilities", async ({

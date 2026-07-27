@@ -38,7 +38,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.[^/]+$).*)",
+    "/((?!api(?:/|$)|_next/static|_next/image|images(?:/|$)|favicon.ico|[^/]+\\.[^/]+$).*)",
     "/api/account/:path*",
     "/api/presets/:path*",
     "/api/auth/account-state",

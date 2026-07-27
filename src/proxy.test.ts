@@ -47,6 +47,10 @@ describe("Next.js proxy matcher", () => {
     "/screeners",
     "/traders",
     "/company/AAPL",
+    "/company/BRK.B",
+    "/company/BRK.B?source=matcher",
+    "/research.v2/company/BRK.B",
+    "/research/company/BRK.B.json",
     "/auth/callback",
     "/account",
     "/account/",
@@ -69,6 +73,7 @@ describe("Next.js proxy matcher", () => {
 
   it.each([
     "/api/logos/AAPL",
+    "/api/logos/AAPL?size=64",
     "/api/wheel/screener",
     "/api/finnhub/company/AAPL",
     "/api/polymarket/leaderboard",
@@ -82,11 +87,14 @@ describe("Next.js proxy matcher", () => {
     "/api/preset",
     "/api/cron/wheel/screener-refresh",
     "/_next/static/chunk.js",
+    "/_next/static/chunk.js?v=1",
     "/_next/image?url=%2Flogo.png&w=64&q=75",
     "/robots.txt",
+    "/robots.txt?cache=miss",
     "/sitemap.xml",
     "/manifest.webmanifest",
     "/images/logo.png",
+    "/images/logo.png?v=1",
     "/favicon.ico",
   ])("does not match the public or self-authenticating surface %s", (url) => {
     expect(doesProxyMatch(url)).toBe(false);
