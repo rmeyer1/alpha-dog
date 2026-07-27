@@ -332,6 +332,7 @@ for (const timezoneId of ["UTC", "America/New_York"]) {
       await expect(
         page.getByText("Jul 25, 8:28 AM UTC", { exact: true }),
       ).toBeVisible();
+      await expect(page.getByText("$962B", { exact: true })).toBeVisible();
 
       const policy = response!.headers()["content-security-policy"];
       const responseNonce = expectDocumentCsp(policy);

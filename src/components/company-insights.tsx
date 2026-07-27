@@ -16,13 +16,14 @@ import type {
   FinnhubRecommendationTrend,
 } from "@/lib/finnhub/client";
 import {
-  formatCompactNumber,
-  formatCurrency,
-} from "@/components/wheel-dashboard/formatters";
-import {
   formatCompanyDate,
   formatCompanyNewsDate,
 } from "@/lib/company-date-time";
+import {
+  formatCompanyCurrency,
+  formatCompanyInteger,
+  formatCompanyMarketCapFromMillions,
+} from "@/lib/company-number";
 
 type CompanyInsightStatus = "idle" | "loading" | "success" | "error";
 type RecommendationBucketKey =
@@ -78,19 +79,6 @@ function formatMetricPercent(value: number | null | undefined) {
   }
 
   return `${value.toFixed(1)}%`;
-}
-
-function formatMarketCapFromMillions(value: number | null | undefined) {
-  if (value == null) {
-    return "-";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 1,
-    notation: "compact",
-    style: "currency",
-  }).format(value * 1_000_000);
 }
 
 function latestEarnings(insights: FinnhubCompanyInsights | null) {
@@ -329,7 +317,11 @@ export function CompanyInsightStrip({
           />
           <InsightMetric
             label="Valuation"
-            value={pe == null ? formatMarketCapFromMillions(marketCap) : `${pe.toFixed(1)} PE`}
+            value={
+              pe == null
+                ? formatCompanyMarketCapFromMillions(marketCap)
+                : `${pe.toFixed(1)} PE`
+            }
           />
           <InsightMetric
             label="Analysts"
@@ -568,7 +560,7 @@ export function CompanyInsightSections({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <InsightMetric
             label="Market cap"
-            value={formatMarketCapFromMillions(
+            value={formatCompanyMarketCapFromMillions(
               insights.profile.marketCapitalization ?? metric("marketCapitalization"),
             )}
           />
@@ -578,11 +570,11 @@ export function CompanyInsightSections({
           />
           <InsightMetric
             label="52w high"
-            value={formatCurrency(metric("52WeekHigh"))}
+            value={formatCompanyCurrency(metric("52WeekHigh"))}
           />
           <InsightMetric
             label="52w low"
-            value={formatCurrency(metric("52WeekLow"))}
+            value={formatCompanyCurrency(metric("52WeekLow"))}
           />
           <InsightMetric
             label="Beta"
@@ -598,7 +590,7 @@ export function CompanyInsightSections({
           />
           <InsightMetric
             label="Shares"
-            value={formatCompactNumber(insights.profile.shareOutstanding)}
+            value={formatCompanyInteger(insights.profile.shareOutstanding)}
           />
         </div>
       </InsightShell>
@@ -662,7 +654,7 @@ export function CompanyContextPanel({
             <div>
               <div className="text-xs text-zinc-500">52w range</div>
               <div className="font-mono text-zinc-100">
-                {formatCurrency(low)} - {formatCurrency(high)}
+                {formatCompanyCurrency(low)} - {formatCompanyCurrency(high)}
               </div>
             </div>
           </div>

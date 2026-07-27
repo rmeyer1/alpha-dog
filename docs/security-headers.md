@@ -47,6 +47,12 @@ company-news data in both UTC and `America/New_York`, listens for unhandled
 `pageerror` events before navigation, and verifies framework nonces, CSP
 violations, console errors, visible content, and client-side navigation.
 
+`src/lib/company-number.ts` owns hydration-visible currency, integer, and
+compact market-cap formatting for company Client Components. It uses fixed
+arithmetic and punctuation rather than runtime ICU data; this prevents compact
+notation differences such as `$962.0B` on the server and `$962B` in the
+browser.
+
 ## Supabase Auth cookies
 
 Supabase SSR uses PKCE and requires the browser client to read the refresh
