@@ -3,6 +3,7 @@ import { privateProviderFetchTracing } from "@/lib/observability/provider";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv } from "@/lib/env";
+import { readBoundedBody } from "@/lib/http/read-bounded-body";
 
 const logoCacheControl =
   "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800";
@@ -56,6 +57,22 @@ function getLogoDevToken() {
   }
 
   return env.LOGO_DEV_PUBLISHABLE_KEY;
+}
+
+function hasUnsafeDeclaredLength(value: string | null) {
+  if (value === null) {
+    return false;
+  }
+
+  const normalized = value.trim();
+
+  if (!/^\d+$/.test(normalized)) {
+    return true;
+  }
+
+  const contentLength = Number(normalized);
+
+  return !Number.isSafeInteger(contentLength) || contentLength > maxLogoBytes;
 }
 
 async function GETHandler(
@@ -113,9 +130,13 @@ async function GETHandler(
       }));
     }
 
-    const contentLength = Number(response.headers.get("content-length"));
+    if (hasUnsafeDeclaredLength(response.headers.get("content-length"))) {
+      try {
+        await response.body?.cancel("unsafe declared content length");
+      } catch {
+        // The response is rejected even when the upstream cannot be cancelled.
+      }
 
-    if (Number.isFinite(contentLength) && contentLength > maxLogoBytes) {
       return guard.withAuthCookies(logoUnavailableResponse({
         reason: "unsafe-image-body",
         status: 502,
@@ -123,9 +144,11 @@ async function GETHandler(
       }));
     }
 
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    let bodyResult;
 
-    if (!isSafePng(bytes)) {
+    try {
+      bodyResult = await readBoundedBody(response.body, maxLogoBytes);
+    } catch {
       return guard.withAuthCookies(logoUnavailableResponse({
         reason: "unsafe-image-body",
         status: 502,
@@ -133,7 +156,15 @@ async function GETHandler(
       }));
     }
 
-    return guard.withAuthCookies(new NextResponse(bytes, {
+    if (bodyResult.status === "too-large" || !isSafePng(bodyResult.bytes)) {
+      return guard.withAuthCookies(logoUnavailableResponse({
+        reason: "unsafe-image-body",
+        status: 502,
+        upstreamStatus: response.status,
+      }));
+    }
+
+    return guard.withAuthCookies(new NextResponse(bodyResult.bytes, {
       headers: {
         "Cache-Control": logoCacheControl,
         "Content-Disposition": `inline; filename="${symbol}.png"`,

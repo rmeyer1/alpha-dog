@@ -62,11 +62,14 @@ shared by a CDN.
 
 ## Proxied content
 
-The logo route requests PNG explicitly, accepts only `image/png`, limits the
-response to 1 MB, verifies the eight-byte PNG signature, normalizes the
+The logo route requests PNG explicitly, accepts only `image/png`, and reads the
+upstream stream through a hard 1 MB transport-time cap. Declared oversize or
+malformed lengths are rejected and cancelled before reading; absent or
+understated lengths remain bounded while streaming and are cancelled on
+overflow. The route then verifies the eight-byte PNG signature, normalizes the
 downstream type, and emits `nosniff`. HTML, SVG/XML, missing or malformed MIME,
-spoofed PNG bodies, and oversized responses fail closed without forwarding
-upstream headers or bytes.
+spoofed PNG bodies, read failures, and oversized responses fail closed without
+forwarding upstream headers or bytes.
 
 Primary references:
 

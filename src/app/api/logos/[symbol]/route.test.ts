@@ -33,6 +33,44 @@ function pngBytes(payloadLength = 8) {
   ]);
 }
 
+function chunkedResponse({
+  chunks,
+  contentLength,
+  onCancel = vi.fn(),
+}: {
+  chunks: Uint8Array[];
+  contentLength?: string;
+  onCancel?: ReturnType<typeof vi.fn>;
+}) {
+  return {
+    onCancel,
+    response: new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: onCancel,
+        pull(controller) {
+          const chunk = chunks.shift();
+
+          if (chunk) {
+            controller.enqueue(chunk);
+            return;
+          }
+
+          controller.close();
+        },
+      }),
+      {
+        headers: {
+          ...(contentLength === undefined
+            ? {}
+            : { "content-length": contentLength }),
+          "content-type": "image/png",
+        },
+        status: 200,
+      },
+    ),
+  };
+}
+
 beforeEach(() => {
   vi.resetModules();
   fetchMock.mockReset();
@@ -164,14 +202,125 @@ describe("GET /api/logos/[symbol]", () => {
   });
 
   it("rejects oversized upstream images before reading their body", async () => {
+    const { onCancel, response: upstreamResponse } = chunkedResponse({
+      chunks: [pngBytes()],
+      contentLength: "1000001",
+    });
+    fetchMock.mockResolvedValue(upstreamResponse);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://alpha-dog.test"),
+      logoRequest(),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("X-Alpha-Dog-Logo-Reason")).toBe(
+      "unsafe-image-body",
+    );
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["invalid", "-1", "100000000000000000000"])(
+    "rejects an unsafe declared content length %s",
+    async (contentLength) => {
+      const { response: upstreamResponse } = chunkedResponse({
+        chunks: [pngBytes()],
+        contentLength,
+      });
+      fetchMock.mockResolvedValue(upstreamResponse);
+
+      const { GET } = await import("./route");
+      const response = await GET(
+        new Request("https://alpha-dog.test"),
+        logoRequest(),
+      );
+
+      expect(response.status).toBe(502);
+      expect(response.headers.get("X-Alpha-Dog-Logo-Reason")).toBe(
+        "unsafe-image-body",
+      );
+    },
+  );
+
+  it("stops and cancels a chunked oversized body without content-length", async () => {
+    const { onCancel, response: upstreamResponse } = chunkedResponse({
+      chunks: [
+        pngBytes(499_992),
+        new Uint8Array(500_001),
+        new Uint8Array([1]),
+      ],
+    });
+    fetchMock.mockResolvedValue(upstreamResponse);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://alpha-dog.test"),
+      logoRequest(),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("X-Alpha-Dog-Logo-Reason")).toBe(
+      "unsafe-image-body",
+    );
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not trust an understated content-length", async () => {
+    const { response: upstreamResponse } = chunkedResponse({
+      chunks: [pngBytes(999_992), new Uint8Array([1])],
+      contentLength: "16",
+    });
+    fetchMock.mockResolvedValue(upstreamResponse);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://alpha-dog.test"),
+      logoRequest(),
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("X-Alpha-Dog-Logo-Reason")).toBe(
+      "unsafe-image-body",
+    );
+  });
+
+  it("accepts a valid PNG whose body is exactly the byte limit", async () => {
+    const exactLimitPng = pngBytes(999_992);
+    const { response: upstreamResponse } = chunkedResponse({
+      chunks: [
+        exactLimitPng.subarray(0, 500_000),
+        exactLimitPng.subarray(500_000),
+      ],
+      contentLength: "1000000",
+    });
+    fetchMock.mockResolvedValue(upstreamResponse);
+
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://alpha-dog.test"),
+      logoRequest(),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.arrayBuffer()).byteLength).toBe(1_000_000);
+  });
+
+  it("fails closed and releases the paid-route guard when a body read fails", async () => {
+    const failure = new Error("upstream read failed");
     fetchMock.mockResolvedValue(
-      new Response(pngBytes(), {
-        headers: {
-          "content-length": "1000001",
-          "content-type": "image/png",
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(failure);
+          },
+        }),
+        {
+          headers: { "content-type": "image/png" },
+          status: 200,
         },
-        status: 200,
-      }),
+      ),
     );
 
     const { GET } = await import("./route");
@@ -184,5 +333,6 @@ describe("GET /api/logos/[symbol]", () => {
     expect(response.headers.get("X-Alpha-Dog-Logo-Reason")).toBe(
       "unsafe-image-body",
     );
+    expect(releaseGuardMock).toHaveBeenCalledTimes(1);
   });
 });
