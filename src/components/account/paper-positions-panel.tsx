@@ -15,6 +15,7 @@ import {
   PositionLegSnapshotList,
   type SavedPositionLegSnapshot,
 } from "@/components/wheel-dashboard/position-leg-snapshot";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 
 type PositionValuation = {
   markStatus: "available" | "unavailable";
@@ -389,8 +390,12 @@ function provenanceLabel(provenance: PositionDataProvenance) {
 
 function LoadingState() {
   return (
-    <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-zinc-400">
-      <Loader2 className="size-4 animate-spin" />
+    <div
+      aria-atomic="true"
+      className="flex min-h-36 items-center justify-center gap-2 text-sm text-zinc-400"
+      role="status"
+    >
+      <Loader2 aria-hidden="true" className="size-4 animate-spin" />
       Loading simulated positions
     </div>
   );
@@ -404,7 +409,11 @@ function ErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-red-300/25 bg-red-300/10 p-4 text-sm text-red-100">
+    <div
+      aria-atomic="true"
+      className="rounded-lg border border-red-300/25 bg-red-300/10 p-4 text-sm text-red-100"
+      role="alert"
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-2">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -997,10 +1006,6 @@ function ClosePositionForm({
   const [submitState, setSubmitState] =
     useState<CloseSubmitState>({ status: "idle" });
 
-  useEffect(() => {
-    contractsInputRef.current?.focus();
-  }, []);
-
   const isSubmitting = submitState.status === "submitting";
   const isSuccess = submitState.status === "success";
   const parsedContracts = Number(contracts);
@@ -1082,18 +1087,14 @@ function ClosePositionForm({
   }
 
   return (
-    <div
-      aria-label="Close simulated position"
-      aria-modal="true"
-      className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm"
-      role="dialog"
+    <AccessibleOverlay
+      className="z-[60] bg-black/75 backdrop-blur-sm"
+      description="Enter the contracts, buyback price, close date, and optional notes for this simulated position. Press Escape to cancel."
+      initialFocusRef={contractsInputRef}
+      label="Close simulated position"
+      onClose={onClose}
+      priority={10}
     >
-      <button
-        aria-label="Close buyback modal"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
       <section className="absolute inset-x-0 bottom-0 max-h-[90vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[520px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -1181,8 +1182,9 @@ function ClosePositionForm({
 
           {submitState.status === "error" ? (
             <div
-              aria-live="polite"
+              aria-atomic="true"
               className="rounded-lg border border-red-300/25 bg-red-300/10 p-3 text-sm text-red-100"
+              role="alert"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <span>{submitState.message}</span>
@@ -1202,8 +1204,9 @@ function ClosePositionForm({
 
           {submitState.status === "success" ? (
             <p
-              aria-live="polite"
+              aria-atomic="true"
               className="inline-flex items-center gap-2 text-sm text-emerald-100"
+              role="status"
             >
               <CheckCircle2 className="size-4" />
               {submitState.message}
@@ -1229,7 +1232,7 @@ function ClosePositionForm({
           </div>
         </form>
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }
 
@@ -1253,18 +1256,11 @@ function PositionDetailDrawer({
     : "Position detail";
 
   return (
-    <div
-      aria-label="Simulated position detail"
-      aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-      role="dialog"
+    <AccessibleOverlay
+      description="Review the simulated position valuation, saved legs, and lifecycle events. Press Escape to close."
+      label="Simulated position detail"
+      onClose={onClose}
     >
-      <button
-        aria-label="Close position detail"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
       <section className="absolute inset-x-0 bottom-0 max-h-[90vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[720px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -1303,7 +1299,7 @@ function PositionDetailDrawer({
           />
         ) : null}
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }
 
@@ -1840,7 +1836,7 @@ export function PaperPositionsPanel() {
                 : "historical positions"}
             />
           ) : null}
-          <p aria-live="polite" className="sr-only">
+          <p aria-atomic="true" className="sr-only" role="status">
             {loadState.announcement}
           </p>
         </>

@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 import type { SimulatedPositionInput } from "@/lib/account/simulated-positions";
 import type { WheelCompanyStrategy } from "@/lib/wheel/types";
 import {
@@ -392,21 +393,10 @@ function AddPositionModalContent({
   onClose: () => void;
   request: OpenPositionCandidateRequest;
 }) {
+  const strategyInputRef = useRef<HTMLSelectElement>(null);
   const [values, setValues] = useState<PositionFormValues>(() =>
     defaultFormValues(request));
   const [submitStatus, setSubmitStatus] = useState<SubmitStatus>({ status: "idle" });
-
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", closeOnEscape);
-
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
 
   const summary = candidateSummary(request);
   const isSubmitting = submitStatus.status === "submitting";
@@ -488,18 +478,12 @@ function AddPositionModalContent({
   }
 
   return (
-    <div
-      aria-label="Open simulated position"
-      aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-      role="dialog"
+    <AccessibleOverlay
+      description="Review the candidate snapshot and enter the simulated position details. Press Escape to close without saving."
+      initialFocusRef={strategyInputRef}
+      label="Open simulated position"
+      onClose={onClose}
     >
-      <button
-        aria-label="Close add position modal"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
       <section className="absolute inset-x-0 bottom-0 max-h-[90vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[560px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -563,6 +547,7 @@ function AddPositionModalContent({
                       }
                     : current)}
               value={values.strategyType}
+              ref={strategyInputRef}
             >
               {strategyOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -634,8 +619,9 @@ function AddPositionModalContent({
 
           {submitStatus.status === "error" ? (
             <div
-              aria-live="polite"
+              aria-atomic="true"
               className="rounded-lg border border-red-300/25 bg-red-300/10 p-3 text-sm text-red-100"
+              role="alert"
             >
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -656,8 +642,9 @@ function AddPositionModalContent({
 
           {isSuccess ? (
             <div
-              aria-live="polite"
+              aria-atomic="true"
               className="rounded-lg border border-emerald-300/25 bg-emerald-300/10 p-3 text-sm text-emerald-100"
+              role="status"
             >
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
@@ -693,6 +680,6 @@ function AddPositionModalContent({
           </div>
         </form>
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }

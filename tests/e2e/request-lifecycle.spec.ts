@@ -408,7 +408,9 @@ test("Wallet Lookup releases an in-flight leaderboard loading state", async ({
   await page.getByRole("button", { name: "Analyze Wallet" }).click();
 
   await expect(page.getByText(walletOne).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+  await expect(
+    page.locator("main button").filter({ hasText: "Refresh" }).first(),
+  ).toBeEnabled();
   await expect(page.getByText(/Unable to load/)).toHaveCount(0);
 
   leaderboardRequest.resolve();

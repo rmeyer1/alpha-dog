@@ -53,6 +53,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@opentelemetry/context-async-hooks": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@playwright/test": "^1.61.1",

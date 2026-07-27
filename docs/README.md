@@ -20,6 +20,7 @@ This documentation package translates the Wheel Strategy Dashboard BRD into impl
 - [`wheel_strategy_frontend_ux_spec.md`](./wheel_strategy_frontend_ux_spec.md) — React/Next.js dashboard UX, table, warning, accessibility, and state behavior.
 - [`wheel_strategy_implementation_plan.md`](./wheel_strategy_implementation_plan.md) — Engineering build phases and acceptance criteria.
 - [`simulated_position_tracker_prd.md`](./simulated_position_tracker_prd.md) — PRD and rollout plan for simulated premium-selling position tracking.
+- [`route-dialog-accessibility-qa.md`](./route-dialog-accessibility-qa.md) — Automated and manual route-boundary, overlay, screen-reader, zoom, responsive, reduced-motion, and forced-colors verification.
 - [`market-calendar-operations.md`](./market-calendar-operations.md) — Versioned NYSE session calendar contract, sources, option-expiry assumptions, and annual update runbook.
 
 ## MVP Architecture Decision

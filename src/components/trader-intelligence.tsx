@@ -45,6 +45,7 @@ import {
   isAbortError,
   LatestRequestLifecycle,
 } from "@/lib/request-lifecycle";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 
 type DashboardTab = TraderDashboardTab;
 type RequestState = "idle" | "loading" | "refreshing" | "success" | "error";
@@ -503,7 +504,11 @@ function TraderRows({
     traders.length === 0
   ) {
     return (
-      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+      <div
+        aria-atomic="true"
+        className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400"
+        role="status"
+      >
         Loading traders...
       </div>
     );
@@ -617,7 +622,11 @@ function WhaleRows({
     whales.length === 0
   ) {
     return (
-      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+      <div
+        aria-atomic="true"
+        className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400"
+        role="status"
+      >
         Loading whale candidates...
       </div>
     );
@@ -731,7 +740,11 @@ function SharpPlayRows({
     plays.length === 0
   ) {
     return (
-      <div className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400">
+      <div
+        aria-atomic="true"
+        className="border-t border-white/10 px-5 py-12 text-center text-sm text-zinc-400"
+        role="status"
+      >
         Finding overlapping smart-trader positions...
       </div>
     );
@@ -859,7 +872,7 @@ function SharpPlayRows({
   );
 }
 
-function WalletDrawer({
+export function WalletDrawer({
   loading,
   onClose,
   profile,
@@ -875,7 +888,12 @@ function WalletDrawer({
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60">
+    <AccessibleOverlay
+      className="bg-black/60"
+      description={`Review positions, activity, and risk measures for wallet ${wallet}. Press Escape to close.`}
+      label="Wallet profile"
+      onClose={onClose}
+    >
       <div className="absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col border-l border-white/10 bg-[#111314] shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-white/10 p-4">
           <div className="min-w-0">
@@ -884,6 +902,7 @@ function WalletDrawer({
           </div>
           <div className="flex items-center gap-2">
             <button
+              aria-label="Copy wallet"
               className="inline-flex size-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-200 transition hover:bg-white/[0.08]"
               onClick={() => void navigator.clipboard?.writeText(wallet)}
               title="Copy wallet"
@@ -892,6 +911,7 @@ function WalletDrawer({
               <Copy className="size-4" />
             </button>
             <button
+              aria-label="Close wallet profile"
               className="inline-flex size-10 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-200 transition hover:bg-white/[0.08]"
               onClick={onClose}
               title="Close"
@@ -903,11 +923,19 @@ function WalletDrawer({
         </div>
 
         {loading || !profile ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-zinc-400">
+          <div
+            aria-atomic="true"
+            className="flex flex-1 items-center justify-center text-sm text-zinc-400"
+            role="status"
+          >
             Loading wallet profile...
           </div>
         ) : (
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div
+            aria-label="Wallet profile details"
+            className="min-h-0 flex-1 overflow-y-auto p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-cyan-300"
+            tabIndex={0}
+          >
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Metric label="Value" value={formatMoney(profile.totalValue)} />
               <Metric label="Open Value" value={formatMoney(profile.summary.totalOpenValue)} />
@@ -999,7 +1027,7 @@ function WalletDrawer({
           </div>
         )}
       </div>
-    </div>
+    </AccessibleOverlay>
   );
 }
 
@@ -1441,6 +1469,9 @@ export function TraderIntelligence() {
     const wallet = lookupWallet.trim();
 
     if (walletPattern.test(wallet)) {
+      listLifecycle.current.abort();
+      setRequestState("idle");
+      setListError(null);
       handleSelectWallet(wallet);
     }
   }
@@ -1533,7 +1564,11 @@ export function TraderIntelligence() {
         )}
 
         {visibleError ? (
-          <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+          <div
+            aria-atomic="true"
+            className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100"
+            role="alert"
+          >
             {visibleError}
           </div>
         ) : null}

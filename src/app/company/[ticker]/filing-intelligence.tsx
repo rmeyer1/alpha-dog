@@ -8,7 +8,8 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 import { formatScoreLabel } from "@/components/wheel-dashboard/formatters";
 import { formatCompanyDateTime } from "@/lib/company-date-time";
 import type {
@@ -462,51 +463,22 @@ function FilingReviewModal({
     [filings, modal],
   );
 
-  useEffect(() => {
-    if (!modal) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    const wasOverflowHidden = document.body.classList.contains(
-      "overflow-hidden",
-    );
-
-    document.body.classList.add("overflow-hidden");
-    window.addEventListener("keydown", onKeyDown);
-
-    return () => {
-      if (!wasOverflowHidden) {
-        document.body.classList.remove("overflow-hidden");
-      }
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [modal, onClose]);
-
   if (!modal) {
     return null;
   }
 
   return (
-    <div
-      aria-label={
+    <AccessibleOverlay
+      description={
+        modal.kind === "analysis"
+          ? "Review the complete filing analysis and its source links. Press Escape to close."
+          : "Read the complete filing section. Press Escape to close."
+      }
+      label={
         modal.kind === "analysis" ? "Filing analysis details" : "Filing section details"
       }
-      aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-      role="dialog"
+      onClose={onClose}
     >
-      <button
-        aria-label="Close filing details"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
-
       <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[760px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -570,7 +542,7 @@ function FilingReviewModal({
           </div>
         )}
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }
 

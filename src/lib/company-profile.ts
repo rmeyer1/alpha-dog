@@ -24,7 +24,7 @@ export interface CompanyProfile {
 }
 
 export interface EquityMarketProfile {
-  status: "available" | "not_configured" | "error";
+  status: "available" | "not_configured" | "not_found" | "error";
   message?: string;
   asset: AlpacaAsset | null;
   snapshot: AlpacaStockSnapshot | null;
@@ -116,8 +116,31 @@ export interface SignalScribeSection {
   section_text: string;
 }
 
-function normalizeTicker(ticker: string) {
-  return ticker.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+export function normalizeCompanyTicker(ticker: string) {
+  const normalized = ticker.toUpperCase();
+
+  if (
+    ticker !== ticker.trim() ||
+    normalized.length > 15 ||
+    !/^[A-Z][A-Z0-9]{0,9}(?:[.-][A-Z0-9]{1,4})?$/.test(normalized)
+  ) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function providerStatus(error: unknown) {
+  if (
+    error &&
+    typeof error === "object" &&
+    "status" in error &&
+    typeof error.status === "number"
+  ) {
+    return error.status;
+  }
+
+  return null;
 }
 
 function returnFromBars(bars: AlpacaBar[], sessionsAgo: number) {
@@ -214,6 +237,21 @@ async function getEquityMarketProfile(
     const bars = barsResult.status === "fulfilled" ? barsResult.value : [];
 
     if (!snapshot && bars.length === 0 && !asset) {
+      if (
+        assetResult.status === "rejected" &&
+        providerStatus(assetResult.reason) === 404
+      ) {
+        return {
+          status: "not_found",
+          message: "The company symbol was not found.",
+          asset: null,
+          snapshot: null,
+          bars: [],
+          stats: null,
+          asOf: null,
+        };
+      }
+
       const errors = [assetResult, snapshotResult, barsResult]
         .filter((result) => result.status === "rejected")
         .map((result) =>
@@ -428,7 +466,12 @@ export async function getCompanyProfile(
   tickerInput: string,
   options: { signal?: AbortSignal } = {},
 ) {
-  const ticker = normalizeTicker(tickerInput);
+  const ticker = normalizeCompanyTicker(tickerInput);
+
+  if (!ticker) {
+    throw new RangeError("Invalid company ticker.");
+  }
+
   const [market, signalScribe] = await Promise.all([
     getEquityMarketProfile(ticker, options.signal),
     getSignalScribeProfile(ticker, options.signal),
@@ -439,4 +482,12 @@ export async function getCompanyProfile(
     market,
     signalScribe,
   } satisfies CompanyProfile;
+}
+
+export function companyProfileIsNotFound(profile: CompanyProfile) {
+  return profile.market.status === "not_found" ||
+    (
+      profile.market.status === "not_configured" &&
+      profile.signalScribe.status === "not_found"
+    );
 }

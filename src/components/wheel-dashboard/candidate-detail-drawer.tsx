@@ -3,6 +3,7 @@ import {
   CompanyContextPanel,
   type CompanyInsightState,
 } from "@/components/company-insights";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 import type { WheelCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
@@ -185,19 +186,11 @@ export function CandidateDetailDrawer({
   const breakdownRows = scoreBreakdownRows(candidate);
 
   return (
-    <div
-      aria-label="Contract ranking details"
-      aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-      role="dialog"
+    <AccessibleOverlay
+      description="Review the contract ranking, warnings, company context, analysis, and cash requirements. Press Escape to close."
+      label="Contract ranking details"
+      onClose={onClose}
     >
-      <button
-        aria-label="Close contract details"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
-
       <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:hidden">
         <CandidateHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5 grid grid-cols-2 gap-3">
@@ -285,6 +278,6 @@ export function CandidateDetailDrawer({
           />
         </div>
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }

@@ -43,6 +43,9 @@ export default defineConfig({
         NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: "",
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
         OPENAI_API_KEY: "",
+        SIGNAL_SCRIBE_SUPABASE_SERVICE_ROLE_KEY:
+          "playwright-signal-scribe-service-role",
+        SIGNAL_SCRIBE_SUPABASE_URL: "http://127.0.0.1:3101",
       },
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

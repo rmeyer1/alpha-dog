@@ -11,10 +11,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { CompanyInsightSections } from "@/components/company-insights";
 import { CompanyLogo } from "@/components/company-logo";
 import {
   getCompanyProfile,
+  companyProfileIsNotFound,
+  normalizeCompanyTicker,
   type AlpacaBar,
   type SignalScribeFinancialFact,
   type SignalScribeProfile,
@@ -43,10 +46,12 @@ export async function generateMetadata({
   params: Promise<{ ticker: string }>;
 }): Promise<Metadata> {
   const { ticker } = await params;
-  const normalizedTicker = ticker.toUpperCase();
+  const normalizedTicker = normalizeCompanyTicker(ticker);
 
   return {
-    title: `${normalizedTicker} Company Profile | Alpha Dog`,
+    title: normalizedTicker
+      ? `${normalizedTicker} Company Profile | Alpha Dog`
+      : "Company Not Found | Alpha Dog",
   };
 }
 
@@ -408,7 +413,17 @@ export default async function CompanyProfilePage({
   params: Promise<{ ticker: string }>;
 }) {
   const { ticker: tickerParam } = await params;
-  const profile = await getCompanyProfile(tickerParam);
+  const normalizedTicker = normalizeCompanyTicker(tickerParam);
+
+  if (!normalizedTicker) {
+    notFound();
+  }
+
+  const profile = await getCompanyProfile(normalizedTicker);
+
+  if (companyProfileIsNotFound(profile)) {
+    notFound();
+  }
   const { market, signalScribe, ticker } = profile;
   const companyInsights = await getCompanyInsightsSafely(ticker);
   const stats = market.stats;

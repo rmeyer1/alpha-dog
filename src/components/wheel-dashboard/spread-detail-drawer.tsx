@@ -3,6 +3,7 @@ import {
   CompanyContextPanel,
   type CompanyInsightState,
 } from "@/components/company-insights";
+import { AccessibleOverlay } from "@/components/ui/accessible-overlay";
 import type { VerticalSpreadCandidate } from "@/lib/wheel/types";
 import { DetailMetric } from "./detail-metric";
 import {
@@ -172,18 +173,11 @@ export function SpreadDetailDrawer({
   ];
 
   return (
-    <div
-      aria-label="Credit spread details"
-      aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-      role="dialog"
+    <AccessibleOverlay
+      description="Review the credit spread ranking, warnings, company context, analysis, and defined-risk payoff. Press Escape to close."
+      label="Credit spread details"
+      onClose={onClose}
     >
-      <button
-        aria-label="Close spread details"
-        className="absolute inset-0 cursor-default"
-        onClick={onClose}
-        type="button"
-      />
       <section className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto rounded-t-xl border border-white/10 bg-[#151718] p-4 shadow-2xl lg:top-1/2 lg:left-1/2 lg:bottom-auto lg:w-[620px] lg:max-w-[calc(100vw-64px)] lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:p-5">
         <SpreadHeader candidate={candidate} onClose={onClose} />
         <div className="mt-5">
@@ -212,6 +206,6 @@ export function SpreadDetailDrawer({
           <WarningBadges warnings={candidate.warnings} />
         </div>
       </section>
-    </div>
+    </AccessibleOverlay>
   );
 }

@@ -38,6 +38,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         <DeploymentStatusBanner />
         {children}
+        <div id="alpha-dog-overlay-root" />
         <LegalFooter />
       </body>
     </html>
