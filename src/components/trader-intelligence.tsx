@@ -18,21 +18,13 @@ import Link from "next/link";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  PolymarketCategory,
   PolymarketLeaderboardResponse,
-  PolymarketOrderBy,
   PolymarketSharpPlaysResponse,
-  PolymarketTimePeriod,
   PolymarketWhalesResponse,
   SharpPlay,
   TraderSummary,
   TraderWalletProfile,
   WhaleCandidate,
-} from "@/lib/polymarket/types";
-import {
-  polymarketCategories,
-  polymarketOrderByValues,
-  polymarketTimePeriods,
 } from "@/lib/polymarket/types";
 import {
   parseTraderDashboardState,
@@ -294,123 +286,6 @@ function Header({
     </div>
   );
 }
-
-function LegacyFilters({
-  appliedFilters,
-  category,
-  hasUnappliedChanges,
-  limit,
-  minValue,
-  onApply,
-  onCategoryChange,
-  onLimitChange,
-  onMinValueChange,
-  onOrderByChange,
-  onTimePeriodChange,
-  orderBy,
-  showMinValue,
-  timePeriod,
-}: {
-  appliedFilters: TraderAppliedFilters;
-  category: PolymarketCategory;
-  hasUnappliedChanges: boolean;
-  limit: number;
-  minValue: number;
-  onApply: () => void;
-  onCategoryChange: (category: PolymarketCategory) => void;
-  onLimitChange: (limit: number) => void;
-  onMinValueChange: (value: number) => void;
-  onOrderByChange: (orderBy: PolymarketOrderBy) => void;
-  onTimePeriodChange: (period: PolymarketTimePeriod) => void;
-  orderBy: PolymarketOrderBy;
-  showMinValue: boolean;
-  timePeriod: PolymarketTimePeriod;
-}) {
-  return (
-    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#151718] p-4 md:grid-cols-4 xl:grid-cols-6">
-      <label className="grid gap-1.5 text-sm">
-        <span className="text-zinc-400">Category</span>
-        <select
-          className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-          onChange={(event) =>
-            onCategoryChange(event.target.value as PolymarketCategory)}
-          value={category}
-        >
-          {polymarketCategories.map((item) => (
-            <option key={item} value={item}>{item}</option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1.5 text-sm">
-        <span className="text-zinc-400">Period</span>
-        <select
-          className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-          onChange={(event) =>
-            onTimePeriodChange(event.target.value as PolymarketTimePeriod)}
-          value={timePeriod}
-        >
-          {polymarketTimePeriods.map((item) => (
-            <option key={item} value={item}>{item}</option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1.5 text-sm">
-        <span className="text-zinc-400">Rank By</span>
-        <select
-          className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-          onChange={(event) =>
-            onOrderByChange(event.target.value as PolymarketOrderBy)}
-          value={orderBy}
-        >
-          {polymarketOrderByValues.map((item) => (
-            <option key={item} value={item}>{item}</option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1.5 text-sm">
-        <span className="text-zinc-400">Rows</span>
-        <input
-          className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-          max={50}
-          min={1}
-          onChange={(event) => onLimitChange(Number(event.target.value))}
-          type="number"
-          value={limit}
-        />
-      </label>
-      {showMinValue ? (
-        <label className="grid gap-1.5 text-sm">
-          <span className="text-zinc-400">Min Value</span>
-          <input
-            className="h-10 rounded-lg border border-white/10 bg-black/30 px-3 text-white outline-none"
-            min={0}
-            onChange={(event) => onMinValueChange(Number(event.target.value))}
-            step={1000}
-            type="number"
-            value={minValue}
-          />
-        </label>
-      ) : null}
-      <div className="grid content-end gap-1.5">
-        <button
-          className="h-10 rounded-lg bg-cyan-300 px-4 text-sm font-semibold text-black transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!hasUnappliedChanges}
-          onClick={onApply}
-          type="button"
-        >
-          Apply filters
-        </button>
-        <span className="text-[11px] text-zinc-500">
-          {hasUnappliedChanges
-            ? "Draft changes are pending."
-            : `${appliedFilters.category} · ${appliedFilters.timePeriod}`}
-        </span>
-      </div>
-    </section>
-  );
-}
-
-void LegacyFilters;
 
 function SignalBriefing({ activeTab }: { activeTab: DashboardTab }) {
   const copy = activeTab === "whales"
@@ -1016,23 +891,6 @@ export function TraderIntelligence() {
   const listError = request.listError;
   const profileError = request.profileError;
   const profileLoading = request.profileLoading;
-  const setRequestState = (next: RequestState | ((current: RequestState) => RequestState)) => {
-    const value = typeof next === "function" ? next(request.listState) : next;
-    if (value === "loading" || value === "refreshing") dispatchRequest({ type: "list/start", refreshing: value === "refreshing" });
-    else if (value === "success") dispatchRequest({ type: "list/success" });
-    else if (value === "idle") dispatchRequest({ type: "list/reset" });
-    else dispatchRequest({ type: "list/error", message: request.listError ?? "Unable to load trader data." });
-  };
-  const setListError = (message: string | null) => {
-    if (message) dispatchRequest({ type: "list/error", message });
-  };
-  const setProfileError = (message: string | null) => {
-    if (message) dispatchRequest({ type: "profile/error", message });
-    else dispatchRequest({ type: "profile/reset" });
-  };
-  const setProfileLoading = (loading: boolean) => {
-    dispatchRequest({ type: loading ? "profile/start" : "profile/success" });
-  };
   const [lookupWallet, setLookupWallet] = useState("");
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] =
@@ -1058,8 +916,7 @@ export function TraderIntelligence() {
 
   const loadLeaderboard = useCallback(async (forceRefresh = false) => {
     const token = listLifecycle.current.begin();
-    setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setListError(null);
+    dispatchRequest({ type: "list/start" });
 
     try {
       const nextParams = new URLSearchParams(params);
@@ -1089,7 +946,7 @@ export function TraderIntelligence() {
           ...current,
           smart: appliedFilters,
         }));
-        setRequestState("success");
+        dispatchRequest({ type: "list/success" });
       });
     } catch (caught) {
       if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
@@ -1097,24 +954,21 @@ export function TraderIntelligence() {
       }
 
       listLifecycle.current.commit(token, () => {
-        setRequestState("error");
-        setListError(
-          caught instanceof Error
+        dispatchRequest({
+          type: "list/error",
+          message: caught instanceof Error
             ? caught.message
             : "Unable to load trader leaderboard.",
-        );
+        });
       });
     } finally {
       listLifecycle.current.finish(token);
     }
-  // The reducer dispatcher is stable; local transition adapters intentionally do not trigger requests.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedFilters, params]);
+  }, [appliedFilters, dispatchRequest, params]);
 
   const loadWhales = useCallback(async (forceRefresh = false) => {
     const token = listLifecycle.current.begin();
-    setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setListError(null);
+    dispatchRequest({ type: "list/start" });
 
     try {
       const nextParams = new URLSearchParams(params);
@@ -1145,7 +999,7 @@ export function TraderIntelligence() {
           ...current,
           whales: appliedFilters,
         }));
-        setRequestState("success");
+        dispatchRequest({ type: "list/success" });
       });
     } catch (caught) {
       if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
@@ -1153,23 +1007,21 @@ export function TraderIntelligence() {
       }
 
       listLifecycle.current.commit(token, () => {
-        setRequestState("error");
-        setListError(
-          caught instanceof Error
+        dispatchRequest({
+          type: "list/error",
+          message: caught instanceof Error
             ? caught.message
             : "Unable to load whale candidates.",
-        );
+        });
       });
     } finally {
       listLifecycle.current.finish(token);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedFilters, params]);
+  }, [appliedFilters, dispatchRequest, params]);
 
   const loadSharpPlays = useCallback(async (forceRefresh = false) => {
     const token = listLifecycle.current.begin();
-    setRequestState((current) => current === "success" ? "refreshing" : "loading");
-    setListError(null);
+    dispatchRequest({ type: "list/start" });
 
     try {
       const nextParams = new URLSearchParams(params);
@@ -1200,7 +1052,7 @@ export function TraderIntelligence() {
           ...current,
           sharp: appliedFilters,
         }));
-        setRequestState("success");
+        dispatchRequest({ type: "list/success" });
       });
     } catch (caught) {
       if (isAbortError(caught) || !listLifecycle.current.isActive(token)) {
@@ -1208,24 +1060,24 @@ export function TraderIntelligence() {
       }
 
       listLifecycle.current.commit(token, () => {
-        setRequestState("error");
-        setListError(
-          caught instanceof Error ? caught.message : "Unable to load sharp plays.",
-        );
+        dispatchRequest({
+          type: "list/error",
+          message: caught instanceof Error
+            ? caught.message
+            : "Unable to load sharp plays.",
+        });
       });
     } finally {
       listLifecycle.current.finish(token);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedFilters, params]);
+  }, [appliedFilters, dispatchRequest, params]);
 
   const loadWalletProfile = useCallback(async (
     wallet: string,
     forceRefresh = false,
   ) => {
     const token = profileLifecycle.current.begin();
-    setProfileLoading(true);
-    setProfileError(null);
+    dispatchRequest({ type: "profile/start" });
 
     try {
       const response = await fetch(
@@ -1258,20 +1110,20 @@ export function TraderIntelligence() {
       }
 
       profileLifecycle.current.commit(token, () => {
-        setProfileError(
-          caught instanceof Error
+        dispatchRequest({
+          type: "profile/error",
+          message: caught instanceof Error
             ? caught.message
             : "Unable to load wallet profile.",
-        );
+        });
       });
     } finally {
       profileLifecycle.current.commit(token, () => {
-        setProfileLoading(false);
+        dispatchRequest({ type: "profile/success" });
       });
       profileLifecycle.current.finish(token);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [dispatchRequest]);
 
   useEffect(() => {
     const listRequests = listLifecycle.current;
@@ -1300,10 +1152,8 @@ export function TraderIntelligence() {
       if (nextWallet) {
         setProfileRequestRevision((current) => current + 1);
       }
-      setRequestState("idle");
-      setProfileLoading(false);
-      setListError(null);
-      setProfileError(null);
+      dispatchRequest({ type: "list/reset" });
+      dispatchRequest({ type: "profile/reset" });
       setUrlReady(true);
     }
 
@@ -1381,7 +1231,7 @@ export function TraderIntelligence() {
   function handleTabChange(tab: DashboardTab) {
     if (tab === "lookup") {
       listLifecycle.current.abort();
-      setRequestState("idle");
+      dispatchRequest({ type: "list/reset" });
     }
 
     setActiveTab(tab);
@@ -1410,7 +1260,7 @@ export function TraderIntelligence() {
       setProfileRequestRevision((current) => current + 1);
     }
     selectedWalletRef.current = normalizedWallet;
-    setProfileError(null);
+    dispatchRequest({ type: "profile/reset" });
     setSelectedWallet(normalizedWallet);
     setLookupWallet(normalizedWallet);
     writeDashboardUrl({
@@ -1445,8 +1295,7 @@ export function TraderIntelligence() {
 
     if (walletPattern.test(wallet)) {
       listLifecycle.current.abort();
-      setRequestState("idle");
-      setListError(null);
+      dispatchRequest({ type: "list/reset" });
       handleSelectWallet(wallet);
     }
   }
@@ -1602,8 +1451,7 @@ export function TraderIntelligence() {
           selectedWalletRef.current = null;
           setSelectedWallet(null);
           setSelectedProfile(null);
-          setProfileLoading(false);
-          setProfileError(null);
+          dispatchRequest({ type: "profile/reset" });
           writeDashboardUrl({
             filters: appliedFilters,
             tab: activeTab,

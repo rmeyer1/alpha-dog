@@ -24,7 +24,7 @@ describe("async request reducer", () => {
   it("models refresh and failure transitions without losing an error", () => {
     const refreshing = asyncRequestReducer(
       { ...initialAsyncRequestState, listState: "success" },
-      { type: "list/start", refreshing: true },
+      { type: "list/start" },
     );
     expect(refreshing).toMatchObject({
       listError: null,

@@ -15,7 +15,7 @@ export interface AsyncRequestState {
 }
 
 export type AsyncRequestAction =
-  | { type: "list/start"; refreshing: boolean }
+  | { type: "list/start" }
   | { type: "list/success" }
   | { type: "list/error"; message: string }
   | { type: "list/reset" }
@@ -40,7 +40,7 @@ export function asyncRequestReducer(
       return {
         ...state,
         listError: null,
-        listState: action.refreshing ? "refreshing" : "loading",
+        listState: state.listState === "success" ? "refreshing" : "loading",
       };
     case "list/success":
       return { ...state, listState: "success" };

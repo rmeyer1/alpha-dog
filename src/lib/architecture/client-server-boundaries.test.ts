@@ -15,6 +15,10 @@ function sourceFiles(directory: string): string[] {
     const target = path.join(directory, entry.name);
 
     if (entry.isDirectory()) {
+      if (entry.name === "__fixtures__") {
+        return [];
+      }
+
       return sourceFiles(target);
     }
 
@@ -68,6 +72,18 @@ function isTypeOnlyImport(node: ts.ImportDeclaration) {
   );
 }
 
+function isTypeOnlyExport(node: ts.ExportDeclaration) {
+  if (node.isTypeOnly) {
+    return true;
+  }
+
+  return Boolean(
+    node.exportClause &&
+      ts.isNamedExports(node.exportClause) &&
+      node.exportClause.elements.every((element) => element.isTypeOnly),
+  );
+}
+
 function runtimeImports(file: string) {
   const source = fs.readFileSync(file, "utf8");
   const parsed = ts.createSourceFile(
@@ -84,6 +100,15 @@ function runtimeImports(file: string) {
       ts.isImportDeclaration(statement) &&
       ts.isStringLiteral(statement.moduleSpecifier) &&
       !isTypeOnlyImport(statement)
+    ) {
+      imports.push(statement.moduleSpecifier.text);
+    }
+
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      !isTypeOnlyExport(statement)
     ) {
       imports.push(statement.moduleSpecifier.text);
     }
@@ -109,6 +134,55 @@ function runtimeImports(file: string) {
     .filter((resolved): resolved is string => resolved != null);
 }
 
+function forbiddenRuntimeImportChains(
+  entries: string[],
+  forbiddenRoots: string[],
+) {
+  const violations: string[] = [];
+
+  for (const entry of entries) {
+    const queue: Array<{ file: string; chain: string[] }> = [
+      { file: entry, chain: [entry] },
+    ];
+    const visited = new Set<string>();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (!current || visited.has(current.file)) {
+        continue;
+      }
+
+      visited.add(current.file);
+
+      for (const imported of runtimeImports(current.file)) {
+        const forbidden = forbiddenRoots.some(
+          (root) =>
+            imported === `${root}.ts` ||
+            imported === `${root}.tsx` ||
+            imported.startsWith(`${root}${path.sep}`),
+        );
+
+        if (forbidden) {
+          violations.push(
+            [...current.chain, imported]
+              .map((item) => path.relative(process.cwd(), item))
+              .join(" -> "),
+          );
+          continue;
+        }
+
+        queue.push({
+          file: imported,
+          chain: [...current.chain, imported],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
 function isClientEntry(file: string) {
   const source = fs.readFileSync(file, "utf8");
   const parsed = ts.createSourceFile(
@@ -130,47 +204,35 @@ function isClientEntry(file: string) {
 
 describe("client and server module ownership", () => {
   it("keeps provider and persistence facades outside every client graph", () => {
-    const violations: string[] = [];
-
-    for (const entry of sourceFiles(sourceRoot).filter(isClientEntry)) {
-      const queue: Array<{ file: string; chain: string[] }> = [
-        { file: entry, chain: [entry] },
-      ];
-      const visited = new Set<string>();
-
-      while (queue.length > 0) {
-        const current = queue.shift();
-
-        if (!current || visited.has(current.file)) {
-          continue;
-        }
-
-        visited.add(current.file);
-
-        for (const imported of runtimeImports(current.file)) {
-          const forbidden = forbiddenServerRoots.some(
-            (root) =>
-              imported === `${root}.ts` ||
-              imported.startsWith(`${root}${path.sep}`),
-          );
-
-          if (forbidden) {
-            violations.push(
-              [...current.chain, imported]
-                .map((item) => path.relative(process.cwd(), item))
-                .join(" -> "),
-            );
-            continue;
-          }
-
-          queue.push({
-            file: imported,
-            chain: [...current.chain, imported],
-          });
-        }
-      }
-    }
+    const violations = forbiddenRuntimeImportChains(
+      sourceFiles(sourceRoot).filter(isClientEntry),
+      forbiddenServerRoots,
+    );
 
     expect(violations).toEqual([]);
+  });
+
+  it("rejects a forbidden runtime value reached through an allowed barrel", () => {
+    const fixtureRoot = path.join(
+      sourceRoot,
+      "lib",
+      "architecture",
+      "__fixtures__",
+      "indirect-barrel",
+    );
+    const clientEntry = path.join(fixtureRoot, "client.ts");
+    const forbiddenRoot = path.join(fixtureRoot, "server");
+
+    expect(
+      forbiddenRuntimeImportChains([clientEntry], [forbiddenRoot]),
+    ).toEqual([
+      [
+        clientEntry,
+        path.join(fixtureRoot, "barrel.ts"),
+        path.join(forbiddenRoot, "provider.ts"),
+      ]
+        .map((item) => path.relative(process.cwd(), item))
+        .join(" -> "),
+    ]);
   });
 });
