@@ -10,6 +10,7 @@ import type {
   TraderWalletProfile,
   WhaleCandidate,
 } from "./types";
+import { POLYMARKET_PROFILE_IMAGE_ORIGIN } from "@/lib/security/headers";
 
 const dayMs = 24 * 60 * 60 * 1000;
 
@@ -171,7 +172,7 @@ export function normalizeLeaderboardRow(row: unknown): PolymarketLeaderboardRow 
 
   return {
     pnl: safeNumber(raw.pnl),
-    profileImage: typeof raw.profileImage === "string" ? raw.profileImage : null,
+    profileImage: safePolymarketProfileImage(raw.profileImage),
     proxyWallet: String(raw.proxyWallet ?? "").toLowerCase(),
     rank: safeNumber(raw.rank),
     userName: String(raw.userName ?? "Unknown trader"),
@@ -179,6 +180,28 @@ export function normalizeLeaderboardRow(row: unknown): PolymarketLeaderboardRow 
     vol: safeNumber(raw.vol),
     xUsername: typeof raw.xUsername === "string" ? raw.xUsername : null,
   };
+}
+
+export function safePolymarketProfileImage(value: unknown) {
+  if (typeof value !== "string" || !value) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+
+    if (
+      url.origin !== POLYMARKET_PROFILE_IMAGE_ORIGIN ||
+      url.username ||
+      url.password
+    ) {
+      return null;
+    }
+
+    return url.href;
+  } catch {
+    return null;
+  }
 }
 
 export function leaderboardRowToTrader(row: PolymarketLeaderboardRow): TraderSummary {

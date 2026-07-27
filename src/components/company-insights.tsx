@@ -425,11 +425,27 @@ function RecommendationBar({
           <RecommendationConsensus recommendation={recommendation} />
         </div>
       </div>
-      <div className="flex h-3 overflow-hidden rounded-full bg-white/10">
-        <div className="bg-emerald-300" style={{ width: `${bullish}%` }} />
-        <div className="bg-zinc-400" style={{ width: `${hold}%` }} />
-        <div className="bg-amber-300" style={{ width: `${cautious}%` }} />
-      </div>
+      <svg
+        aria-label="Analyst recommendation distribution"
+        className="h-3 w-full overflow-hidden rounded-full bg-white/10"
+        preserveAspectRatio="none"
+        role="img"
+        viewBox="0 0 100 1"
+      >
+        <rect className="fill-emerald-300" height="1" width={bullish} />
+        <rect
+          className="fill-zinc-400"
+          height="1"
+          width={hold}
+          x={bullish}
+        />
+        <rect
+          className="fill-amber-300"
+          height="1"
+          width={cautious}
+          x={bullish + hold}
+        />
+      </svg>
       <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-zinc-300">
         <span>Bullish {totals.bullish}</span>
         <span>Hold {totals.hold}</span>
@@ -454,7 +470,7 @@ function NewsList({ news }: { news: FinnhubCompanyNewsItem[] }) {
           className="block rounded-lg border border-white/10 bg-black/20 p-4 transition hover:border-cyan-300/30 hover:bg-cyan-400/[0.04]"
           href={item.url}
           key={item.id ?? item.url}
-          rel="noreferrer"
+          rel="noopener noreferrer"
           target="_blank"
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
@@ -501,7 +517,7 @@ function CompactNewsList({
               className="group flex min-w-0 items-start gap-3 rounded-md border border-white/10 bg-white/[0.035] p-3 text-zinc-200 transition hover:border-cyan-300/30 hover:bg-cyan-400/[0.04] hover:text-cyan-100"
               href={item.url}
               key={item.id ?? item.url}
-              rel="noreferrer"
+              rel="noopener noreferrer"
               target="_blank"
             >
               <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-zinc-500 group-hover:text-cyan-200" />

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import { DeploymentStatusBanner } from "@/components/deployment-status-banner";
 import "./globals.css";
 
@@ -19,11 +20,15 @@ export const metadata: Metadata = {
     "Professional options screeners for wheel, spread, and covered-call strategies.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // A request-bound CSP nonce requires dynamic rendering so every framework
+  // script/style receives the nonce parsed from the request CSP.
+  await headers();
+
   return (
     <html
       lang="en"

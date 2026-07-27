@@ -14,6 +14,7 @@
   },
   "scripts": {
     "benchmark:observability": "OBSERVABILITY_BENCHMARK_REPORT=1 vitest run src/lib/observability/route.benchmark.test.ts --reporter=verbose",
+    "benchmark:security-headers": "vitest run src/proxy.benchmark.test.ts --reporter=verbose",
     "benchmark:session-proxy": "vitest run src/lib/supabase/session-middleware.benchmark.test.ts --reporter=verbose",
     "dev": "next dev",
     "build": "next build",
@@ -21,7 +22,9 @@
     "lint": "eslint",
     "typecheck": "tsc --project tsconfig.typecheck.json --noEmit",
     "test": "vitest run",
+    "test:ci": "npm test && npm run test:security:coverage",
     "test:observability:coverage": "vitest run src/lib/observability --coverage --coverage.reporter=text --coverage.reporter=json-summary",
+    "test:security:coverage": "vitest run --config vitest.security.config.ts --coverage",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "playwright test tests/e2e/configuration-safety.spec.ts",
     "test:supabase": "supabase db reset --local --no-seed && npm run test:supabase:catalog && npm run test:supabase:data-api && npm run test:supabase:advisors && supabase db lint --local --schema public --level warning --fail-on error",
@@ -33,6 +36,7 @@
     "verify:market-calendar": "node scripts/verify-market-calendar.mjs",
     "verify:browser-secrets": "node scripts/verify-browser-secret-containment.mjs",
     "verify:dependency-security": "npm audit --audit-level=high && node scripts/verify-brace-expansion-security.mjs",
+    "verify:security-headers": "node scripts/verify-security-headers.mjs",
     "verify:toolchain": "node scripts/verify-toolchain.mjs"
   },
   "dependencies": {

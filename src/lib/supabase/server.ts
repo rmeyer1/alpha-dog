@@ -6,6 +6,21 @@ import { getSupabaseAuthConfig } from "./auth";
 
 export type RouteSupabaseClient = SupabaseClient;
 
+export function secureSupabaseCookieOptions(
+  options: CookieOptions,
+  isProduction = process.env.NODE_ENV === "production",
+): CookieOptions {
+  return {
+    ...options,
+    httpOnly: false,
+    path: options.path ?? "/",
+    sameSite: options.sameSite === false
+      ? "lax"
+      : options.sameSite ?? "lax",
+    secure: isProduction ? true : options.secure,
+  };
+}
+
 export function createSupabaseRouteClient(
   request: NextRequest,
   response: NextResponse,
@@ -26,8 +41,10 @@ export function createSupabaseRouteClient(
       },
       setAll(cookiesToSet, headers) {
         cookiesToSet.forEach(({ name, value, options }) => {
+          const cookieOptions = secureSupabaseCookieOptions(options);
+
           request.cookies.set(name, value);
-          response.cookies.set(name, value, options as CookieOptions);
+          response.cookies.set(name, value, cookieOptions);
         });
 
         Object.entries(headers).forEach(([key, value]) => {
