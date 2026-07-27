@@ -3,13 +3,23 @@ import { privateProviderFetchTracing } from "@/lib/observability/provider";
 import { NextResponse } from "next/server";
 import { acquirePaidRouteGuard } from "@/lib/api-abuse/guard";
 import { getEnv } from "@/lib/env";
+import { readBoundedBody } from "@/lib/http/read-bounded-body";
 
 const logoCacheControl =
   "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800";
 const missingLogoCacheControl = "public, max-age=3600, s-maxage=3600";
+const expectedLogoContentType = "image/png";
+const maxLogoBytes = 1_000_000;
+const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 
 function normalizeSymbol(symbol: string) {
   return symbol.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+}
+
+export function isSafePng(bytes: Uint8Array) {
+  return bytes.length >= pngSignature.length &&
+    bytes.length <= maxLogoBytes &&
+    pngSignature.every((byte, index) => bytes[index] === byte);
 }
 
 function logoUnavailableResponse({
@@ -47,6 +57,22 @@ function getLogoDevToken() {
   }
 
   return env.LOGO_DEV_PUBLISHABLE_KEY;
+}
+
+function hasUnsafeDeclaredLength(value: string | null) {
+  if (value === null) {
+    return false;
+  }
+
+  const normalized = value.trim();
+
+  if (!/^\d+$/.test(normalized)) {
+    return true;
+  }
+
+  const contentLength = Number(normalized);
+
+  return !Number.isSafeInteger(contentLength) || contentLength > maxLogoBytes;
 }
 
 async function GETHandler(
@@ -88,18 +114,62 @@ async function GETHandler(
       signal: guard.signal,
     });
 
-    if (!response.ok || !response.body) {
+    const contentType = response.headers.get("content-type")
+      ?.split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+
+    if (
+      !response.ok ||
+      contentType !== expectedLogoContentType
+    ) {
       return guard.withAuthCookies(logoUnavailableResponse({
-        reason: "upstream-unavailable",
-        status: response.status,
+        reason: response.ok ? "unsafe-content-type" : "upstream-unavailable",
+        status: response.ok ? 502 : response.status,
         upstreamStatus: response.status,
       }));
     }
 
-    return guard.withAuthCookies(new NextResponse(response.body, {
+    if (hasUnsafeDeclaredLength(response.headers.get("content-length"))) {
+      try {
+        await response.body?.cancel("unsafe declared content length");
+      } catch {
+        // The response is rejected even when the upstream cannot be cancelled.
+      }
+
+      return guard.withAuthCookies(logoUnavailableResponse({
+        reason: "unsafe-image-body",
+        status: 502,
+        upstreamStatus: response.status,
+      }));
+    }
+
+    let bodyResult;
+
+    try {
+      bodyResult = await readBoundedBody(response.body, maxLogoBytes);
+    } catch {
+      return guard.withAuthCookies(logoUnavailableResponse({
+        reason: "unsafe-image-body",
+        status: 502,
+        upstreamStatus: response.status,
+      }));
+    }
+
+    if (bodyResult.status === "too-large" || !isSafePng(bodyResult.bytes)) {
+      return guard.withAuthCookies(logoUnavailableResponse({
+        reason: "unsafe-image-body",
+        status: 502,
+        upstreamStatus: response.status,
+      }));
+    }
+
+    return guard.withAuthCookies(new NextResponse(bodyResult.bytes, {
       headers: {
         "Cache-Control": logoCacheControl,
-        "Content-Type": response.headers.get("content-type") ?? "image/png",
+        "Content-Disposition": `inline; filename="${symbol}.png"`,
+        "Content-Type": expectedLogoContentType,
+        "X-Content-Type-Options": "nosniff",
         "X-Alpha-Dog-Logo-Result": "logo-dev",
       },
     }));

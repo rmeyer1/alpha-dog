@@ -3,6 +3,7 @@ import {
   leaderboardRowToTrader,
   profileToWhaleCandidate,
   scoreWalletProfile,
+  safePolymarketProfileImage,
 } from "./scoring";
 import type {
   PolymarketActivity,
@@ -100,6 +101,23 @@ const activity: PolymarketActivity[] = Array.from({ length: 4 }, (_, index) => (
 }));
 
 describe("polymarket scoring", () => {
+  it("keeps profile images on the exact reviewed Polymarket upload origin", () => {
+    expect(
+      safePolymarketProfileImage(
+        "https://polymarket-upload.s3.us-east-2.amazonaws.com/avatar.png",
+      ),
+    ).toBe(
+      "https://polymarket-upload.s3.us-east-2.amazonaws.com/avatar.png",
+    );
+    expect(safePolymarketProfileImage("https://example.com/avatar.png"))
+      .toBeNull();
+    expect(
+      safePolymarketProfileImage(
+        "https://polymarket-upload.s3.us-east-2.amazonaws.com.evil.test/a.png",
+      ),
+    ).toBeNull();
+  });
+
   it("scores leaderboard rows and applies edge labels", () => {
     const trader = leaderboardRowToTrader(leaderboardRow);
 

@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useMemo, useState } from "react";
 
 type CompanyLogoSize = "sm" | "md" | "lg";
@@ -63,17 +62,21 @@ export function CompanyLogo({
           {initials}
         </span>
       ) : null}
-      <Image
+      {/* The trusted same-origin proxy needs no image optimization, and
+          next/image emits an inline color style that strict CSP blocks. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
         alt={`${name ?? normalizedSymbol} logo`}
         className={`size-full object-contain p-1 transition-opacity ${
           loaded ? "opacity-100" : "opacity-0"
         }`}
-        fill
+        decoding="async"
+        height={64}
+        loading="lazy"
         onError={() => setFailedSymbol(normalizedSymbol)}
         onLoad={() => setLoadedSymbol(normalizedSymbol)}
-        sizes="64px"
         src={`/api/logos/${encodeURIComponent(normalizedSymbol)}?v=1`}
-        unoptimized
+        width={64}
       />
     </span>
   );

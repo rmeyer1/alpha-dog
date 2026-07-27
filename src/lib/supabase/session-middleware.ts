@@ -56,8 +56,35 @@ export function hasSupabaseSessionCookie(
   });
 }
 
-export async function refreshSupabaseSession(request: NextRequest) {
-  const response = NextResponse.next({ request });
+function downstreamRequestHeaders(
+  request: NextRequest,
+  forwardedHeaders: Headers,
+) {
+  const headers = new Headers(forwardedHeaders);
+  const cookie = request.cookies.toString();
+
+  if (cookie) {
+    headers.set("cookie", cookie);
+  } else {
+    headers.delete("cookie");
+  }
+
+  return headers;
+}
+
+function nextResponse(request: NextRequest, forwardedHeaders: Headers) {
+  return NextResponse.next({
+    request: {
+      headers: downstreamRequestHeaders(request, forwardedHeaders),
+    },
+  });
+}
+
+export async function refreshSupabaseSession(
+  request: NextRequest,
+  forwardedHeaders = new Headers(request.headers),
+) {
+  const response = nextResponse(request, forwardedHeaders);
 
   if (!shouldRefreshSession(request.nextUrl.pathname)) {
     return response;
@@ -80,5 +107,5 @@ export async function refreshSupabaseSession(request: NextRequest) {
 
   await supabase.auth.getUser().catch(() => null);
 
-  return copyAuthCookies(response, NextResponse.next({ request }));
+  return copyAuthCookies(response, nextResponse(request, forwardedHeaders));
 }

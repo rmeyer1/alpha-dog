@@ -80,7 +80,12 @@ export function TableScrollFrame({
           ref={topScrollerRef}
           role="region"
         >
-          <div className="h-1" style={{ width: contentWidth }} />
+          <svg
+            aria-hidden="true"
+            className="block h-1 max-w-none"
+            height="4"
+            width={contentWidth}
+          />
         </div>
       </div>
       <div

@@ -28,7 +28,7 @@ jobs:
           - gate: typecheck
             command: npm run typecheck
           - gate: unit-tests
-            command: npm test
+            command: npm run test:ci
           - gate: production-build
             command: npm run build
           - gate: dependency-audit

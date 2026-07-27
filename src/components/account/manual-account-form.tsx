@@ -29,10 +29,12 @@ function isManualAccountAccepted(
 export function ManualAccountForm({
   challengeRequired,
   nextPath,
+  nonce,
   turnstileSiteKey,
 }: {
   challengeRequired: boolean;
   nextPath: string;
+  nonce?: string;
   turnstileSiteKey: string | null;
 }) {
   const [email, setEmail] = useState("");
@@ -189,6 +191,7 @@ export function ManualAccountForm({
       </label>
 
       <ManualAccountChallenge
+        nonce={nonce}
         onToken={setCaptchaToken}
         required={challengeRequired}
         resetKey={challengeResetKey}

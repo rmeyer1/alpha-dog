@@ -26,11 +26,13 @@ declare global {
 }
 
 export function ManualAccountChallenge({
+  nonce,
   onToken,
   required,
   resetKey,
   siteKey,
 }: {
+  nonce?: string;
   onToken: (token: string | null) => void;
   required: boolean;
   resetKey: number;
@@ -97,6 +99,7 @@ export function ManualAccountChallenge({
   return (
     <div className="grid gap-2">
       <Script
+        nonce={nonce}
         onError={() => setLoadFailed(true)}
         onReady={() => setScriptReady(true)}
         src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"

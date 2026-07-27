@@ -213,12 +213,10 @@ function Sparkline({ bars }: { bars: AlpacaBar[] }) {
         <span className="text-right">90 sessions</span>
       </div>
       <div className="grid grid-cols-[58px_minmax(0,1fr)] gap-2">
-        <div className="relative h-56 font-mono text-[11px] text-zinc-400">
+        <div className="flex h-56 flex-col items-end justify-between font-mono text-[11px] leading-none text-zinc-400">
           {yTicks.map((tick) => (
             <span
-              className="absolute right-0 -translate-y-1/2"
               key={tick.value}
-              style={{ top: `${tick.ratio * 100}%` }}
             >
               {formatCurrency(tick.value)}
             </span>
@@ -367,7 +365,7 @@ function FilingTable({ signalScribe }: { signalScribe: SignalScribeProfile }) {
                   <a
                     className="inline-flex items-center gap-1 text-cyan-100 hover:text-cyan-50"
                     href={filing.sec_url}
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     target="_blank"
                   >
                     Open <ExternalLink className="size-3.5" />

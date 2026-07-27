@@ -98,10 +98,19 @@ function SpreadScorePanel({ candidate }: { candidate: VerticalSpreadCandidate })
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-emerald-300"
-                style={{ width: `${Math.max(0, Math.min(value, 100))}%` }}
-              />
+              <svg
+                aria-hidden="true"
+                className="h-full w-full"
+                preserveAspectRatio="none"
+                viewBox="0 0 100 1"
+              >
+                <rect
+                  className="fill-emerald-300"
+                  height="1"
+                  rx="0.5"
+                  width={Math.max(0, Math.min(value, 100))}
+                />
+              </svg>
             </div>
           </div>
         ))}

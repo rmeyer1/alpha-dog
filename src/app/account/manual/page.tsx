@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { ArrowLeft, Mail, UserPlus } from "lucide-react";
 import { AccountShell } from "@/components/account/account-shell";
 import { ManualAccountForm } from "@/components/account/manual-account-form";
@@ -18,6 +19,7 @@ export default async function ManualAccountPage({
   const resolvedSearchParams = await searchParams ?? {};
   const nextPath = accountNextPathFromSearchParams(resolvedSearchParams);
   const challenge = getManualAccountChallengeUiConfig();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <AccountShell
@@ -46,6 +48,7 @@ export default async function ManualAccountPage({
           <ManualAccountForm
             challengeRequired={challenge.required}
             nextPath={nextPath}
+            nonce={nonce}
             turnstileSiteKey={challenge.siteKey}
           />
         </section>

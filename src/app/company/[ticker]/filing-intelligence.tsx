@@ -337,7 +337,7 @@ function SourceLinks({ sources }: { sources: SourceLink[] }) {
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 text-xs text-cyan-100 hover:border-cyan-200/40 hover:text-cyan-50"
             href={source.url}
             key={`${source.label}-${source.url}`}
-            rel="noreferrer"
+            rel="noopener noreferrer"
             target="_blank"
           >
             <span className="truncate">{source.label}</span>
@@ -361,7 +361,7 @@ function InlineSourceLinks({ links }: { links: SourceLink[] }) {
           className="inline-flex items-center gap-1 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-1.5 py-0.5 text-xs leading-5 text-cyan-100 hover:border-cyan-200/40 hover:text-cyan-50"
           href={link.url}
           key={`${link.label}-${link.url}`}
-          rel="noreferrer"
+          rel="noopener noreferrer"
           target="_blank"
         >
           {link.label}
@@ -485,13 +485,17 @@ function FilingReviewModal({
         onClose();
       }
     };
-    const originalOverflow = document.body.style.overflow;
+    const wasOverflowHidden = document.body.classList.contains(
+      "overflow-hidden",
+    );
 
-    document.body.style.overflow = "hidden";
+    document.body.classList.add("overflow-hidden");
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.style.overflow = originalOverflow;
+      if (!wasOverflowHidden) {
+        document.body.classList.remove("overflow-hidden");
+      }
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [modal, onClose]);
