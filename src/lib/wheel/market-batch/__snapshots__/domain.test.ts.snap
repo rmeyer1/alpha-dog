@@ -1,0 +1,227 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`shared market batch domain > preserves representative 'call_credit_spread' financial and ranking output 1`] = `
+{
+  "company": {
+    "bestCandidate": {
+      "annualizedReturnOnRisk": 3.5096,
+      "delta": 0.24,
+      "dte": 26,
+      "expirationDate": "2026-08-21",
+      "impliedVolatility": 0.36,
+      "liquidityQuality": "acceptable",
+      "longStrike": 110,
+      "premiumReceived": 100,
+      "returnOnRisk": 0.25,
+      "score": 81,
+      "shortStrike": 105,
+      "strategy": "call_credit_spread",
+      "warningCount": 1,
+    },
+    "errors": [],
+    "exchange": "NASDAQ",
+    "name": "Test Company",
+    "rank": 1,
+    "score": 81,
+    "ticker": "TEST",
+    "underlying": {
+      "asOf": "2026-07-27T14:00:00.000Z",
+      "movingAverages": {
+        "ma20": 98,
+        "ma200": 90,
+        "ma50": 95,
+      },
+      "price": 100,
+      "rsi14": 58,
+      "symbol": "TEST",
+      "trend": "bullish",
+    },
+    "warnings": [],
+  },
+  "freshness": {
+    "asOf": "2026-07-27T14:00:00.000Z",
+    "cacheStatus": "fresh",
+    "feed": "opra",
+    "nextSuggestedRefreshAt": "2026-07-27T14:15:00.000Z",
+  },
+  "progress": {
+    "batchScreenedCount": 1,
+    "batchSize": 1,
+    "cursor": 0,
+    "nextCursor": null,
+    "processedCount": 1,
+    "resultScope": "complete",
+    "status": "complete",
+    "totalCount": 1,
+  },
+}
+`;
+
+exports[`shared market batch domain > preserves representative 'covered_call' financial and ranking output 1`] = `
+{
+  "company": {
+    "bestCandidate": {
+      "annualizedYield": 0.358,
+      "delta": 0.24,
+      "dte": 26,
+      "expirationDate": "2026-08-21",
+      "impliedVolatility": 0.36,
+      "liquidityQuality": "excellent",
+      "premiumReceived": 255,
+      "premiumYield": 0.0255,
+      "score": 92,
+      "shortStrike": 105,
+      "strategy": "covered_call",
+      "warningCount": 0,
+    },
+    "errors": [],
+    "exchange": "NASDAQ",
+    "name": "Test Company",
+    "rank": 1,
+    "score": 92,
+    "ticker": "TEST",
+    "underlying": {
+      "asOf": "2026-07-27T14:00:00.000Z",
+      "movingAverages": {
+        "ma20": 98,
+        "ma200": 90,
+        "ma50": 95,
+      },
+      "price": 100,
+      "rsi14": 58,
+      "symbol": "TEST",
+      "trend": "bullish",
+    },
+    "warnings": [],
+  },
+  "freshness": {
+    "asOf": "2026-07-27T14:00:00.000Z",
+    "cacheStatus": "fresh",
+    "feed": "opra",
+    "nextSuggestedRefreshAt": "2026-07-27T14:15:00.000Z",
+  },
+  "progress": {
+    "batchScreenedCount": 1,
+    "batchSize": 1,
+    "cursor": 0,
+    "nextCursor": null,
+    "processedCount": 1,
+    "resultScope": "complete",
+    "status": "complete",
+    "totalCount": 1,
+  },
+}
+`;
+
+exports[`shared market batch domain > preserves representative 'put_credit_spread' financial and ranking output 1`] = `
+{
+  "company": {
+    "bestCandidate": {
+      "annualizedReturnOnRisk": 3.5096,
+      "delta": -0.24,
+      "dte": 26,
+      "expirationDate": "2026-08-21",
+      "impliedVolatility": 0.36,
+      "liquidityQuality": "acceptable",
+      "longStrike": 90,
+      "premiumReceived": 100,
+      "returnOnRisk": 0.25,
+      "score": 86,
+      "shortStrike": 95,
+      "strategy": "put_credit_spread",
+      "warningCount": 0,
+    },
+    "errors": [],
+    "exchange": "NASDAQ",
+    "name": "Test Company",
+    "rank": 1,
+    "score": 86,
+    "ticker": "TEST",
+    "underlying": {
+      "asOf": "2026-07-27T14:00:00.000Z",
+      "movingAverages": {
+        "ma20": 98,
+        "ma200": 90,
+        "ma50": 95,
+      },
+      "price": 100,
+      "rsi14": 58,
+      "symbol": "TEST",
+      "trend": "bullish",
+    },
+    "warnings": [],
+  },
+  "freshness": {
+    "asOf": "2026-07-27T14:00:00.000Z",
+    "cacheStatus": "fresh",
+    "feed": "opra",
+    "nextSuggestedRefreshAt": "2026-07-27T14:15:00.000Z",
+  },
+  "progress": {
+    "batchScreenedCount": 1,
+    "batchSize": 1,
+    "cursor": 0,
+    "nextCursor": null,
+    "processedCount": 1,
+    "resultScope": "complete",
+    "status": "complete",
+    "totalCount": 1,
+  },
+}
+`;
+
+exports[`shared market batch domain > preserves representative 'short_put' financial and ranking output 1`] = `
+{
+  "company": {
+    "bestCandidate": {
+      "annualizedYield": 0.3768,
+      "delta": -0.24,
+      "dte": 26,
+      "expirationDate": "2026-08-21",
+      "impliedVolatility": 0.36,
+      "liquidityQuality": "excellent",
+      "premiumReceived": 255,
+      "premiumYield": 0.0268,
+      "score": 97,
+      "shortStrike": 95,
+      "strategy": "short_put",
+      "warningCount": 0,
+    },
+    "errors": [],
+    "exchange": "NASDAQ",
+    "name": "Test Company",
+    "rank": 1,
+    "score": 97,
+    "ticker": "TEST",
+    "underlying": {
+      "asOf": "2026-07-27T14:00:00.000Z",
+      "movingAverages": {
+        "ma20": 98,
+        "ma200": 90,
+        "ma50": 95,
+      },
+      "price": 100,
+      "rsi14": 58,
+      "symbol": "TEST",
+      "trend": "bullish",
+    },
+    "warnings": [],
+  },
+  "freshness": {
+    "asOf": "2026-07-27T14:00:00.000Z",
+    "cacheStatus": "fresh",
+    "feed": "opra",
+    "nextSuggestedRefreshAt": "2026-07-27T14:15:00.000Z",
+  },
+  "progress": {
+    "batchScreenedCount": 1,
+    "batchSize": 1,
+    "cursor": 0,
+    "nextCursor": null,
+    "processedCount": 1,
+    "resultScope": "complete",
+    "status": "complete",
+    "totalCount": 1,
+  },
+}
+`;
