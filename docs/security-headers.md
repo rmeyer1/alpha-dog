@@ -33,6 +33,20 @@ alone permits React's required `unsafe-eval` and inline style debugging.
 Nonce CSP intentionally makes document rendering dynamic and prevents shared
 HTML caching. Release evidence must include a latency/caching comparison.
 
+## Hydration-safe company timestamps
+
+Company-route dates and times use UTC as their canonical display timezone.
+`src/lib/company-date-time.ts` owns the shared formatters used by the route's
+Server and Client Components, so prerendered markup does not depend on the
+server or browser's local timezone or Intl/ICU implementation. The formatter
+uses fixed English month names, UTC getters, fixed punctuation, and a literal
+`UTC` suffix. Date-only input must be exact `YYYY-MM-DD`; instants must carry
+`Z` or an explicit numeric offset. Invalid and zone-less values fail closed to
+the existing `-` placeholder. Release browser coverage renders fixed
+company-news data in both UTC and `America/New_York`, listens for unhandled
+`pageerror` events before navigation, and verifies framework nonces, CSP
+violations, console errors, visible content, and client-side navigation.
+
 ## Supabase Auth cookies
 
 Supabase SSR uses PKCE and requires the browser client to read the refresh

@@ -24,6 +24,10 @@ import {
   type FinnhubCompanyInsights,
 } from "@/lib/finnhub/client";
 import {
+  formatCompanyDate,
+  formatCompanyDateTime,
+} from "@/lib/company-date-time";
+import {
   FilingAnalysisCards,
   FilingSectionCards,
 } from "./filing-intelligence";
@@ -44,32 +48,6 @@ export async function generateMetadata({
   return {
     title: `${normalizedTicker} Company Profile | Alpha Dog`,
   };
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
 }
 
 function dateOnly(date: Date) {
@@ -293,7 +271,7 @@ function Sparkline({ bars }: { bars: AlpacaBar[] }) {
               }
               key={chartBars[index].t}
             >
-              {formatDate(chartBars[index].t)}
+              {formatCompanyDate(chartBars[index].t)}
             </span>
           ))}
         </div>
@@ -350,8 +328,8 @@ function FilingTable({ signalScribe }: { signalScribe: SignalScribeProfile }) {
               <td className="py-3 pr-3">
                 <StatusPill>{filing.form_type}</StatusPill>
               </td>
-              <td className="py-3 pr-3">{formatDate(filing.filing_date)}</td>
-              <td className="py-3 pr-3">{formatDate(filing.report_date)}</td>
+              <td className="py-3 pr-3">{formatCompanyDate(filing.filing_date)}</td>
+              <td className="py-3 pr-3">{formatCompanyDate(filing.report_date)}</td>
               <td className="py-3 pr-3">
                 {[filing.fiscal_year, filing.fiscal_period]
                   .filter(Boolean)
@@ -510,7 +488,7 @@ export default async function CompanyProfilePage({
               </span>
             </div>
             <div className="mt-2 text-xs text-zinc-500">
-              As of {formatDateTime(market.asOf)}
+              As of {formatCompanyDateTime(market.asOf)}
             </div>
           </div>
         </div>

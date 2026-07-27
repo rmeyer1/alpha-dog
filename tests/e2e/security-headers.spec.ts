@@ -261,93 +261,130 @@ test("representative page flows emit no application CSP violations", async ({
   expect(violations).toEqual([]);
 });
 
-test("dotted ticker document executes the nonce-authorized framework runtime", async ({
-  page,
-}) => {
-  const consoleErrors: string[] = [];
+for (const timezoneId of ["UTC", "America/New_York"]) {
+  test.describe(`${timezoneId} dotted ticker runtime`, () => {
+    test.use({ timezoneId });
 
-  page.on("console", (message) => {
-    if (message.type() === "error") {
-      consoleErrors.push(message.text());
-    }
-  });
+    test("dotted ticker document executes the nonce-authorized framework runtime", async ({
+      page,
+    }) => {
+      const consoleErrors: string[] = [];
+      const pageErrors: string[] = [];
 
-  await page.addInitScript(() => {
-    const violations: string[] = [];
+      page.on("console", (message) => {
+        if (message.type() === "error") {
+          consoleErrors.push(message.text());
+        }
+      });
+      page.on("pageerror", (error) => {
+        pageErrors.push(error.message);
+      });
 
-    Object.defineProperty(window, "__alphaDogCspViolations", {
-      configurable: false,
-      value: violations,
-      writable: false,
-    });
-    document.addEventListener("securitypolicyviolation", (event) => {
-      const target =
-        event.target instanceof Element
-          ? event.target.outerHTML.slice(0, 200)
-          : event.sourceFile || "document";
+      await page.addInitScript(() => {
+        const violations: string[] = [];
 
-      violations.push(
-        `${event.effectiveDirective}:${event.blockedURI || "inline"}:${target}`,
+        Object.defineProperty(window, "__alphaDogCspViolations", {
+          configurable: false,
+          value: violations,
+          writable: false,
+        });
+        document.addEventListener("securitypolicyviolation", (event) => {
+          const target =
+            event.target instanceof Element
+              ? event.target.outerHTML.slice(0, 200)
+              : event.sourceFile || "document";
+
+          violations.push(
+            `${event.effectiveDirective}:${event.blockedURI || "inline"}:${target}`,
+          );
+        });
+      });
+
+      await page.route("**/api/health/configuration", async (route) => {
+        await route.fulfill({
+          contentType: "application/json",
+          json: { mode: "live", status: "ready" },
+          status: 200,
+        });
+      });
+      await page.route("**/api/logos/BRK.B?v=1", async (route) => {
+        await route.fulfill({
+          body: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xn8NAAAAAElFTkSuQmCC",
+            "base64",
+          ),
+          contentType: "image/png",
+          status: 200,
+        });
+      });
+
+      const response = await page.goto(
+        `/company/BRK.B?source=security-regression&timezone=${encodeURIComponent(timezoneId)}`,
       );
-    });
-  });
+      expect(response).not.toBeNull();
+      expect(response!.status()).toBe(200);
+      await expect(page.getByRole("heading", { name: "BRK.B" })).toBeVisible();
+      await expect(
+        page.getByText("Deterministic timezone regression fixture", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Jul 25, 8:28 AM UTC", { exact: true }),
+      ).toBeVisible();
 
-  await page.route("**/api/health/configuration", async (route) => {
-    await route.fulfill({
-      contentType: "application/json",
-      json: { mode: "live", status: "ready" },
-      status: 200,
-    });
-  });
-  await page.route("**/api/logos/BRK.B?v=1", async (route) => {
-    await route.fulfill({
-      body: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+Xn8NAAAAAElFTkSuQmCC",
-        "base64",
-      ),
-      contentType: "image/png",
-      status: 200,
-    });
-  });
+      const policy = response!.headers()["content-security-policy"];
+      const responseNonce = expectDocumentCsp(policy);
 
-  await page.goto("/company/BRK.B?source=security-regression");
-  await expect(page.getByRole("heading", { name: "BRK.B" })).toBeVisible();
+      const runtime = await page.evaluate(() => {
+        const currentWindow = window as typeof window & {
+          __alphaDogCspViolations?: string[];
+          __alphaDogDottedDocument?: boolean;
+        };
+        const staticScripts = [...document.scripts].filter((script) =>
+          script.src.includes("/_next/static/"),
+        );
 
-  const runtime = await page.evaluate(() => {
-    const currentWindow = window as typeof window & {
-      __alphaDogCspViolations?: string[];
-      __alphaDogDottedDocument?: boolean;
-    };
-    const staticScripts = [...document.scripts].filter((script) =>
-      script.src.includes("/_next/static/"),
-    );
+        currentWindow.__alphaDogDottedDocument = true;
 
-    currentWindow.__alphaDogDottedDocument = true;
+        return {
+          staticScriptNonces: staticScripts.map((script) => script.nonce),
+          staticScriptCount: staticScripts.length,
+          violations: currentWindow.__alphaDogCspViolations ?? [],
+        };
+      });
 
-    return {
-      staticScriptCount: staticScripts.length,
-      violations: currentWindow.__alphaDogCspViolations ?? [],
-    };
-  });
+      expect(runtime.staticScriptCount).toBeGreaterThan(0);
+      expect(runtime.staticScriptNonces).toEqual(
+        Array(runtime.staticScriptCount).fill(responseNonce),
+      );
+      expect(runtime.violations).toEqual([]);
 
-  expect(runtime.staticScriptCount).toBeGreaterThan(0);
-  expect(runtime.violations).toEqual([]);
+      await page.getByRole("link", { name: "Dashboard" }).click();
+      await expect(page).toHaveURL("/");
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as typeof window & {
+                __alphaDogDottedDocument?: boolean;
+              }).__alphaDogDottedDocument,
+          ),
+        )
+        .toBe(true);
 
-  await page.getByRole("link", { name: "Dashboard" }).click();
-  await expect(page).toHaveURL("/");
-  await expect
-    .poll(() =>
-      page.evaluate(
+      const finalViolations = await page.evaluate(
         () =>
-          (window as typeof window & {
-            __alphaDogDottedDocument?: boolean;
-          }).__alphaDogDottedDocument,
-      ),
-    )
-    .toBe(true);
+          (window as typeof window & { __alphaDogCspViolations?: string[] })
+            .__alphaDogCspViolations ?? [],
+      );
 
-  expect(consoleErrors).toEqual([]);
-});
+      expect(finalViolations).toEqual([]);
+      expect(consoleErrors).toEqual([]);
+      expect(pageErrors).toEqual([]);
+    });
+  });
+}
 
 test("CSP blocks deliberate unapproved browser capabilities", async ({
   page,

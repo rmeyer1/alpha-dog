@@ -20,25 +20,35 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
-  webServer: {
-    command: process.env.CI
-      ? "npm run start -- --hostname 127.0.0.1 --port 3000"
-      : "npm run dev -- --hostname 127.0.0.1 --port 3000",
-    env: {
-      ALPHA_DOG_DEPLOYMENT_MODE: "live",
-      ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY: "",
-      ALPHA_DOG_SUPABASE_URL: "",
-      APCA_API_KEY_ID: "",
-      APCA_API_SECRET_KEY: "",
-      NEXT_PUBLIC_ALPHA_DOG_SUPABASE_ANON_KEY: "",
-      NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: "",
-      NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
-      OPENAI_API_KEY: "",
+  webServer: [
+    {
+      command: "node tests/e2e/fixtures/finnhub-server.mjs",
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+      url: "http://127.0.0.1:3101/health",
     },
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    url: "http://127.0.0.1:3000",
-  },
+    {
+      command: process.env.CI
+        ? "npm run start -- --hostname 127.0.0.1 --port 3000"
+        : "npm run dev -- --hostname 127.0.0.1 --port 3000",
+      env: {
+        ALPHA_DOG_DEPLOYMENT_MODE: "live",
+        ALPHA_DOG_SUPABASE_SERVICE_ROLE_KEY: "",
+        ALPHA_DOG_SUPABASE_URL: "",
+        APCA_API_KEY_ID: "",
+        APCA_API_SECRET_KEY: "",
+        FINNHUB_API_BASE_URL: "http://127.0.0.1:3101/api/v1",
+        FINNHUB_API_KEY: "playwright-test-key",
+        NEXT_PUBLIC_ALPHA_DOG_SUPABASE_ANON_KEY: "",
+        NEXT_PUBLIC_ALPHA_DOG_SUPABASE_URL: "",
+        NEXT_PUBLIC_TURNSTILE_SITE_KEY: "1x00000000000000000000AA",
+        OPENAI_API_KEY: "",
+      },
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+      url: "http://127.0.0.1:3000",
+    },
+  ],
   projects: [
     {
       name: "chromium",

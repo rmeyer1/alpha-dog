@@ -19,6 +19,10 @@ import {
   formatCompactNumber,
   formatCurrency,
 } from "@/components/wheel-dashboard/formatters";
+import {
+  formatCompanyDate,
+  formatCompanyNewsDate,
+} from "@/lib/company-date-time";
 
 type CompanyInsightStatus = "idle" | "loading" | "success" | "error";
 type RecommendationBucketKey =
@@ -58,31 +62,6 @@ function asNumber(value: unknown) {
 
 function metricNumber(insights: FinnhubCompanyInsights | null, key: string) {
   return insights ? asNumber(insights.metrics.metric[key]) : null;
-}
-
-function formatDate(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatNewsDate(value: number | null | undefined) {
-  if (value == null) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    month: "short",
-  }).format(new Date(value * 1000));
 }
 
 function formatSignedPercent(value: number | null | undefined) {
@@ -387,7 +366,7 @@ function EarningsBehavior({
             key={`${row.period}-${row.quarter}`}
           >
             <div className="text-xs uppercase text-zinc-500">
-              {row.year && row.quarter ? `Q${row.quarter} ${row.year}` : formatDate(row.period)}
+              {row.year && row.quarter ? `Q${row.quarter} ${row.year}` : formatCompanyDate(row.period)}
             </div>
             <div className={`mt-2 font-mono text-xl font-semibold ${tone}`}>
               {formatSignedPercent(row.surprisePercent)}
@@ -475,7 +454,7 @@ function NewsList({ news }: { news: FinnhubCompanyNewsItem[] }) {
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
             <span>{item.source ?? "Finnhub"}</span>
-            <span>{formatNewsDate(item.datetime)}</span>
+            <span>{formatCompanyNewsDate(item.datetime)}</span>
           </div>
           <div className="mt-2 text-sm font-medium text-zinc-100">
             {item.headline}
@@ -524,7 +503,7 @@ function CompactNewsList({
               <span className="min-w-0">
                 <span className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-zinc-500">
                   <span>{item.source ?? "Finnhub"}</span>
-                  <span>{formatNewsDate(item.datetime)}</span>
+                  <span>{formatCompanyNewsDate(item.datetime)}</span>
                 </span>
                 <span className="mt-1 line-clamp-2 text-sm leading-5">
                   {item.headline}

@@ -13,6 +13,7 @@ export default defineConfig({
       include: [
         "src/app/api/logos/[symbol]/route.ts",
         "src/app/api/wheel/screener/runs/[runId]/stream/route.ts",
+        "src/lib/company-date-time.ts",
         "src/lib/http/read-bounded-body.ts",
         "src/lib/security/headers.ts",
         "src/lib/supabase/server.ts",
@@ -33,6 +34,7 @@ export default defineConfig({
     include: [
       "src/app/api/logos/[symbol]/route.test.ts",
       "src/app/api/wheel/screener/runs/[runId]/stream/route.test.ts",
+      "src/lib/company-date-time.test.ts",
       "src/lib/http/read-bounded-body.test.ts",
       "src/lib/security/headers.test.ts",
       "src/lib/supabase/server.test.ts",

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { formatScoreLabel } from "@/components/wheel-dashboard/formatters";
+import { formatCompanyDateTime } from "@/lib/company-date-time";
 import type {
   SignalScribeAnalysis,
   SignalScribeFiling,
@@ -59,20 +60,6 @@ const citationLabelKeys = [
   "summary",
   "description",
 ];
-
-function formatDateTime(value: string | null | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
 
 function formatNullableScore(value: number | string | null) {
   if (value == null) {
@@ -535,7 +522,7 @@ function FilingReviewModal({
             </h2>
             <p className="mt-1 text-sm text-zinc-500">
               {modal.kind === "analysis"
-                ? formatDateTime(modal.analysis.created_at)
+                ? formatCompanyDateTime(modal.analysis.created_at)
                 : `Chunk ${modal.section.chunk_index + 1}`}
             </p>
           </div>
@@ -616,7 +603,7 @@ export function FilingAnalysisCards({
               </span>
             </div>
             <span className="text-xs text-zinc-500">
-              {formatDateTime(latestAnalysis.created_at)}
+              {formatCompanyDateTime(latestAnalysis.created_at)}
             </span>
           </div>
 
@@ -664,7 +651,7 @@ export function FilingAnalysisCards({
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill>{analysis.form_type}</StatusPill>
                   <span className="text-xs text-zinc-500">
-                    {formatDateTime(analysis.created_at)}
+                    {formatCompanyDateTime(analysis.created_at)}
                   </span>
                 </div>
                 <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-zinc-400 [overflow-wrap:anywhere]">
