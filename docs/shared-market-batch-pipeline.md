@@ -38,12 +38,15 @@ functions; they are not serialized through the workflow.
    strategy formulas remain in the existing scoring domain.
 5. Each consumer stages a snapshot header and ranked candidate rows.
    `publish_wheel_market_batch_snapshot` validates the candidate count, marks
-   the header complete, and advances the current pointer in one transaction.
-6. The batch completes only after every expected snapshot is complete.
+   the header complete, but does not make it readable.
+6. `complete_wheel_market_batch` validates every expected snapshot and every
+   required option type, marks the batch complete, and advances all eligible
+   current pointers in one transaction.
 
-Incomplete snapshot headers are never referenced by a current pointer. A
-failed replacement batch therefore leaves the previous pointer unchanged.
-Publishing and completion functions are replay-safe.
+Incomplete or failed batches are never referenced by a current pointer. A
+failure after one or more consumer snapshots stage therefore leaves every
+previous pointer unchanged. Snapshot staging, batch completion, and failure
+functions are replay-safe.
 
 ## Storage
 
@@ -69,11 +72,12 @@ credentials.
 - Completed underlying and option checkpoints short-circuit replayed steps.
 - Fact and candidate upserts use deterministic conflict keys.
 - Snapshot creation returns the existing per-batch consumer header.
-- Re-publishing a complete snapshot returns its identity without advancing an
-  older pointer over a newer batch.
+- Re-staging a complete snapshot returns its identity without changing any
+  current pointer.
 - A late older interval may complete for auditability, but interval ordering
   prevents it from replacing a newer current pointer.
-- Candidate-count mismatches and incomplete batches fail before publication.
+- Candidate-count mismatches, incomplete consumers, and a required option type
+  with zero successful symbol ingestion fail before atomic publication.
 - Retention removes only old complete or failed batches that are not referenced
   by a current pointer.
 

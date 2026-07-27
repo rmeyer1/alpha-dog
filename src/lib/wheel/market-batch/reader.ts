@@ -12,6 +12,7 @@ import { marketBatchRequestIdentity } from "./domain";
 import type {
   MarketBatchCandidateRow,
   MarketBatchCurrentSnapshotRow,
+  MarketBatchRow,
   MarketBatchSnapshotRow,
 } from "./model";
 
@@ -92,6 +93,21 @@ export async function getSharedMarketBatchScreenerResponse(
   const pointer = pointers?.[0];
 
   if (!pointer) {
+    return null;
+  }
+
+  const batches = await requestSupabaseRest<
+    Array<Pick<MarketBatchRow, "id" | "status">>
+  >("wheel_market_batches", {
+    query: {
+      id: `eq.${pointer.batch_id}`,
+      limit: 1,
+      select: "id,status",
+      status: "eq.complete",
+    },
+  });
+
+  if (!batches?.[0]) {
     return null;
   }
 

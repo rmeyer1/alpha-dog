@@ -770,9 +770,7 @@ security invoker
 set search_path = ''
 as $$
 declare
-  v_batch_interval timestamptz;
   v_batch_status text;
-  v_current_interval timestamptz;
   v_snapshot public.wheel_market_batch_snapshots%rowtype;
 begin
   if p_snapshot_id is null or
@@ -803,14 +801,14 @@ begin
   if v_snapshot.status = 'complete' then
     return pg_catalog.jsonb_build_object(
       'batch_id', v_snapshot.batch_id,
-      'published', false,
+      'staged', false,
       'snapshot_id', v_snapshot.id,
       'status', v_snapshot.status
     );
   end if;
 
-  select status, interval_started_at
-  into v_batch_status, v_batch_interval
+  select status
+  into v_batch_status
   from public.wheel_market_batches
   where id = v_snapshot.batch_id
   for update;
@@ -827,20 +825,6 @@ begin
     raise exception 'Wheel market batch candidate count does not match.';
   end if;
 
-  perform pg_catalog.pg_advisory_xact_lock(
-    pg_catalog.hashtextextended(
-      'wheel_market_batch_pointer:' ||
-      v_snapshot.persona ||
-      ':' ||
-      v_snapshot.strategy ||
-      ':' ||
-      v_snapshot.filter_key ||
-      ':' ||
-      v_snapshot.feed,
-      0
-    )
-  );
-
   update public.wheel_market_batch_snapshots
   set
     status = 'complete',
@@ -853,52 +837,9 @@ begin
   where id = p_snapshot_id
   returning * into v_snapshot;
 
-  select batches.interval_started_at
-  into v_current_interval
-  from public.wheel_market_batch_current_snapshots as current_snapshots
-  join public.wheel_market_batches as batches
-    on batches.id = current_snapshots.batch_id
-  where current_snapshots.persona = v_snapshot.persona
-    and current_snapshots.strategy = v_snapshot.strategy
-    and current_snapshots.filter_key = v_snapshot.filter_key
-    and current_snapshots.feed = v_snapshot.feed
-  for update of current_snapshots;
-
-  if found and v_current_interval > v_batch_interval then
-    return pg_catalog.jsonb_build_object(
-      'batch_id', v_snapshot.batch_id,
-      'published', false,
-      'snapshot_id', v_snapshot.id,
-      'status', v_snapshot.status
-    );
-  end if;
-
-  insert into public.wheel_market_batch_current_snapshots (
-    persona,
-    strategy,
-    filter_key,
-    feed,
-    batch_id,
-    snapshot_id,
-    published_at
-  ) values (
-    v_snapshot.persona,
-    v_snapshot.strategy,
-    v_snapshot.filter_key,
-    v_snapshot.feed,
-    v_snapshot.batch_id,
-    v_snapshot.id,
-    clock_timestamp()
-  )
-  on conflict (persona, strategy, filter_key, feed)
-  do update set
-    batch_id = excluded.batch_id,
-    snapshot_id = excluded.snapshot_id,
-    published_at = excluded.published_at;
-
   return pg_catalog.jsonb_build_object(
     'batch_id', v_snapshot.batch_id,
-    'published', true,
+    'staged', true,
     'snapshot_id', v_snapshot.id,
     'status', v_snapshot.status
   );
@@ -917,6 +858,9 @@ as $$
 declare
   v_batch public.wheel_market_batches%rowtype;
   v_complete_count integer;
+  v_current_interval timestamptz;
+  v_pointer_count integer := 0;
+  v_snapshot public.wheel_market_batch_snapshots%rowtype;
 begin
   if p_batch_id is null or
      p_expected_snapshot_count < 1 or
@@ -961,6 +905,86 @@ begin
     raise exception 'Wheel market batch snapshots are incomplete.';
   end if;
 
+  if v_batch.selected_count > 0 and exists (
+    select 1
+    from public.wheel_market_batch_snapshots as snapshots
+    where snapshots.batch_id = p_batch_id
+      and not exists (
+        select 1
+        from public.wheel_market_batch_option_ingestions as ingestions
+        where ingestions.batch_id = p_batch_id
+          and ingestions.status = 'complete'
+          and ingestions.option_type = case
+            when snapshots.strategy in (
+              'short_put',
+              'put_credit_spread'
+            ) then 'put'
+            else 'call'
+          end
+      )
+  ) then
+    raise exception 'Wheel market batch has an incomplete required option type.';
+  end if;
+
+  for v_snapshot in
+    select *
+    from public.wheel_market_batch_snapshots
+    where batch_id = p_batch_id
+    order by persona, strategy, filter_key, feed
+  loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(
+        'wheel_market_batch_pointer:' ||
+        v_snapshot.persona ||
+        ':' ||
+        v_snapshot.strategy ||
+        ':' ||
+        v_snapshot.filter_key ||
+        ':' ||
+        v_snapshot.feed,
+        0
+      )
+    );
+
+    select batches.interval_started_at
+    into v_current_interval
+    from public.wheel_market_batch_current_snapshots as current_snapshots
+    join public.wheel_market_batches as batches
+      on batches.id = current_snapshots.batch_id
+    where current_snapshots.persona = v_snapshot.persona
+      and current_snapshots.strategy = v_snapshot.strategy
+      and current_snapshots.filter_key = v_snapshot.filter_key
+      and current_snapshots.feed = v_snapshot.feed
+    for update of current_snapshots;
+
+    if not found or v_current_interval <= v_batch.interval_started_at then
+      insert into public.wheel_market_batch_current_snapshots (
+        persona,
+        strategy,
+        filter_key,
+        feed,
+        batch_id,
+        snapshot_id,
+        published_at
+      ) values (
+        v_snapshot.persona,
+        v_snapshot.strategy,
+        v_snapshot.filter_key,
+        v_snapshot.feed,
+        v_snapshot.batch_id,
+        v_snapshot.id,
+        clock_timestamp()
+      )
+      on conflict (persona, strategy, filter_key, feed)
+      do update set
+        batch_id = excluded.batch_id,
+        snapshot_id = excluded.snapshot_id,
+        published_at = excluded.published_at;
+
+      v_pointer_count := v_pointer_count + 1;
+    end if;
+  end loop;
+
   update public.wheel_market_batches
   set
     status = 'complete',
@@ -972,6 +996,7 @@ begin
 
   return pg_catalog.jsonb_build_object(
     'batch_id', v_batch.id,
+    'pointer_count', v_pointer_count,
     'snapshot_count', v_batch.snapshot_count,
     'status', v_batch.status
   );
@@ -1002,7 +1027,7 @@ begin
     completed_at = clock_timestamp(),
     updated_at = clock_timestamp()
   where id = p_batch_id
-    and status <> 'complete';
+    and status not in ('complete', 'failed');
 
   return found;
 end;

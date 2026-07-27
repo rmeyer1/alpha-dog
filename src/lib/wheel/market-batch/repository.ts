@@ -399,8 +399,8 @@ export async function publishMarketBatchSnapshot(
   const startedAt = performance.now();
   const result = await requestSupabaseRest<{
     batch_id: string;
-    published: boolean;
     snapshot_id: string;
+    staged: boolean;
     status: "complete";
   }>("rpc/publish_wheel_market_batch_snapshot", {
     method: "POST",
@@ -428,7 +428,12 @@ export async function completeMarketBatch(
   batchId: string,
   expectedSnapshotCount: number,
 ) {
-  await requestSupabaseRest("rpc/complete_wheel_market_batch", {
+  return await requestSupabaseRest<{
+    batch_id: string;
+    pointer_count: number;
+    snapshot_count: number;
+    status: "complete";
+  }>("rpc/complete_wheel_market_batch", {
     method: "POST",
     body: {
       p_batch_id: batchId,

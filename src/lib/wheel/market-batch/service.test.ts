@@ -180,6 +180,33 @@ beforeEach(() => {
 });
 
 describe("shared market batch service", () => {
+  it("creates canonical and caller-keyed batch identities", async () => {
+    const { prepareSharedMarketBatch } = await import("./service");
+
+    await prepareSharedMarketBatch({
+      feed: "opra",
+      intervalStartedAt: "2026-07-27T14:00:00.000Z",
+    });
+    await prepareSharedMarketBatch({
+      batchKey: "caller-key",
+      feed: "indicative",
+      intervalStartedAt: "2026-07-27T14:15:00.000Z",
+    });
+
+    expect(repositoryMocks.createMarketBatch.mock.calls).toEqual([
+      [{
+        batchKey: "wheel-market-batch:opra:2026-07-27T14:00:00.000Z",
+        feed: "opra",
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+      }],
+      [{
+        batchKey: "caller-key",
+        feed: "indicative",
+        intervalStartedAt: "2026-07-27T14:15:00.000Z",
+      }],
+    ]);
+  });
+
   it("refreshes and checkpoints shared underlyings once across replay", async () => {
     const { stageSharedMarketBatchUnderlyings } = await import("./service");
     const first = await stageSharedMarketBatchUnderlyings("batch-1");
@@ -196,6 +223,20 @@ describe("shared market batch service", () => {
       persistedUnderlying,
     ]);
     const replay = await stageSharedMarketBatchUnderlyings("batch-1");
+    repositoryMocks.getMarketBatch.mockResolvedValueOnce({
+      ...batch,
+      asset_count: 1,
+      ranked_count: 1,
+      selected_count: 1,
+      summary: { underlyings: {} },
+      underlyings_completed_at: "2026-07-27T14:00:05.000Z",
+    });
+    repositoryMocks.readMarketBatchUnderlyings.mockResolvedValueOnce([
+      persistedUnderlying,
+    ]);
+    const replayWithoutStoredMetrics = await stageSharedMarketBatchUnderlyings(
+      "batch-1",
+    );
 
     expect(alpacaMocks.getWheelAssetUniverse).toHaveBeenCalledOnce();
     expect(alpacaMocks.getStockSnapshotsBySymbols).toHaveBeenCalledOnce();
@@ -205,6 +246,24 @@ describe("shared market batch service", () => {
     expect(repositoryMocks.checkpointMarketBatchUnderlyings)
       .toHaveBeenCalledOnce();
     expect(replay.selectedSymbols).toEqual(["AAPL"]);
+    expect(replayWithoutStoredMetrics.metrics).toEqual([]);
+  });
+
+  it("rejects missing and failed batches before provider work", async () => {
+    const { stageSharedMarketBatchUnderlyings } = await import("./service");
+    repositoryMocks.getMarketBatch.mockResolvedValueOnce(null);
+    await expect(
+      stageSharedMarketBatchUnderlyings("missing"),
+    ).rejects.toThrow("was not found");
+
+    repositoryMocks.getMarketBatch.mockResolvedValueOnce({
+      ...batch,
+      status: "failed",
+    });
+    await expect(
+      stageSharedMarketBatchUnderlyings("batch-1"),
+    ).rejects.toThrow("already failed");
+    expect(alpacaMocks.getWheelAssetUniverse).not.toHaveBeenCalled();
   });
 
   it("performs at most one discovery per symbol and option type", async () => {
@@ -286,7 +345,69 @@ describe("shared market batch service", () => {
       .not.toHaveBeenCalled();
   });
 
-  it("publishes partial provider coverage but rejects total failure", async () => {
+  it("rejects invalid option facts and checkpoints provider failures", async () => {
+    const { stageSharedMarketBatchOptions } = await import("./service");
+    const filters = {
+      dteMin: 7,
+      dteMax: 45,
+      deltaMin: 0.15,
+      deltaMax: 0.4,
+      minPremiumYield: 0.0075,
+      minVolume: 50,
+      minOpenInterest: 100,
+      maxSpreadPctOfMid: 0.25,
+      minSpreadReturnOnRisk: 0.2,
+      maxSpreadWidth: 10,
+      spreadLongLegCount: 3,
+      excludeEarnings: false,
+      includeWeeklies: true,
+    };
+
+    repositoryMocks.readMarketBatchUnderlying.mockResolvedValueOnce(null);
+    await expect(stageSharedMarketBatchOptions({
+      batchId: "batch-1",
+      filters,
+      optionType: "put",
+      symbol: "MSFT",
+    })).rejects.toThrow("no selected underlying");
+
+    repositoryMocks.readMarketBatchUnderlying.mockResolvedValueOnce({
+      ...persistedUnderlying,
+      price: 0,
+    });
+    await expect(stageSharedMarketBatchOptions({
+      batchId: "batch-1",
+      filters,
+      optionType: "put",
+      symbol: "AAPL",
+    })).rejects.toThrow("invalid persisted facts");
+
+    marketServiceMocks.refreshCandidateContracts
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockRejectedValueOnce("unknown");
+    await expect(stageSharedMarketBatchOptions({
+      batchId: "batch-1",
+      filters,
+      optionType: "call",
+      symbol: "AAPL",
+    })).resolves.toMatchObject({
+      contractCount: 0,
+      error: "AAPL call: timeout",
+    });
+    await expect(stageSharedMarketBatchOptions({
+      batchId: "batch-1",
+      filters,
+      optionType: "call",
+      symbol: "AAPL",
+    })).resolves.toMatchObject({
+      contractCount: 0,
+      error: "AAPL call: option discovery failed",
+    });
+    expect(repositoryMocks.checkpointMarketBatchOptionIngestion)
+      .toHaveBeenCalledTimes(2);
+  });
+
+  it("allows partial symbols but rejects a required-type outage", async () => {
     const { finalizeSharedMarketBatchFacts } = await import("./service");
     const underlyingStage = {
       assetCount: 1,
@@ -310,7 +431,15 @@ describe("shared market batch service", () => {
         {
           contractCount: 0,
           durationMs: 12,
-          error: "AAPL call: timeout",
+          error: "MSFT put: timeout",
+          optionType: "put",
+          providerRequests: 1,
+          symbol: "MSFT",
+        },
+        {
+          contractCount: 1,
+          durationMs: 8,
+          error: null,
           optionType: "call",
           providerRequests: 1,
           symbol: "AAPL",
@@ -326,15 +455,107 @@ describe("shared market batch service", () => {
         batchId: "batch-2",
         underlyingStage,
         optionStages: [{
+          contractCount: 1,
+          durationMs: 10,
+          error: null,
+          optionType: "put",
+          providerRequests: 1,
+          symbol: "AAPL",
+        }, {
           contractCount: 0,
           durationMs: 12,
-          error: "AAPL put: timeout",
-          optionType: "put",
+          error: "AAPL call: timeout",
+          optionType: "call",
           providerRequests: 1,
           symbol: "AAPL",
         }],
       }),
-    ).rejects.toThrow("Every shared option-ingestion operation failed.");
+    ).rejects.toThrow(
+      "Every shared call option-ingestion operation failed.",
+    );
     expect(repositoryMocks.completeMarketBatchFacts).toHaveBeenCalledOnce();
+  });
+
+  it("scores, stages, publishes, completes, fails, and exposes discovery filters", async () => {
+    const service = await import("./service");
+    const request = {
+      persona: "balanced_wheel" as const,
+      strategy: "short_put" as const,
+    };
+    repositoryMocks.getMarketBatch.mockResolvedValue({
+      ...batch,
+      status: "facts_ready",
+      summary: { errors: ["one", 2] },
+    });
+    repositoryMocks.readMarketBatchUnderlyings.mockResolvedValue([]);
+    repositoryMocks.readMarketBatchOptions.mockResolvedValue([]);
+    repositoryMocks.createMarketBatchSnapshot.mockResolvedValueOnce({
+      snapshot_id: "snapshot-building",
+      status: "building",
+    });
+
+    const staged = await service.stageScoredMarketBatchSnapshot(
+      "batch-1",
+      request,
+    );
+    expect(staged.snapshotId).toBe("snapshot-building");
+    expect(repositoryMocks.replaceMarketBatchSnapshotCandidates)
+      .toHaveBeenCalledOnce();
+
+    repositoryMocks.getMarketBatch.mockResolvedValueOnce({
+      ...batch,
+      status: "complete",
+      summary: {},
+    });
+    repositoryMocks.createMarketBatchSnapshot.mockResolvedValueOnce({
+      snapshot_id: "snapshot-complete",
+      status: "complete",
+    });
+    await service.stageScoredMarketBatchSnapshot("batch-1", request);
+    expect(repositoryMocks.replaceMarketBatchSnapshotCandidates)
+      .toHaveBeenCalledOnce();
+
+    repositoryMocks.createMarketBatchSnapshot.mockResolvedValueOnce({
+      snapshot_id: "snapshot-failed",
+      status: "failed",
+    });
+    await expect(
+      service.stageScoredMarketBatchSnapshot("batch-1", request),
+    ).rejects.toThrow("snapshot has already failed");
+
+    repositoryMocks.getMarketBatch.mockResolvedValueOnce({
+      ...batch,
+      status: "running",
+    });
+    await expect(
+      service.stageScoredMarketBatchSnapshot("batch-1", request),
+    ).rejects.toThrow("facts are not ready");
+
+    repositoryMocks.publishMarketBatchSnapshot.mockResolvedValueOnce({
+      staged: true,
+    });
+    await expect(
+      service.publishScoredMarketBatchSnapshot(staged),
+    ).resolves.toEqual({ staged: true });
+    await service.finishSharedMarketBatch({
+      batchId: "batch-1",
+      candidateRowsWritten: 3,
+      publicationDurationMs: 4,
+      scoringDurationMs: 5,
+      snapshotCount: 2,
+    });
+    await service.markSharedMarketBatchFailed(
+      "batch-2",
+      new Error("failed"),
+    );
+    expect(service.sharedMarketBatchDiscoveryFilters([request])).toMatchObject({
+      dteMin: 21,
+      dteMax: 30,
+    });
+    expect(repositoryMocks.completeMarketBatch).toHaveBeenCalledWith(
+      "batch-1",
+      2,
+    );
+    expect(repositoryMocks.failMarketBatch).toHaveBeenCalledOnce();
   });
 });

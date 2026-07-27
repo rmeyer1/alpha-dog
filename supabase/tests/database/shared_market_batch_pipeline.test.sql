@@ -239,6 +239,22 @@ insert into public.wheel_market_batch_option_contracts (
   '2026-07-27T20:00:10Z'::timestamptz
 );
 
+insert into public.wheel_market_batch_option_ingestions (
+  batch_id,
+  symbol,
+  option_type,
+  status,
+  contract_count,
+  duration_ms
+) values (
+  (select id from test_market_batch_ids where name = 'first_batch'),
+  'AAPL',
+  'put',
+  'complete',
+  1,
+  10
+);
+
 select is(
   public.checkpoint_wheel_market_batch_underlyings(
     (select id from test_market_batch_ids where name = 'first_batch'),
@@ -391,10 +407,28 @@ select is(
       1,
       '[]'::jsonb,
       '[]'::jsonb
-    )->>'published'
+    )->>'staged'
   )::boolean,
   false,
-  'replaying publication is idempotent'
+  'replaying snapshot completion is idempotent'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wheel_market_batch_current_snapshots
+  ),
+  0,
+  'staged consumer snapshots remain invisible until batch completion'
+);
+
+select is(
+  public.complete_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'first_batch'),
+    1
+  )->>'status',
+  'complete',
+  'the batch completes only after all expected snapshots stage'
 );
 
 select is(
@@ -406,15 +440,6 @@ select is(
   ),
   (select id from test_market_batch_ids where name = 'first_snapshot'),
   'the current pointer references the complete snapshot'
-);
-
-select is(
-  public.complete_wheel_market_batch(
-    (select id from test_market_batch_ids where name = 'first_batch'),
-    1
-  )->>'status',
-  'complete',
-  'the batch completes only after all expected snapshots publish'
 );
 
 insert into test_market_batch_ids (name, id)
@@ -443,6 +468,295 @@ select is(
   ),
   (select id from test_market_batch_ids where name = 'first_snapshot'),
   'a failed replacement batch leaves the previous complete snapshot readable'
+);
+
+insert into test_market_batch_ids (name, id)
+select
+  'partial_batch',
+  (public.create_wheel_market_batch(
+    '2026-07-27T20:20:00Z:opra',
+    '2026-07-27T20:20:00Z'::timestamptz,
+    'opra'
+  )->>'batch_id')::uuid;
+
+update public.wheel_market_batches
+set status = 'facts_ready'
+where id = (select id from test_market_batch_ids where name = 'partial_batch');
+
+insert into test_market_batch_ids (name, id)
+select
+  'partial_put_snapshot',
+  (public.create_wheel_market_batch_snapshot(
+    (select id from test_market_batch_ids where name = 'partial_batch'),
+    'balanced_wheel',
+    'short_put',
+    '{"dteMax":30,"dteMin":21}',
+    '{"dteMax":30,"dteMin":21}'::jsonb,
+    'opra',
+    50,
+    '2026-07-27T20:20:00Z'::timestamptz,
+    '2026-07-27T20:35:00Z'::timestamptz
+  )->>'snapshot_id')::uuid;
+
+insert into test_market_batch_ids (name, id)
+select
+  'partial_call_snapshot',
+  (public.create_wheel_market_batch_snapshot(
+    (select id from test_market_batch_ids where name = 'partial_batch'),
+    'balanced_wheel',
+    'covered_call',
+    '{"dteMax":30,"dteMin":21}',
+    '{"dteMax":30,"dteMin":21}'::jsonb,
+    'opra',
+    50,
+    '2026-07-27T20:20:00Z'::timestamptz,
+    '2026-07-27T20:35:00Z'::timestamptz
+  )->>'snapshot_id')::uuid;
+
+select is(
+  public.publish_wheel_market_batch_snapshot(
+    (select id from test_market_batch_ids where name = 'partial_put_snapshot'),
+    0,
+    0,
+    0,
+    '[]'::jsonb,
+    '[]'::jsonb
+  )->>'status',
+  'complete',
+  'consumer A may stage before consumer B fails'
+);
+
+select throws_ok(
+  format(
+    'select public.complete_wheel_market_batch(%L::uuid, 2)',
+    (select id from test_market_batch_ids where name = 'partial_batch')
+  ),
+  'P0001',
+  'Wheel market batch snapshots are incomplete.',
+  'final completion rejects a batch with an unstaged consumer'
+);
+
+select ok(
+  public.fail_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'partial_batch'),
+    'consumer B failed'
+  ),
+  'a post-stage workflow failure marks the batch failed'
+);
+
+select is(
+  public.fail_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'partial_batch'),
+    'consumer B failed'
+  ),
+  false,
+  'replaying a batch failure is idempotent'
+);
+
+select throws_ok(
+  format(
+    $sql$
+      select public.publish_wheel_market_batch_snapshot(
+        %L::uuid,
+        0,
+        0,
+        0,
+        '[]'::jsonb,
+        '[]'::jsonb
+      )
+    $sql$,
+    (select id from test_market_batch_ids where name = 'partial_call_snapshot')
+  ),
+  'P0001',
+  'Wheel market batch is not publishable.',
+  'replay cannot stage another consumer after the batch fails'
+);
+
+select is(
+  (
+    select snapshot_id
+    from public.wheel_market_batch_current_snapshots
+    where persona = 'balanced_wheel'
+      and strategy = 'short_put'
+  ),
+  (select id from test_market_batch_ids where name = 'first_snapshot'),
+  'a post-stage failure retains consumer A previous pointer'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wheel_market_batch_current_snapshots
+    where persona = 'balanced_wheel'
+      and strategy = 'covered_call'
+  ),
+  0,
+  'a post-stage failure creates no consumer B pointer'
+);
+
+insert into test_market_batch_ids (name, id)
+select
+  'type_outage_batch',
+  (public.create_wheel_market_batch(
+    '2026-07-27T20:25:00Z:opra',
+    '2026-07-27T20:25:00Z'::timestamptz,
+    'opra'
+  )->>'batch_id')::uuid;
+
+insert into public.wheel_market_batch_underlyings (
+  batch_id,
+  symbol,
+  company_name,
+  exchange,
+  universe_rank,
+  selected_for_scoring,
+  stock_score,
+  price,
+  stock_snapshot,
+  trend,
+  earnings_context,
+  captured_at
+) values (
+  (select id from test_market_batch_ids where name = 'type_outage_batch'),
+  'MSFT',
+  'Microsoft Corp.',
+  'NASDAQ',
+  1,
+  true,
+  100,
+  500,
+  '{}'::jsonb,
+  'bullish',
+  '{"events":[],"providerEnabled":false,"symbol":"MSFT"}'::jsonb,
+  '2026-07-27T20:25:00Z'::timestamptz
+);
+
+insert into public.wheel_market_batch_option_ingestions (
+  batch_id,
+  symbol,
+  option_type,
+  status,
+  contract_count,
+  error,
+  duration_ms
+) values
+(
+  (select id from test_market_batch_ids where name = 'type_outage_batch'),
+  'MSFT',
+  'put',
+  'complete',
+  0,
+  null,
+  10
+),
+(
+  (select id from test_market_batch_ids where name = 'type_outage_batch'),
+  'MSFT',
+  'call',
+  'failed',
+  0,
+  'provider unavailable',
+  10
+);
+
+update public.wheel_market_batches
+set status = 'facts_ready', selected_count = 1
+where id = (
+  select id
+  from test_market_batch_ids
+  where name = 'type_outage_batch'
+);
+
+insert into test_market_batch_ids (name, id)
+select
+  'type_outage_put_snapshot',
+  (public.create_wheel_market_batch_snapshot(
+    (select id from test_market_batch_ids where name = 'type_outage_batch'),
+    'balanced_wheel',
+    'short_put',
+    '{"dteMax":30,"dteMin":21}',
+    '{"dteMax":30,"dteMin":21}'::jsonb,
+    'opra',
+    50,
+    '2026-07-27T20:25:00Z'::timestamptz,
+    '2026-07-27T20:40:00Z'::timestamptz
+  )->>'snapshot_id')::uuid;
+
+insert into test_market_batch_ids (name, id)
+select
+  'type_outage_call_snapshot',
+  (public.create_wheel_market_batch_snapshot(
+    (select id from test_market_batch_ids where name = 'type_outage_batch'),
+    'balanced_wheel',
+    'covered_call',
+    '{"dteMax":30,"dteMin":21}',
+    '{"dteMax":30,"dteMin":21}'::jsonb,
+    'opra',
+    50,
+    '2026-07-27T20:25:00Z'::timestamptz,
+    '2026-07-27T20:40:00Z'::timestamptz
+  )->>'snapshot_id')::uuid;
+
+select public.publish_wheel_market_batch_snapshot(
+  ids.id,
+  1,
+  1,
+  0,
+  '[]'::jsonb,
+  '[]'::jsonb
+)
+from test_market_batch_ids as ids
+where ids.name in ('type_outage_put_snapshot', 'type_outage_call_snapshot')
+order by ids.name;
+
+select throws_ok(
+  format(
+    'select public.complete_wheel_market_batch(%L::uuid, 2)',
+    (select id from test_market_batch_ids where name = 'type_outage_batch')
+  ),
+  'P0001',
+  'Wheel market batch has an incomplete required option type.',
+  'batch completion rejects a required option type with zero successes'
+);
+
+select ok(
+  public.fail_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'type_outage_batch'),
+    'call provider unavailable'
+  ),
+  'a required-type outage marks the replacement batch failed'
+);
+
+select throws_ok(
+  format(
+    'select public.complete_wheel_market_batch(%L::uuid, 2)',
+    (select id from test_market_batch_ids where name = 'type_outage_batch')
+  ),
+  'P0001',
+  'A failed wheel market batch cannot be completed.',
+  'replaying completion cannot expose a failed required-type outage'
+);
+
+select is(
+  (
+    select snapshot_id
+    from public.wheel_market_batch_current_snapshots
+    where persona = 'balanced_wheel'
+      and strategy = 'short_put'
+  ),
+  (select id from test_market_batch_ids where name = 'first_snapshot'),
+  'a required-type outage retains the previous put pointer'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wheel_market_batch_current_snapshots
+    where persona = 'balanced_wheel'
+      and strategy = 'covered_call'
+  ),
+  0,
+  'a required-type outage creates no call pointer'
 );
 
 insert into test_market_batch_ids (name, id)
@@ -482,10 +796,19 @@ select is(
       0,
       '[]'::jsonb,
       '[]'::jsonb
-    )->>'published'
+    )->>'staged'
   )::boolean,
   true,
-  'a newer complete interval advances the current pointer'
+  'a newer consumer snapshot stages without advancing the pointer'
+);
+
+select is(
+  public.complete_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'newer_batch'),
+    1
+  )->>'pointer_count',
+  '1',
+  'atomic completion advances the newer interval pointer'
 );
 
 insert into test_market_batch_ids (name, id)
@@ -529,10 +852,19 @@ select is(
       0,
       '[]'::jsonb,
       '[]'::jsonb
-    )->>'published'
+    )->>'staged'
   )::boolean,
-  false,
-  'late publication completes without replacing a newer interval'
+  true,
+  'a late older consumer snapshot stages successfully'
+);
+
+select is(
+  public.complete_wheel_market_batch(
+    (select id from test_market_batch_ids where name = 'late_older_batch'),
+    1
+  )->>'pointer_count',
+  '0',
+  'late older batch completion does not replace a newer interval'
 );
 
 select is(

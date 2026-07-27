@@ -34,7 +34,7 @@ describe("shared market batch migration", () => {
     }
   });
 
-  it("creates one canonical interval identity and atomic publication pointer", () => {
+  it("creates one canonical interval identity and batch-atomic pointers", () => {
     expect(migration).toContain(
       "constraint wheel_market_batches_interval_feed_unique",
     );
@@ -53,6 +53,32 @@ describe("shared market batch migration", () => {
     );
     expect(migration).toContain(
       "Wheel market batch candidate count does not match.",
+    );
+    const snapshotStage = migration.slice(
+      migration.indexOf(
+        "create or replace function public.publish_wheel_market_batch_snapshot(",
+      ),
+      migration.indexOf(
+        "create or replace function public.complete_wheel_market_batch(",
+      ),
+    );
+    const batchCompletion = migration.slice(
+      migration.indexOf(
+        "create or replace function public.complete_wheel_market_batch(",
+      ),
+      migration.indexOf(
+        "create or replace function public.fail_wheel_market_batch(",
+      ),
+    );
+
+    expect(snapshotStage).not.toContain(
+      "insert into public.wheel_market_batch_current_snapshots",
+    );
+    expect(batchCompletion).toContain(
+      "insert into public.wheel_market_batch_current_snapshots",
+    );
+    expect(batchCompletion).toContain(
+      "Wheel market batch has an incomplete required option type.",
     );
   });
 

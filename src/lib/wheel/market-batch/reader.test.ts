@@ -23,6 +23,10 @@ describe("shared market batch reader", () => {
         snapshot_id: "snapshot-1",
       }])
       .mockResolvedValueOnce([{
+        id: "batch-1",
+        status: "complete",
+      }])
+      .mockResolvedValueOnce([{
         as_of: "2026-07-27T14:00:00.000Z",
         batch_id: "batch-1",
         candidate_count: 2,
@@ -108,9 +112,144 @@ describe("shared market batch reader", () => {
     });
     expect(restMock.mock.calls.map(([table]) => table)).toEqual([
       "wheel_market_batch_current_snapshots",
+      "wheel_market_batches",
       "wheel_market_batch_snapshots",
       "wheel_market_batch_candidates",
     ]);
+  });
+
+  it("rejects a pointer whose batch is not complete", async () => {
+    restMock
+      .mockResolvedValueOnce([{
+        batch_id: "batch-failed",
+        published_at: "2026-07-27T14:05:00.000Z",
+        snapshot_id: "snapshot-failed",
+      }])
+      .mockResolvedValueOnce([]);
+    const { getSharedMarketBatchScreenerResponse } = await import("./reader");
+
+    await expect(
+      getSharedMarketBatchScreenerResponse({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).resolves.toBeNull();
+    expect(restMock.mock.calls.map(([table]) => table)).toEqual([
+      "wheel_market_batch_current_snapshots",
+      "wheel_market_batches",
+    ]);
+  });
+
+  it("returns null when no current pointer or complete snapshot exists", async () => {
+    const { getSharedMarketBatchScreenerResponse } = await import("./reader");
+    restMock.mockResolvedValueOnce([]);
+    await expect(
+      getSharedMarketBatchScreenerResponse({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).resolves.toBeNull();
+
+    restMock
+      .mockResolvedValueOnce([{
+        batch_id: "batch-1",
+        published_at: "2026-07-27T14:05:00.000Z",
+        snapshot_id: "snapshot-1",
+      }])
+      .mockResolvedValueOnce([{ id: "batch-1", status: "complete" }])
+      .mockResolvedValueOnce([]);
+    await expect(
+      getSharedMarketBatchScreenerResponse({
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("uses safe numeric defaults and stale pagination defaults", async () => {
+    restMock
+      .mockResolvedValueOnce([{
+        batch_id: "batch-1",
+        published_at: "2026-07-27T14:05:00.000Z",
+        snapshot_id: "snapshot-1",
+      }])
+      .mockResolvedValueOnce([{ id: "batch-1", status: "complete" }])
+      .mockResolvedValueOnce([{
+        as_of: "2026-07-27T14:00:00.000Z",
+        batch_id: "batch-1",
+        candidate_count: 1,
+        completed_at: "2026-07-27T14:05:00.000Z",
+        errors: [],
+        feed: "opra",
+        id: "snapshot-1",
+        next_suggested_refresh_at: "2026-07-27T14:20:00.000Z",
+        screened_count: 1,
+        skipped_count: 0,
+        started_at: "2026-07-27T14:00:00.000Z",
+        status: "complete",
+        warnings: [],
+      }])
+      .mockResolvedValueOnce([{
+        annualized_return_on_risk: null,
+        annualized_yield: null,
+        as_of: "2026-07-27T14:00:00.000Z",
+        company_name: "Apple Inc.",
+        delta: null,
+        dte: 26,
+        errors: [],
+        exchange: "NASDAQ",
+        expiration: "2026-08-22",
+        implied_volatility: null,
+        liquidity_quality: "poor",
+        long_strike: null,
+        ma20: null,
+        ma50: null,
+        ma200: null,
+        option_type: "put",
+        premium_received: null,
+        premium_yield: null,
+        rank: 1,
+        return_on_risk: null,
+        rsi14: null,
+        score: 1,
+        short_strike: null,
+        snapshot_id: "snapshot-1",
+        strategy: "short_put",
+        symbol: "AAPL",
+        trend: "neutral",
+        underlying_as_of: null,
+        underlying_price: null,
+        warning_count: 0,
+        warnings: [],
+      }]);
+    const { getSharedMarketBatchScreenerResponse } = await import("./reader");
+    const response = await getSharedMarketBatchScreenerResponse(
+      {
+        persona: "balanced_wheel",
+        strategy: "short_put",
+      },
+      Date.parse("2026-07-27T15:00:00.000Z"),
+    );
+
+    expect(response).toMatchObject({
+      companies: [{
+        bestCandidate: { shortStrike: 0 },
+        underlying: {
+          asOf: "2026-07-27T14:00:00.000Z",
+          price: 0,
+        },
+      }],
+      dataFreshness: { cacheStatus: "stale" },
+      progress: {
+        batchSize: 8,
+        cursor: 0,
+        nextCursor: null,
+      },
+    });
+    expect(restMock.mock.calls.at(-1)?.[1]?.query).toMatchObject({
+      limit: 50,
+      offset: 0,
+    });
   });
 
   it("does not read shared snapshots for forced refreshes", async () => {

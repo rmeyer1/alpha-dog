@@ -249,18 +249,21 @@ requireSuccess(
     p_snapshot_id: snapshotId,
     p_warnings: [],
   }),
-  "publish complete snapshot",
+  "stage complete snapshot",
 );
 
-const published = requireSuccess(
+const staged = requireSuccess(
   await service
     .from("wheel_market_batch_current_snapshots")
     .select("snapshot_id")
-    .eq("filter_key", filterKey)
-    .single(),
-  "read published pointer",
+    .eq("filter_key", filterKey),
+  "read staged pointer",
 );
-assert.equal(published.snapshot_id, snapshotId);
+assert.equal(
+  staged.length,
+  0,
+  "staged snapshots must remain invisible until batch completion",
+);
 
 requireSuccess(
   await service.rpc("complete_wheel_market_batch", {
@@ -269,6 +272,16 @@ requireSuccess(
   }),
   "complete market batch",
 );
+
+const published = requireSuccess(
+  await service
+    .from("wheel_market_batch_current_snapshots")
+    .select("snapshot_id")
+    .eq("filter_key", filterKey)
+    .single(),
+  "read atomically published pointer",
+);
+assert.equal(published.snapshot_id, snapshotId);
 
 const failedInterval = new Date(
   new Date(interval).getTime() + 1,
@@ -282,12 +295,65 @@ const failedBatch = requireSuccess(
   "create failed replacement batch",
 );
 requireSuccess(
+  await service
+    .from("wheel_market_batches")
+    .update({ status: "facts_ready" })
+    .eq("id", failedBatch.batch_id),
+  "prepare failed replacement facts",
+);
+const failedSnapshot = requireSuccess(
+  await service.rpc("create_wheel_market_batch_snapshot", {
+    p_as_of: failedInterval,
+    p_batch_id: failedBatch.batch_id,
+    p_feed: "opra",
+    p_filter_key: filterKey,
+    p_filters: { dteMax: 30, dteMin: 21 },
+    p_next_suggested_refresh_at: null,
+    p_persona: "balanced_wheel",
+    p_result_limit: 50,
+    p_strategy: "short_put",
+  }),
+  "create failed replacement snapshot",
+);
+requireSuccess(
+  await service.rpc("publish_wheel_market_batch_snapshot", {
+    p_candidate_count: 0,
+    p_errors: [],
+    p_screened_count: 0,
+    p_skipped_count: 0,
+    p_snapshot_id: failedSnapshot.snapshot_id,
+    p_warnings: [],
+  }),
+  "stage failed replacement snapshot",
+);
+const retainedAfterStage = requireSuccess(
+  await service
+    .from("wheel_market_batch_current_snapshots")
+    .select("snapshot_id")
+    .eq("filter_key", filterKey)
+    .single(),
+  "read pointer after replacement staging",
+);
+assert.equal(
+  retainedAfterStage.snapshot_id,
+  snapshotId,
+  "staging a replacement must retain the previous complete pointer",
+);
+requireSuccess(
   await service.rpc("fail_wheel_market_batch", {
     p_batch_id: failedBatch.batch_id,
     p_error: "controlled provider failure",
   }),
   "fail replacement batch",
 );
+const replayedFailure = requireSuccess(
+  await service.rpc("fail_wheel_market_batch", {
+    p_batch_id: failedBatch.batch_id,
+    p_error: "controlled provider failure",
+  }),
+  "replay failed replacement batch",
+);
+assert.equal(replayedFailure, false, "failure replay must be idempotent");
 
 const retained = requireSuccess(
   await service

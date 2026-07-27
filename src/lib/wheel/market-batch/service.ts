@@ -367,9 +367,18 @@ export async function finalizeSharedMarketBatchFacts({
   const errors = optionStages
     .map((stage) => stage.error)
     .filter((error) => error != null);
+  const failedOptionType = ([...new Set(
+    optionStages.map((stage) => stage.optionType),
+  )] as OptionType[]).find((optionType) =>
+    optionStages
+      .filter((stage) => stage.optionType === optionType)
+      .every((stage) => stage.error != null)
+  );
 
-  if (optionStages.length > 0 && errors.length === optionStages.length) {
-    throw new Error("Every shared option-ingestion operation failed.");
+  if (failedOptionType) {
+    throw new Error(
+      `Every shared ${failedOptionType} option-ingestion operation failed.`,
+    );
   }
 
   const optionMetrics = (["put", "call"] as const)

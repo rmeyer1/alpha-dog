@@ -93,8 +93,8 @@ beforeEach(() => {
       warnings: [],
     });
   stepMocks.publish
-    .mockResolvedValueOnce({ durationMs: 2, published: true })
-    .mockResolvedValueOnce({ durationMs: 3, published: true });
+    .mockResolvedValueOnce({ durationMs: 2, staged: true })
+    .mockResolvedValueOnce({ durationMs: 3, staged: true });
 });
 
 describe("wheel market batch workflow", () => {
@@ -142,6 +142,22 @@ describe("wheel market batch workflow", () => {
     expect(stepMocks.fail).toHaveBeenCalledWith(
       "batch-1",
       "all option providers failed",
+    );
+  });
+
+  it("records a stable message for non-Error failures", async () => {
+    stepMocks.finalizeFacts.mockRejectedValueOnce("unknown");
+    const { wheelMarketBatchWorkflow } = await import("./index");
+
+    await expect(
+      wheelMarketBatchWorkflow({
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+        requests,
+      }),
+    ).rejects.toBe("unknown");
+    expect(stepMocks.fail).toHaveBeenCalledWith(
+      "batch-1",
+      "Market batch workflow failed.",
     );
   });
 

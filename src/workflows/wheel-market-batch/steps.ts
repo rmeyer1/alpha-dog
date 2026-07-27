@@ -200,8 +200,8 @@ export async function publishMarketBatchSnapshotStep(
   try {
     const result = await publishScoredMarketBatchSnapshot(snapshot);
     logStep("publish", "DONE", {
-      published: result.published,
       snapshotId: snapshot.snapshotId,
+      staged: result.staged,
     });
     return result;
   } catch (error) {
