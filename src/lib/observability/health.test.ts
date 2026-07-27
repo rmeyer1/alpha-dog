@@ -10,6 +10,14 @@ import {
   type DependencyProbe,
   type ReadinessSummary,
 } from "./health";
+import {
+  FAILED_READINESS_TTL_SECONDS,
+  HEALTHY_READINESS_TTL_SECONDS,
+  READINESS_EDGE_CACHE_FRESH_SECONDS,
+  READINESS_EDGE_CACHE_STALE_WHILE_REVALIDATE_SECONDS,
+  READINESS_REFRESH_CADENCE_SECONDS,
+  READINESS_REFRESH_JITTER_BUDGET_SECONDS,
+} from "./readiness-policy";
 
 function probe(
   name: string,
@@ -142,6 +150,142 @@ describe("readiness probes", () => {
       "complete_observability_readiness_refresh",
     ]);
     expect(refresh).toHaveBeenCalledOnce();
+    expect(rpc.mock.calls[1]?.[1]).toMatchObject({
+      p_status: "ready",
+      p_summary: summary,
+      p_ttl_seconds: HEALTHY_READINESS_TTL_SECONDS,
+    });
+  });
+
+  it("keeps healthy readiness fresh across cron jitter and CDN revalidation", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const startedAt = new Date("2026-07-24T14:00:00.000Z");
+      const summary: ReadinessSummary = {
+        checks: {
+          optional: { healthy: 0, total: 1 },
+          required: { healthy: 5, total: 5 },
+        },
+        durationMs: 400,
+        status: "ready",
+      };
+      let state: {
+        expires_at: string;
+        summary: ReadinessSummary;
+      } | null = null;
+      const rpc = vi.fn(async (
+        name: string,
+        args: Record<string, unknown>,
+      ) => {
+        if (name === "claim_observability_readiness_refresh") {
+          return { data: true, error: null };
+        }
+
+        const ttlSeconds = Number(args.p_ttl_seconds);
+
+        state = {
+          expires_at: new Date(
+            Date.now() + ttlSeconds * 1_000,
+          ).toISOString(),
+          summary: args.p_summary as ReadinessSummary,
+        };
+        return { data: true, error: null };
+      });
+      const maybeSingle = vi.fn(async () => ({
+        data: state,
+        error: null,
+      }));
+      const client = {
+        from: vi.fn(() => ({
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({ maybeSingle })),
+          })),
+        })),
+        rpc,
+      };
+      const refresh = vi.fn(async () => summary);
+      const delayedRefreshSeconds =
+        READINESS_REFRESH_CADENCE_SECONDS +
+        READINESS_REFRESH_JITTER_BUDGET_SECONDS;
+      const edgeCacheWindowSeconds =
+        READINESS_EDGE_CACHE_FRESH_SECONDS +
+        READINESS_EDGE_CACHE_STALE_WHILE_REVALIDATE_SECONDS;
+
+      expect(HEALTHY_READINESS_TTL_SECONDS).toBeGreaterThan(
+        delayedRefreshSeconds + edgeCacheWindowSeconds,
+      );
+
+      vi.setSystemTime(startedAt);
+      await refreshSharedReadinessSummary({
+        client: client as never,
+        refresh,
+      });
+
+      for (const scheduledAtSeconds of [
+        READINESS_REFRESH_CADENCE_SECONDS,
+        READINESS_REFRESH_CADENCE_SECONDS * 2,
+      ]) {
+        const completedAtSeconds =
+          scheduledAtSeconds + READINESS_REFRESH_JITTER_BUDGET_SECONDS;
+
+        vi.setSystemTime(
+          startedAt.getTime() + completedAtSeconds * 1_000,
+        );
+        await expect(
+          getReadinessSummary(client as never),
+        ).resolves.toMatchObject({ status: "ready" });
+        await refreshSharedReadinessSummary({
+          client: client as never,
+          refresh,
+        });
+
+        vi.setSystemTime(
+          startedAt.getTime() +
+            (completedAtSeconds + edgeCacheWindowSeconds) * 1_000,
+        );
+        await expect(
+          getReadinessSummary(client as never),
+        ).resolves.toMatchObject({ status: "ready" });
+      }
+
+      expect(
+        rpc.mock.calls
+          .filter(([name]) =>
+            name === "complete_observability_readiness_refresh")
+          .map(([, args]) => args.p_ttl_seconds),
+      ).toEqual([
+        HEALTHY_READINESS_TTL_SECONDS,
+        HEALTHY_READINESS_TTL_SECONDS,
+        HEALTHY_READINESS_TTL_SECONDS,
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps failed readiness on the short refresh TTL", async () => {
+    const summary: ReadinessSummary = {
+      checks: {
+        optional: { healthy: 0, total: 1 },
+        required: { healthy: 4, total: 5 },
+      },
+      durationMs: 1_500,
+      status: "not_ready",
+    };
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ data: true, error: null })
+      .mockResolvedValueOnce({ data: true, error: null });
+
+    await expect(refreshSharedReadinessSummary({
+      client: { rpc } as never,
+      refresh: vi.fn(async () => summary),
+    })).resolves.toEqual(summary);
+
+    expect(rpc.mock.calls[1]?.[1]).toMatchObject({
+      p_status: "not_ready",
+      p_ttl_seconds: FAILED_READINESS_TTL_SECONDS,
+    });
   });
 
   it("times out probes concurrently near the slowest timeout", async () => {

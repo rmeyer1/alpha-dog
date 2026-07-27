@@ -1,4 +1,5 @@
 import { getReadinessSummary } from "@/lib/observability/health";
+import { READINESS_CACHE_CONTROL } from "@/lib/observability/readiness-policy";
 import { instrumentApiRoute } from "@/lib/observability/route";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +9,7 @@ async function GETHandler() {
 
   return Response.json(summary, {
     headers: {
-      "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10",
+      "Cache-Control": READINESS_CACHE_CONTROL,
     },
     status: summary.status === "ready" ? 200 : 503,
   });
