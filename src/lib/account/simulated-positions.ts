@@ -1,144 +1,41 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { z } from "zod";
 import {
   buybackCost,
   OPTION_CONTRACT_MULTIPLIER,
   premiumReceived,
   realizedPnlForClose,
 } from "./simulated-accounting";
-
-const multiplier = 100;
-
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const snapshotSchema = z.record(z.string(), z.unknown());
-const optionalSnapshotSchema = snapshotSchema.optional().default({});
-
-const optionalNonNegativeNumber = z.number().finite().min(0).optional();
-const optionalGreek = z.number().finite().optional();
-
-const dataProvenanceSchema = z.object({
-  asOf: z.string().datetime().optional(),
-  cacheSource: z.enum([
-    "demo",
-    "live",
-    "materialized",
-    "memory_cache",
-    "runtime_cache",
-  ]).optional(),
-  cacheStatus: z.enum(["demo", "fresh", "stale"]).optional(),
-  feed: z.enum(["demo", "indicative", "opra"]).optional(),
-  sourceMode: z.enum(["demo", "live", "unknown"]).default("unknown"),
-}).superRefine((provenance, ctx) => {
-  if (provenance.sourceMode === "demo" && provenance.feed !== "demo") {
-    ctx.addIssue({
-      code: "custom",
-      message: "Demo positions must retain the demo feed provenance.",
-      path: ["feed"],
-    });
-  }
-
-  if (
-    provenance.sourceMode === "live" &&
-    !["indicative", "opra"].includes(provenance.feed ?? "")
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: "Live positions must retain a live feed provenance.",
-      path: ["feed"],
-    });
-  }
-});
-
-const simulatedPositionLegInputSchema = z.object({
-  askPrice: optionalNonNegativeNumber,
-  bidPrice: optionalNonNegativeNumber,
-  contractSymbol: z.string().trim().min(1).max(80).optional(),
-  currentMark: optionalNonNegativeNumber,
-  delta: optionalGreek,
-  expirationDate: dateSchema.optional(),
-  gamma: optionalGreek,
-  impliedVolatility: optionalNonNegativeNumber,
-  legIndex: z.number().int().min(0).optional(),
-  midPrice: optionalNonNegativeNumber,
-  openInterest: z.number().int().min(0).optional(),
-  openPrice: z.number().finite().min(0),
-  optionType: z.enum(["put", "call"]).optional(),
-  quantity: z.number().int().positive().optional(),
-  quoteAsOf: z.string().datetime().optional(),
-  rho: optionalGreek,
-  side: z.enum(["short", "long"]),
-  snapshot: optionalSnapshotSchema,
-  strike: z.number().finite().positive().optional(),
-  theta: optionalGreek,
-  vega: optionalGreek,
-  volume: z.number().int().min(0).optional(),
-});
-
-export const simulatedPositionInputSchema = z.object({
-  candidateSnapshot: optionalSnapshotSchema,
-  contracts: z.number().int().positive().max(1000),
-  dataProvenance: dataProvenanceSchema.optional(),
-  expirationDate: dateSchema.optional(),
-  legs: z.array(simulatedPositionLegInputSchema).min(1).max(4),
-  netCredit: z.number().finite().positive().optional(),
-  notes: z.string().trim().max(2000).optional(),
-  openedAt: dateSchema.optional(),
-  strategyType: z.enum([
-    "short_put",
-    "covered_call",
-    "put_credit_spread",
-    "call_credit_spread",
-  ]),
-  symbol: z
-    .string()
-    .trim()
-    .min(1)
-    .max(10)
-    .regex(/^[A-Za-z0-9.-]+$/)
-    .transform((value) => value.toUpperCase()),
-  underlyingPriceAtOpen: z.number().finite().positive().optional(),
-}).superRefine((input, ctx) => {
-  const expectedLegCount = input.strategyType.endsWith("_spread") ? 2 : 1;
-
-  if (input.legs.length !== expectedLegCount) {
-    ctx.addIssue({
-      code: "custom",
-      message: `${input.strategyType} requires ${expectedLegCount} leg${expectedLegCount === 1 ? "" : "s"}.`,
-      path: ["legs"],
-    });
-  }
-
-  if (input.strategyType.endsWith("_spread")) {
-    const sides = new Set(input.legs.map((leg) => leg.side));
-
-    if (!sides.has("short") || !sides.has("long")) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Credit spreads require one short leg and one long leg.",
-        path: ["legs"],
-      });
-    }
-  }
-});
-
-export type SimulatedPositionInput = z.infer<typeof simulatedPositionInputSchema>;
-
-export const closeSimulatedPositionInputSchema = z.object({
-  closedAt: z.string().datetime().optional(),
-  closePrice: z.number().finite().min(0),
-  contractsToClose: z.number().int().positive(),
-  notes: z.string().trim().max(2000).optional(),
-});
-
-export type CloseSimulatedPositionInput = z.infer<typeof closeSimulatedPositionInputSchema>;
-
-export const expireSimulatedPositionInputSchema = z.object({
-  expiredAt: z.string().datetime().optional(),
-  notes: z.string().trim().max(2000).optional(),
-  underlyingPriceAtExpiration: z.number().finite().positive(),
-});
-
-export type ExpireSimulatedPositionInput = z.infer<typeof expireSimulatedPositionInputSchema>;
+/** Public facade: contracts live in contracts.ts; persistence and lifecycle remain below. */
+export {
+  closeSimulatedPositionInputSchema,
+  expireSimulatedPositionInputSchema,
+  simulatedPositionInputSchema,
+  SimulatedPositionValidationError,
+} from "./simulated-positions/contracts";
+export type {
+  CloseSimulatedPositionInput,
+  ExpireSimulatedPositionInput,
+  SimulatedPositionInput,
+} from "./simulated-positions/contracts";
+import {
+  SimulatedPositionValidationError,
+  type CloseSimulatedPositionInput,
+  type ExpireSimulatedPositionInput,
+  type SimulatedPositionInput,
+} from "./simulated-positions/contracts";
+import {
+  calculateNetCredit,
+  expirationDateFromTimestamp,
+  numberValue,
+  openedAtTimestamp as normalizedOpenedAtTimestamp,
+  openingCashDelta,
+} from "./simulated-positions/domain";
+import {
+  getOrCreatePaperAccount,
+  hasRpc,
+  rpcOrThrow,
+} from "./simulated-positions/repository";
+import { closeTransition } from "./simulated-positions/lifecycle";
 
 interface PaperAccountRow {
   current_cash?: number | string | null;
@@ -322,16 +219,6 @@ const equityLotColumns = [
   "acquired_at",
 ].join(",");
 
-function calculateNetCredit(input: SimulatedPositionInput) {
-  if (input.netCredit !== undefined) {
-    return input.netCredit;
-  }
-
-  return input.legs.reduce((total, leg) => {
-    return total + (leg.side === "short" ? leg.openPrice : -leg.openPrice);
-  }, 0);
-}
-
 function assertPositiveNetCredit(netCredit: number) {
   if (netCredit <= 0) {
     throw new SimulatedPositionValidationError(
@@ -339,27 +226,6 @@ function assertPositiveNetCredit(netCredit: number) {
       "Position net credit must be greater than zero.",
     );
   }
-}
-
-function numberValue(value: number | string | null | undefined) {
-  if (value == null) {
-    return 0;
-  }
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function expirationDateFromTimestamp(timestamp: string) {
-  return timestamp.slice(0, 10);
-}
-
-function openedAtTimestamp(input: SimulatedPositionInput, now: Date) {
-  if (!input.openedAt) {
-    return now.toISOString();
-  }
-
-  return `${input.openedAt}T12:00:00.000Z`;
 }
 
 function singleShortPutLeg(legs: SimulatedPositionLegRow[]): AssignableShortPutLeg | null {
@@ -398,101 +264,7 @@ function singleShortCallLeg(legs: SimulatedPositionLegRow[]): AssignableShortCal
   return leg as AssignableShortCallLeg;
 }
 
-export class SimulatedPositionValidationError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status = 400,
-  ) {
-    super(message);
-    this.name = "SimulatedPositionValidationError";
-  }
-}
-
-type RpcResult<T> = {
-  data: T | null;
-  error: { message?: string } | null;
-};
-
-type RpcCapableClient = SupabaseClient & {
-  rpc?: <T = unknown>(
-    fn: string,
-    args?: Record<string, unknown>,
-  ) => Promise<RpcResult<T>>;
-};
-
-function hasRpc(supabase: SupabaseClient): supabase is RpcCapableClient {
-  return typeof (supabase as RpcCapableClient).rpc === "function";
-}
-
-function validationStatusForCode(code: string) {
-  return code === "SIMULATED_POSITION_NOT_FOUND" ? 404 : 400;
-}
-
-function throwRpcError(error: { message?: string }, fallbackMessage: string): never {
-  const message = error.message ?? fallbackMessage;
-  const match = /^([A-Z0-9_]+):\s*(.+)$/.exec(message);
-
-  if (match) {
-    throw new SimulatedPositionValidationError(
-      match[1],
-      match[2],
-      validationStatusForCode(match[1]),
-    );
-  }
-
-  throw new Error(fallbackMessage);
-}
-
-async function rpcOrThrow<T>(
-  supabase: RpcCapableClient,
-  fn: string,
-  args: Record<string, unknown>,
-  fallbackMessage: string,
-) {
-  const result = await supabase.rpc<T>(fn, args);
-
-  if (result.error) {
-    throwRpcError(result.error, fallbackMessage);
-  }
-
-  if (!result.data) {
-    throw new Error(fallbackMessage);
-  }
-
-  return result.data;
-}
-
-export async function getOrCreatePaperAccount(
-  supabase: SupabaseClient,
-  userId: string,
-) {
-  const existing = await supabase
-    .from("paper_accounts")
-    .select("id")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (existing.error) {
-    throw new Error("Unable to load paper account.");
-  }
-
-  if (existing.data) {
-    return existing.data as unknown as PaperAccountRow;
-  }
-
-  const created = await supabase
-    .from("paper_accounts")
-    .insert({ user_id: userId })
-    .select("id")
-    .single();
-
-  if (created.error) {
-    throw new Error("Unable to create paper account.");
-  }
-
-  return created.data as unknown as PaperAccountRow;
-}
+export { getOrCreatePaperAccount } from "./simulated-positions/repository";
 
 export async function createSimulatedPosition(
   supabase: SupabaseClient,
@@ -529,7 +301,7 @@ export async function createSimulatedPosition(
   }
 
   const paperAccount = await getOrCreatePaperAccount(supabase, userId);
-  const openedAt = openedAtTimestamp(input, now);
+  const openedAt = normalizedOpenedAtTimestamp(input.openedAt, now);
   const netCredit = calculateNetCredit(input);
   const symbol = input.symbol.toUpperCase();
 
@@ -603,7 +375,7 @@ export async function createSimulatedPosition(
       throw new Error("Unable to create simulated position legs.");
     }
 
-    const cashDelta = netCredit * input.contracts * multiplier;
+    const cashDelta = openingCashDelta(netCredit, input.contracts);
     const eventResult = await supabase
       .from("simulated_position_events")
       .insert({
@@ -613,7 +385,7 @@ export async function createSimulatedPosition(
         metadata: {
           candidateSnapshot: input.candidateSnapshot,
           dataProvenance,
-          multiplier,
+          multiplier: OPTION_CONTRACT_MULTIPLIER,
           strategyType: input.strategyType,
         },
         paper_account_id: paperAccount.id,
@@ -708,9 +480,11 @@ export async function closeSimulatedPosition(
   }
 
   const closedAt = input.closedAt ?? now.toISOString();
-  const contractsRemaining = position.contracts_remaining - input.contractsToClose;
-  const status = contractsRemaining === 0 ? "closed" : "partially_closed";
-  const closedAtForPosition = contractsRemaining === 0 ? closedAt : null;
+  const { closedAtForPosition, contractsRemaining, eventType, status } = closeTransition(
+    position.contracts_remaining,
+    input.contractsToClose,
+    closedAt,
+  );
   const realizedPnlDelta = realizedPnlForClose(
     position.net_credit,
     input.closePrice,
@@ -741,7 +515,7 @@ export async function closeSimulatedPosition(
       .from("simulated_position_events")
       .insert({
         cash_delta: cashDelta,
-        event_type: contractsRemaining === 0 ? "full_close" : "partial_close",
+        event_type: eventType,
         margin_delta: 0,
         metadata: {
           closedAt,
