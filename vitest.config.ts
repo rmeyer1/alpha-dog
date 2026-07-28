@@ -25,6 +25,7 @@ export default defineConfig({
       },
     },
     environment: "node",
+    exclude: ["src/lib/wheel/scanner-parity.benchmark.test.ts"],
     globals: false,
     include: ["src/**/*.test.ts"],
   },

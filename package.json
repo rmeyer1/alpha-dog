@@ -14,6 +14,7 @@
   },
   "scripts": {
     "benchmark:observability": "OBSERVABILITY_BENCHMARK_REPORT=1 vitest run src/lib/observability/route.benchmark.test.ts --reporter=verbose",
+    "benchmark:scanner-parity": "vitest run --config vitest.scanner-parity-benchmark.config.ts --reporter=verbose",
     "benchmark:security-headers": "vitest run src/proxy.benchmark.test.ts --reporter=verbose",
     "benchmark:session-proxy": "vitest run src/lib/supabase/session-middleware.benchmark.test.ts --reporter=verbose",
     "dev": "next dev",
@@ -22,7 +23,7 @@
     "lint": "eslint",
     "typecheck": "tsc --project tsconfig.typecheck.json --noEmit",
     "test": "vitest run",
-    "test:ci": "npm test && npm run test:security:coverage && npm run test:market-batch:coverage && npm run test:deep-scan-work:coverage && npm run test:scanner-parity:coverage",
+    "test:ci": "npm test && npm run benchmark:scanner-parity && npm run test:security:coverage && npm run test:market-batch:coverage && npm run test:deep-scan-work:coverage && npm run test:scanner-parity:coverage",
     "test:deep-scan-work:coverage": "vitest run --config vitest.deep-scan-work.config.ts --coverage",
     "test:observability:coverage": "vitest run src/lib/observability --coverage --coverage.reporter=text --coverage.reporter=json-summary",
     "test:security:coverage": "vitest run --config vitest.security.config.ts --coverage",
