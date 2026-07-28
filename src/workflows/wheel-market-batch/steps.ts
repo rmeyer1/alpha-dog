@@ -1,4 +1,14 @@
 import { getEnv } from "@/lib/env";
+import type { DurableTelemetryContext } from "@/lib/observability/context";
+import {
+  emitWorkflowTelemetry,
+  runWithDurableTelemetryContext,
+} from "@/lib/observability/workflow";
+import {
+  completeMaterializedWheelScreenerSnapshot,
+  createMaterializedWheelScreenerSnapshot,
+  upsertMaterializedWheelScreenerCandidates,
+} from "@/lib/wheel/materialized-screener";
 import {
   marketBatchOptionTypes,
   marketBatchRequestIdentity,
@@ -13,6 +23,7 @@ import {
   stageScoredMarketBatchSnapshot,
   stageSharedMarketBatchOptions,
   stageSharedMarketBatchUnderlyings,
+  scoreSharedMarketBatchConsumer,
 } from "@/lib/wheel/market-batch/service";
 import type {
   MarketBatchOptionStageSummary,
@@ -217,6 +228,67 @@ export async function publishMarketBatchSnapshotStep(
     });
     throw error;
   }
+}
+
+export async function stageLegacyMarketBatchSnapshotStep(
+  batchId: string,
+  request: SharedMarketBatchWorkflowInput["requests"][number],
+) {
+  "use step";
+
+  logStep("legacy-stage", "START", {
+    batchId,
+    persona: request.persona,
+    strategy: request.strategy,
+  });
+  const scored = await scoreSharedMarketBatchConsumer(batchId, request);
+  const snapshotId = await createMaterializedWheelScreenerSnapshot(request);
+
+  if (!snapshotId) {
+    throw new Error("Legacy-compatible market batch snapshot was not created.");
+  }
+
+  await upsertMaterializedWheelScreenerCandidates(
+    snapshotId,
+    request,
+    scored.response,
+  );
+  logStep("legacy-stage", "DONE", {
+    batchId,
+    snapshotId,
+  });
+
+  return snapshotId;
+}
+
+export async function completeLegacyMarketBatchSnapshotStep(
+  batchId: string,
+  request: SharedMarketBatchWorkflowInput["requests"][number],
+  snapshotId: string | null,
+) {
+  "use step";
+
+  const scored = await scoreSharedMarketBatchConsumer(batchId, request);
+  await completeMaterializedWheelScreenerSnapshot(
+    snapshotId,
+    scored.response,
+  );
+  logStep("legacy-complete", "DONE", { batchId, snapshotId });
+}
+
+export async function recordMarketBatchWorkflowLifecycle(
+  telemetryContext: DurableTelemetryContext,
+  phase: "completed" | "failed" | "resumed",
+) {
+  "use step";
+
+  await runWithDurableTelemetryContext(telemetryContext, (normalized) =>
+    emitWorkflowTelemetry({
+      context: normalized,
+      phase,
+      workflow: "wheel_market_batch",
+    })
+  );
 }
 
 export async function finishMarketBatchStep(

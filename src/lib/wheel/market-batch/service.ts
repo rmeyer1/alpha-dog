@@ -3,6 +3,8 @@ import {
   getWheelAssetUniverse,
 } from "@/lib/alpaca/client";
 import { getEnv } from "@/lib/env";
+import { emitTelemetry } from "@/lib/observability/telemetry";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import {
   emptyEarningsRiskContext,
   getCachedEarningsRiskContexts,
@@ -27,6 +29,11 @@ import {
   marketBatchRequestIdentity,
   scoreMarketBatchConsumer,
 } from "./domain";
+import {
+  compareScannerCandidates,
+  legacyScannerParitySurface,
+  scoreLegacyScannerFromMarketBatch,
+} from "../scanner-parity";
 import type {
   MarketBatchIngestionSummary,
   MarketBatchMetric,
@@ -53,6 +60,7 @@ import {
   readMarketBatchUnderlying,
   readMarketBatchUnderlyings,
   readScannerAssetsBySymbols,
+  recordMarketBatchParityObservation,
   replaceMarketBatchSnapshotCandidates,
   upsertMarketBatchMetrics,
 } from "./repository";
@@ -545,13 +553,54 @@ async function loadScoredMarketBatchConsumer(
     throw new Error("Wheel market batch facts are not ready for scoring.");
   }
 
+  const factErrors = batchFactErrors(batch);
   const scored = scoreMarketBatchConsumer({
-    factErrors: batchFactErrors(batch),
+    factErrors,
     feed: batch.feed,
     now: new Date(batch.interval_started_at),
     optionRows,
     request,
     underlyingRows,
+  });
+  const legacyCompanies = scoreLegacyScannerFromMarketBatch({
+      now: new Date(batch.interval_started_at),
+      optionRows,
+      request,
+      underlyingRows,
+    });
+  const parity = compareScannerCandidates(
+    legacyCompanies,
+    scored.companies,
+    {
+      legacy: legacyScannerParitySurface({
+        factErrors,
+        feed: batch.feed,
+        legacyCompanies,
+        underlyingRows,
+      }),
+      replacement: {
+        errors: scored.response.errors,
+        skippedCount: scored.response.skippedCount,
+        warnings: scored.response.warnings,
+      },
+    },
+  );
+
+  await recordMarketBatchParityObservation({
+    batchId,
+    filterKey: marketBatchRequestIdentity(request).filterKey,
+    marketDay: getUsEquitiesMarketState(
+      new Date(batch.interval_started_at),
+    ).isMarketDay,
+    persona: request.persona,
+    result: parity,
+    strategy: request.strategy,
+  });
+  emitTelemetry({
+    event: "wheel.scanner_parity",
+    operation: request.strategy,
+    outcome: parity.exactMatch ? "exact" : "mismatch",
+    severity: parity.exactMatch ? "info" : "warn",
   });
 
   return { batch, scored };

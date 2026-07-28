@@ -15,6 +15,49 @@ beforeEach(() => {
 });
 
 describe("shared market batch repository", () => {
+  it("persists bounded parity metrics without provider or user payloads", async () => {
+    const repository = await import("./repository");
+
+    await repository.recordMarketBatchParityObservation({
+      batchId: "batch-1",
+      filterKey: "filters",
+      marketDay: true,
+      persona: "balanced_wheel",
+      result: {
+        candidateCount: { legacy: 1, replacement: 1 },
+        exactMatch: false,
+        formatVersion: 1,
+        mismatchCount: 1,
+        mismatches: {
+          eligibility: 0,
+          financial: 1,
+          ordering: 0,
+          score: 0,
+          warning: 0,
+        },
+        samples: [{
+          fields: ["bestCandidate.premiumReceived"],
+          identity: "AAPL:short_put:2026-08-21:190:",
+          kind: "financial",
+        }],
+      },
+      strategy: "short_put",
+    });
+
+    expect(upsertMock).toHaveBeenCalledWith(
+      "wheel_scanner_parity_observations",
+      [expect.objectContaining({
+        financial_mismatch_count: 1,
+        market_day: true,
+        mismatch_count: 1,
+      })],
+      "batch_id,persona,strategy,filter_key,format_version",
+    );
+    expect(JSON.stringify(upsertMock.mock.calls[0])).not.toMatch(
+      /api[_-]?key|secret|prompt|account|portfolio/i,
+    );
+  });
+
   it("maps batch and snapshot RPC identities and rejects empty results", async () => {
     const repository = await import("./repository");
     restMock

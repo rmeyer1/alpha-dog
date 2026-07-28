@@ -105,6 +105,8 @@ function summarizeContractCandidate(
     delta: candidate.delta,
     impliedVolatility: candidate.impliedVolatility,
     liquidityQuality: candidate.liquidityQuality,
+    scoreBreakdown: candidate.scoreBreakdown,
+    warnings: candidate.warnings,
     warningCount: candidate.warnings.length,
   };
 }
@@ -199,6 +201,8 @@ export function selectBestCandidate(
             delta: spread.shortDelta,
             impliedVolatility: spread.impliedVolatility,
             liquidityQuality: spread.liquidityQuality,
+            scoreBreakdown: spread.scoreBreakdown,
+            warnings: spread.warnings,
             warningCount: spread.warnings.length,
           }
         : null;

@@ -22,6 +22,7 @@ describe("durable workflow telemetry", () => {
 
   it.each([
     "wheel_deep_scan",
+    "wheel_market_batch",
     "wheel_screener",
   ] satisfies WorkflowName[])(
     "preserves %s correlation and logical identity across serialization",

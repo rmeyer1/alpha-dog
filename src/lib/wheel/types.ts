@@ -229,6 +229,8 @@ export interface WheelCompanyCandidateSummary {
   delta: number | null;
   impliedVolatility: number | null;
   liquidityQuality: QualityLabel;
+  scoreBreakdown?: ScoreBreakdown;
+  warnings?: Warning[];
   warningCount: number;
 }
 

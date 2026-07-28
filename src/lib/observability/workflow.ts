@@ -7,7 +7,10 @@ import {
 import { dispatchAlert } from "./alerts";
 import { emitTelemetry } from "./telemetry";
 
-export type WorkflowName = "wheel_deep_scan" | "wheel_screener";
+export type WorkflowName =
+  | "wheel_deep_scan"
+  | "wheel_market_batch"
+  | "wheel_screener";
 export type WorkflowPhase =
   | "completed"
   | "failed"

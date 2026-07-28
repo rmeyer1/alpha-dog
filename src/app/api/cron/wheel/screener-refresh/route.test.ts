@@ -7,8 +7,8 @@ const startMock = vi.hoisted(() => vi.fn());
 const scheduleAlertSampleMock = vi.hoisted(() => vi.fn());
 
 vi.mock("workflow/api", () => ({ start: startMock }));
-vi.mock("@/workflows/wheel-screener", () => ({
-  wheelScreenerWorkflow: {},
+vi.mock("@/workflows/wheel-market-batch", () => ({
+  wheelMarketBatchWorkflow: {},
 }));
 vi.mock("@/lib/env", () => ({
   getEnv: () => ({ CRON_SECRET: "cron-secret" }),
