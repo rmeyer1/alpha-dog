@@ -39,6 +39,7 @@ const repositoryMocks = vi.hoisted(() => ({
   readMarketBatchUnderlying: vi.fn(),
   readMarketBatchUnderlyings: vi.fn(),
   readScannerAssetsBySymbols: vi.fn(),
+  recordMarketBatchParityObservation: vi.fn(),
   replaceMarketBatchSnapshotCandidates: vi.fn(),
   upsertMarketBatchMetrics: vi.fn(),
 }));

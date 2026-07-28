@@ -20,7 +20,7 @@ import {
   type ScreenerRefreshDecision,
 } from "@/lib/wheel/screener-refresh";
 import type { WheelScreenerRequest } from "@/lib/wheel/types";
-import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
+import { wheelMarketBatchWorkflow } from "@/workflows/wheel-market-batch";
 
 export const dynamic = "force-dynamic";
 
@@ -155,35 +155,36 @@ async function handleRefresh(request: Request) {
     .sort((left, right) => refreshPriority(right) - refreshPriority(left));
   const skipped = decisions.filter((decision) => !due.includes(decision));
 
-  for (const decision of due) {
-    const shouldStart =
-      decision.status === "due" ||
-      (force && decision.status === "recent");
+  const selected = dryRun ? [] : due.slice(0, maxRuns);
+  skipped.push(...due.slice(selected.length));
 
-    if (!shouldStart || dryRun || started.length >= maxRuns) {
-      skipped.push(decision);
-      continue;
-    }
-
+  if (selected.length > 0) {
+    const intervalMs = 15 * 60 * 1000;
+    const intervalStartedAt = new Date(
+      Math.floor(Date.now() / intervalMs) * intervalMs,
+    ).toISOString();
     const run = await startObservedWorkflow(
-      "wheel_screener",
+      "wheel_market_batch",
       {
-        ...decision.request,
-        forceRefresh: true,
+        intervalStartedAt,
+        requests: selected.map((decision) => ({
+          ...decision.request,
+          forceRefresh: false,
+        })),
       },
-      (args) => start(wheelScreenerWorkflow, args),
+      (args) => start(wheelMarketBatchWorkflow, args),
     );
     const workflowStatus = await run.status;
 
-    started.push({
-      completionStatus:
-        workflowStatus === "completed" ? "complete" : "pending",
-      enqueueStatus: "accepted",
-      persona: decision.request.persona,
-      strategy: decision.request.strategy,
-      runId: run.runId,
-      status: workflowStatus,
-    });
+    started.push(...selected.map((decision) => ({
+        completionStatus:
+          workflowStatus === "completed" ? "complete" as const : "pending" as const,
+        enqueueStatus: "accepted" as const,
+        persona: decision.request.persona,
+        strategy: decision.request.strategy,
+        runId: run.runId,
+        status: workflowStatus,
+      })));
   }
 
   const health = summarizeScreenerRefreshDecisions(decisions);

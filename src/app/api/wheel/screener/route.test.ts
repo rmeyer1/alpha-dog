@@ -24,8 +24,13 @@ vi.mock("@/lib/env", () => ({
   isDemoMode: isDemoModeMock,
 }));
 
-vi.mock("@/lib/wheel/materialized-screener", () => ({
-  getMaterializedWheelScreenerResponse: getMaterializedWheelScreenerResponseMock,
+vi.mock("@/lib/wheel/scanner-rollout", () => ({
+  getControlledWheelScreenerRead: async (...args: unknown[]) => ({
+    fallback: false,
+    requestedSource: "legacy",
+    response: await getMaterializedWheelScreenerResponseMock(...args),
+    source: "legacy",
+  }),
 }));
 
 vi.mock("@/lib/wheel/screener", () => ({

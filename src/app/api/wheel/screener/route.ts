@@ -8,9 +8,9 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
-import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import { analyzeTopWheelCompanies } from "@/lib/wheel/screener";
 import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh";
+import { getControlledWheelScreenerRead } from "@/lib/wheel/scanner-rollout";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
@@ -51,12 +51,10 @@ async function POSTHandler(request: Request) {
 
   try {
     if (!parsed.data.forceRefresh) {
-      const materialized = await getMaterializedWheelScreenerResponse(
-        parsed.data,
-      );
+      const controlled = await getControlledWheelScreenerRead(parsed.data);
 
-      if (materialized) {
-        return NextResponse.json(materialized);
+      if (controlled.response) {
+        return NextResponse.json(controlled.response);
       }
     }
 

@@ -8,12 +8,12 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
-import { getMaterializedWheelScreenerResponse } from "@/lib/wheel/materialized-screener";
 import {
   cacheCompletedWheelScreenerResponse,
   getCachedWheelScreenerResponse,
 } from "@/lib/wheel/screener";
 import { getRunningScreenerRefreshFallback } from "@/lib/wheel/screener-refresh";
+import { getControlledWheelScreenerRead } from "@/lib/wheel/scanner-rollout";
 import { screenerRequestSchema } from "@/lib/wheel/validation";
 import { wheelScreenerWorkflow } from "@/workflows/wheel-screener";
 
@@ -53,6 +53,21 @@ async function POSTHandler(request: Request) {
   }
 
   try {
+    const controlled = await getControlledWheelScreenerRead(parsed.data);
+
+    if (controlled.response) {
+      await cacheCompletedWheelScreenerResponse(
+        parsed.data,
+        controlled.response,
+      );
+
+      return NextResponse.json({
+        runId: controlled.source ?? "materialized",
+        status: "completed",
+        result: controlled.response,
+      });
+    }
+
     const cached = await getCachedWheelScreenerResponse(parsed.data);
 
     if (cached) {
@@ -60,18 +75,6 @@ async function POSTHandler(request: Request) {
         runId: "cached",
         status: "completed",
         result: cached,
-      });
-    }
-
-    const materialized = await getMaterializedWheelScreenerResponse(parsed.data);
-
-    if (materialized) {
-      await cacheCompletedWheelScreenerResponse(parsed.data, materialized);
-
-      return NextResponse.json({
-        runId: "materialized",
-        status: "completed",
-        result: materialized,
       });
     }
 

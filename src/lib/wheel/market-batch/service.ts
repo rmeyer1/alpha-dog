@@ -3,6 +3,8 @@ import {
   getWheelAssetUniverse,
 } from "@/lib/alpaca/client";
 import { getEnv } from "@/lib/env";
+import { emitTelemetry } from "@/lib/observability/telemetry";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import {
   emptyEarningsRiskContext,
   getCachedEarningsRiskContexts,
@@ -27,11 +29,18 @@ import {
   marketBatchRequestIdentity,
   scoreMarketBatchConsumer,
 } from "./domain";
+import {
+  compareScannerCandidates,
+  legacyScannerParitySurface,
+  scoreLegacyScannerFromMarketBatch,
+} from "../scanner-parity";
 import type {
   MarketBatchIngestionSummary,
   MarketBatchMetric,
   MarketBatchOptionRow,
   MarketBatchOptionStageSummary,
+  ScoredMarketBatchConsumer,
+  ScoredMarketBatchConsumerProjections,
   MarketBatchUnderlyingRow,
   MarketBatchUnderlyingStageSummary,
   StagedMarketBatchSnapshot,
@@ -53,6 +62,7 @@ import {
   readMarketBatchUnderlying,
   readMarketBatchUnderlyings,
   readScannerAssetsBySymbols,
+  recordMarketBatchParityObservation,
   replaceMarketBatchSnapshotCandidates,
   upsertMarketBatchMetrics,
 } from "./repository";
@@ -531,10 +541,13 @@ function batchFactErrors(batch: Awaited<ReturnType<typeof getMarketBatch>>) {
     : [];
 }
 
-async function loadScoredMarketBatchConsumer(
+export async function scoreSharedMarketBatchConsumerProjections(
   batchId: string,
   request: WheelScreenerRequest,
-) {
+): Promise<{
+  batch: NonNullable<Awaited<ReturnType<typeof getMarketBatch>>>;
+  projections: ScoredMarketBatchConsumerProjections;
+}> {
   const [batch, underlyingRows, optionRows] = await Promise.all([
     getMarketBatch(batchId),
     readMarketBatchUnderlyings(batchId),
@@ -545,38 +558,97 @@ async function loadScoredMarketBatchConsumer(
     throw new Error("Wheel market batch facts are not ready for scoring.");
   }
 
+  const factErrors = batchFactErrors(batch);
   const scored = scoreMarketBatchConsumer({
-    factErrors: batchFactErrors(batch),
+    factErrors,
     feed: batch.feed,
     now: new Date(batch.interval_started_at),
     optionRows,
     request,
     underlyingRows,
   });
+  const legacyCompanies = scoreLegacyScannerFromMarketBatch({
+    now: new Date(batch.interval_started_at),
+    optionRows,
+    request,
+    underlyingRows,
+  });
+  const legacySurface = legacyScannerParitySurface({
+    factErrors,
+    feed: batch.feed,
+    legacyCompanies,
+    underlyingRows,
+  });
+  const legacy: ScoredMarketBatchConsumer = {
+    companies: legacyCompanies,
+    filters: scored.filters,
+    response: {
+      ...scored.response,
+      companies: legacyCompanies,
+      errors: legacySurface.errors,
+      skippedCount: legacySurface.skippedCount,
+      warnings: legacySurface.warnings,
+    },
+  };
+  const parity = compareScannerCandidates(
+    legacyCompanies,
+    scored.companies,
+    {
+      legacy: legacySurface,
+      replacement: {
+        errors: scored.response.errors,
+        skippedCount: scored.response.skippedCount,
+        warnings: scored.response.warnings,
+      },
+    },
+  );
 
-  return { batch, scored };
+  await recordMarketBatchParityObservation({
+    batchId,
+    filterKey: marketBatchRequestIdentity(request).filterKey,
+    marketDay: getUsEquitiesMarketState(
+      new Date(batch.interval_started_at),
+    ).isMarketDay,
+    persona: request.persona,
+    result: parity,
+    strategy: request.strategy,
+  });
+  emitTelemetry({
+    event: "wheel.scanner_parity",
+    operation: request.strategy,
+    outcome: parity.exactMatch ? "exact" : "mismatch",
+    severity: parity.exactMatch ? "info" : "warn",
+  });
+
+  return {
+    batch,
+    projections: {
+      legacy,
+      replacement: scored,
+    },
+  };
 }
 
 export async function scoreSharedMarketBatchConsumer(
   batchId: string,
   request: WheelScreenerRequest,
 ) {
-  return (await loadScoredMarketBatchConsumer(batchId, request)).scored;
+  return (
+    await scoreSharedMarketBatchConsumerProjections(batchId, request)
+  ).projections.replacement;
 }
 
-export async function stageScoredMarketBatchSnapshot(
+export async function stageScoredMarketBatchSnapshotProjection(
   batchId: string,
   request: WheelScreenerRequest,
+  feed: NonNullable<Awaited<ReturnType<typeof getMarketBatch>>>["feed"],
+  scored: ScoredMarketBatchConsumer,
 ): Promise<StagedMarketBatchSnapshot> {
   const startedAt = performance.now();
-  const { batch, scored } = await loadScoredMarketBatchConsumer(
-    batchId,
-    request,
-  );
   const identity = marketBatchRequestIdentity(request);
   const snapshot = await createMarketBatchSnapshot({
     batchId,
-    feed: batch.feed,
+    feed,
     filterKey: identity.filterKey,
     filters: identity.filters,
     request,
@@ -603,6 +675,21 @@ export async function stageScoredMarketBatchSnapshot(
     snapshotId: snapshot.snapshot_id,
     warnings: scored.response.warnings,
   };
+}
+
+export async function stageScoredMarketBatchSnapshot(
+  batchId: string,
+  request: WheelScreenerRequest,
+): Promise<StagedMarketBatchSnapshot> {
+  const { batch, projections } =
+    await scoreSharedMarketBatchConsumerProjections(batchId, request);
+
+  return stageScoredMarketBatchSnapshotProjection(
+    batchId,
+    request,
+    batch.feed,
+    projections.replacement,
+  );
 }
 
 export async function publishScoredMarketBatchSnapshot(

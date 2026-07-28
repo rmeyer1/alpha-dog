@@ -9,13 +9,13 @@ export default defineConfig({
   },
   test: {
     coverage: {
-      exclude: [
-        "src/lib/observability/**/*.test.ts",
-      ],
+      exclude: ["src/**/*.test.ts"],
       include: [
-        "src/lib/observability/**/*.ts",
+        "src/lib/wheel/scanner-parity.ts",
+        "src/lib/wheel/scanner-rollout.ts",
       ],
       provider: "v8",
+      reporter: ["text", "json-summary"],
       thresholds: {
         branches: 80,
         functions: 80,
@@ -25,8 +25,10 @@ export default defineConfig({
       },
     },
     environment: "node",
-    exclude: ["src/lib/wheel/scanner-parity.benchmark.test.ts"],
     globals: false,
-    include: ["src/**/*.test.ts"],
+    include: [
+      "src/lib/wheel/scanner-parity.test.ts",
+      "src/lib/wheel/scanner-rollout.test.ts",
+    ],
   },
 });

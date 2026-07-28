@@ -19,8 +19,48 @@ import type {
   StagedMarketBatchSnapshot,
 } from "./model";
 import type { ScannerAsset } from "../universe-scanner/model";
+import type { ScannerParityResult } from "../scanner-parity";
 
 const UNDERLYING_SYMBOL_READ_CHUNK_SIZE = 100;
+
+export async function recordMarketBatchParityObservation({
+  batchId,
+  filterKey,
+  marketDay,
+  persona,
+  result,
+  strategy,
+}: {
+  batchId: string;
+  filterKey: string;
+  marketDay: boolean;
+  persona: WheelScreenerRequest["persona"];
+  result: ScannerParityResult;
+  strategy: WheelScreenerRequest["strategy"];
+}) {
+  await upsertScannerRows(
+    "wheel_scanner_parity_observations",
+    [{
+      batch_id: batchId,
+      candidate_count_legacy: result.candidateCount.legacy,
+      candidate_count_replacement: result.candidateCount.replacement,
+      eligibility_mismatch_count: result.mismatches.eligibility,
+      exact_match: result.exactMatch,
+      filter_key: filterKey,
+      financial_mismatch_count: result.mismatches.financial,
+      format_version: result.formatVersion,
+      mismatch_count: result.mismatchCount,
+      market_day: marketDay,
+      ordering_mismatch_count: result.mismatches.ordering,
+      persona,
+      samples: result.samples,
+      score_mismatch_count: result.mismatches.score,
+      strategy,
+      warning_mismatch_count: result.mismatches.warning,
+    }],
+    "batch_id,persona,strategy,filter_key,format_version",
+  );
+}
 
 export async function readScannerAssetsBySymbols(
   symbols: string[],

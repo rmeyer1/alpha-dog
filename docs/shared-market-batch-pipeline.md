@@ -98,10 +98,12 @@ count, and elapsed milliseconds for asset, stock, technical, earnings, put,
 call, scoring, and publication operations. This supports before/after
 production comparison without inferring costs from logs.
 
-AD-019 will claim and schedule tiered work. AD-020 will run legacy and
-replacement parity telemetry, select the read path, expose rollback controls,
-and verify the one-refresh-per-interval production invariant. Until that
-controlled cutover, public wheel routes continue to use the released reader.
+AD-019 claims and schedules tiered work. AD-020 schedules one shared batch for
+each refresh interval, scores legacy-compatible and replacement snapshots from
+the same persisted facts, records bounded parity observations, and selects the
+public reader through a service-only database control. The control defaults to
+legacy, and replacement lookup falls back immediately when no complete pointer
+is readable. See `docs/scanner-parity-cutover.md`.
 
 ## Verification
 

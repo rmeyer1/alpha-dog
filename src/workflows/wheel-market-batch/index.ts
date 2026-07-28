@@ -2,22 +2,29 @@ import type {
   SharedMarketBatchWorkflowInput,
   SharedMarketBatchWorkflowResult,
 } from "@/lib/wheel/market-batch/model";
+import type { DurableTelemetryContext } from "@/lib/observability/context";
 import {
+  completeLegacyMarketBatchSnapshotStep,
   failMarketBatchStep,
   finalizeMarketBatchFactsStep,
   finishMarketBatchStep,
   prepareMarketBatchStep,
   publishMarketBatchSnapshotStep,
+  recordMarketBatchWorkflowLifecycle,
+  stageMarketBatchConsumerStep,
   stageMarketBatchOptionStep,
-  stageMarketBatchSnapshotStep,
   stageMarketBatchUnderlyingsStep,
 } from "./steps";
 
 export async function wheelMarketBatchWorkflow(
   input: SharedMarketBatchWorkflowInput,
+  _telemetryContext?: DurableTelemetryContext,
 ): Promise<SharedMarketBatchWorkflowResult> {
   "use workflow";
 
+  if (_telemetryContext) {
+    await recordMarketBatchWorkflowLifecycle(_telemetryContext, "resumed");
+  }
   console.info("[wheelMarketBatch] START", {
     intervalStartedAt: input.intervalStartedAt,
     requestCount: input.requests.length,
@@ -57,25 +64,26 @@ export async function wheelMarketBatchWorkflow(
       underlyingStage,
       optionStages,
     );
-    const stagedSnapshots = await Promise.all(
+    const stagedConsumers = await Promise.all(
       prepared.requests.map((request) =>
-        stageMarketBatchSnapshotStep(batchId, request)
+        stageMarketBatchConsumerStep(batchId, request)
       ),
     );
     const publications = await Promise.all(
-      stagedSnapshots.map((snapshot) =>
-        publishMarketBatchSnapshotStep(snapshot)
+      stagedConsumers.map(({ replacement }) =>
+        publishMarketBatchSnapshotStep(replacement)
       ),
     );
     await finishMarketBatchStep(
       batchId,
-      stagedSnapshots.length,
-      stagedSnapshots.reduce(
-        (total, snapshot) => total + snapshot.candidateCount,
+      stagedConsumers.length,
+      stagedConsumers.reduce(
+        (total, { replacement }) =>
+          total + replacement.candidateCount,
         0,
       ),
-      stagedSnapshots.reduce(
-        (total, snapshot) => total + snapshot.durationMs,
+      stagedConsumers.reduce(
+        (total, { replacement }) => total + replacement.durationMs,
         0,
       ),
       publications.reduce(
@@ -83,10 +91,15 @@ export async function wheelMarketBatchWorkflow(
         0,
       ),
     );
-    const snapshots = stagedSnapshots.map((snapshot, index) => ({
-      candidateCount: snapshot.candidateCount,
+    await Promise.all(
+      stagedConsumers.map(({ legacy }) =>
+        completeLegacyMarketBatchSnapshotStep(legacy)
+      ),
+    );
+    const snapshots = stagedConsumers.map(({ replacement }, index) => ({
+      candidateCount: replacement.candidateCount,
       persona: prepared.requests[index].persona,
-      snapshotId: snapshot.snapshotId,
+      snapshotId: replacement.snapshotId,
       strategy: prepared.requests[index].strategy,
     }));
 
@@ -94,6 +107,12 @@ export async function wheelMarketBatchWorkflow(
       batchId,
       snapshotCount: snapshots.length,
     });
+    if (_telemetryContext) {
+      await recordMarketBatchWorkflowLifecycle(
+        _telemetryContext,
+        "completed",
+      );
+    }
 
     return {
       batchId,
@@ -112,6 +131,9 @@ export async function wheelMarketBatchWorkflow(
     const message =
       error instanceof Error ? error.message : "Market batch workflow failed.";
     await failMarketBatchStep(batchId, message);
+    if (_telemetryContext) {
+      await recordMarketBatchWorkflowLifecycle(_telemetryContext, "failed");
+    }
     console.error("[wheelMarketBatch] FAIL", { batchId, message });
     throw error;
   }

@@ -1,4 +1,14 @@
 import { getEnv } from "@/lib/env";
+import type { DurableTelemetryContext } from "@/lib/observability/context";
+import {
+  emitWorkflowTelemetry,
+  runWithDurableTelemetryContext,
+} from "@/lib/observability/workflow";
+import {
+  completeMaterializedWheelScreenerSnapshotSummary,
+  createMaterializedWheelScreenerSnapshot,
+  upsertMaterializedWheelScreenerCandidates,
+} from "@/lib/wheel/materialized-screener";
 import {
   marketBatchOptionTypes,
   marketBatchRequestIdentity,
@@ -10,7 +20,8 @@ import {
   prepareSharedMarketBatch,
   publishScoredMarketBatchSnapshot,
   sharedMarketBatchDiscoveryFilters,
-  stageScoredMarketBatchSnapshot,
+  scoreSharedMarketBatchConsumerProjections,
+  stageScoredMarketBatchSnapshotProjection,
   stageSharedMarketBatchOptions,
   stageSharedMarketBatchUnderlyings,
 } from "@/lib/wheel/market-batch/service";
@@ -18,6 +29,8 @@ import type {
   MarketBatchOptionStageSummary,
   MarketBatchUnderlyingStageSummary,
   SharedMarketBatchWorkflowInput,
+  StagedLegacyMarketBatchSnapshot,
+  StagedMarketBatchConsumerSnapshots,
   StagedMarketBatchSnapshot,
 } from "@/lib/wheel/market-batch/model";
 
@@ -167,10 +180,10 @@ export async function finalizeMarketBatchFactsStep(
   }
 }
 
-export async function stageMarketBatchSnapshotStep(
+export async function stageMarketBatchConsumerStep(
   batchId: string,
   request: SharedMarketBatchWorkflowInput["requests"][number],
-) {
+): Promise<StagedMarketBatchConsumerSnapshots> {
   "use step";
 
   logStep("score", "START", {
@@ -180,13 +193,44 @@ export async function stageMarketBatchSnapshotStep(
   });
 
   try {
-    const result = await stageScoredMarketBatchSnapshot(batchId, request);
+    const { batch, projections } =
+      await scoreSharedMarketBatchConsumerProjections(batchId, request);
+    const replacement = await stageScoredMarketBatchSnapshotProjection(
+      batchId,
+      request,
+      batch.feed,
+      projections.replacement,
+    );
+    const snapshotId = await createMaterializedWheelScreenerSnapshot(request);
+
+    if (!snapshotId) {
+      throw new Error(
+        "Legacy-compatible market batch snapshot was not created.",
+      );
+    }
+
+    await upsertMaterializedWheelScreenerCandidates(
+      snapshotId,
+      request,
+      projections.legacy.response,
+    );
+    const legacy: StagedLegacyMarketBatchSnapshot = {
+      error: projections.legacy.response.errors[0] ?? null,
+      processedCount:
+        projections.legacy.response.progress.processedCount,
+      skippedCount: projections.legacy.response.skippedCount,
+      snapshotId,
+      totalCount: projections.legacy.response.progress.totalCount,
+    };
+
     logStep("score", "DONE", {
       batchId,
-      candidateCount: result.candidateCount,
-      snapshotId: result.snapshotId,
+      legacyCandidateCount: projections.legacy.companies.length,
+      legacySnapshotId: legacy.snapshotId,
+      replacementCandidateCount: replacement.candidateCount,
+      replacementSnapshotId: replacement.snapshotId,
     });
-    return result;
+    return { legacy, replacement };
   } catch (error) {
     logStep("score", "FAIL", {
       batchId,
@@ -217,6 +261,35 @@ export async function publishMarketBatchSnapshotStep(
     });
     throw error;
   }
+}
+
+export async function completeLegacyMarketBatchSnapshotStep(
+  snapshot: StagedLegacyMarketBatchSnapshot,
+) {
+  "use step";
+
+  await completeMaterializedWheelScreenerSnapshotSummary(
+    snapshot.snapshotId,
+    snapshot,
+  );
+  logStep("legacy-complete", "DONE", {
+    snapshotId: snapshot.snapshotId,
+  });
+}
+
+export async function recordMarketBatchWorkflowLifecycle(
+  telemetryContext: DurableTelemetryContext,
+  phase: "completed" | "failed" | "resumed",
+) {
+  "use step";
+
+  await runWithDurableTelemetryContext(telemetryContext, (normalized) =>
+    emitWorkflowTelemetry({
+      context: normalized,
+      phase,
+      workflow: "wheel_market_batch",
+    })
+  );
 }
 
 export async function finishMarketBatchStep(
