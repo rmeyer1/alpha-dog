@@ -90,7 +90,7 @@ assert.ok(
 
 const prefix = randomUUID().replaceAll("-", "").slice(0, 5).toUpperCase();
 const symbols = Array.from(
-  { length: 4 },
+  { length: 317 },
   (_, index) => `Q${prefix}${index}`,
 );
 requireSuccess(
@@ -165,6 +165,161 @@ assert.ok(
   "expired work must be reclaimable",
 );
 
+const reclaimedPriorClaim = reclaimed.find(
+  (claim) => identity(claim) === identity(claimA[0]),
+);
+assert.ok(reclaimedPriorClaim);
+const fencedFilterKey = `ad019-fenced-${prefix}`;
+const compatibilityCoverage = [{
+  best_score: 95,
+  error: null,
+  filter_key: fencedFilterKey,
+  option_contract_count: 0,
+  option_type: reclaimedPriorClaim.option_type,
+  persona: "balanced_wheel",
+  scan_run_id: null,
+  status: "complete",
+  strategy: reclaimedPriorClaim.option_type === "put"
+    ? "short_put"
+    : "covered_call",
+  symbol: reclaimedPriorClaim.symbol,
+}];
+const compatibilityCandidates = [{
+  annualized_return_on_risk: null,
+  annualized_yield: 0.24,
+  company_name: "Fenced compatibility verifier",
+  delta: -0.25,
+  dte: 25,
+  errors: [],
+  exchange: "NASDAQ",
+  expiration: "2026-08-21",
+  filter_key: fencedFilterKey,
+  implied_volatility: 0.3,
+  liquidity_quality: "good",
+  long_strike: null,
+  ma20: 99,
+  ma50: 98,
+  ma200: 95,
+  option_type: reclaimedPriorClaim.option_type,
+  persona: "balanced_wheel",
+  premium_received: 2.5,
+  premium_yield: 0.025,
+  return_on_risk: null,
+  rsi14: 55,
+  scan_run_id: null,
+  score: 95,
+  short_strike: 100,
+  strategy: reclaimedPriorClaim.option_type === "put"
+    ? "short_put"
+    : "covered_call",
+  symbol: reclaimedPriorClaim.symbol,
+  trend: "bullish",
+  underlying_as_of: reclaimAt,
+  underlying_price: 105,
+  warning_count: 0,
+  warnings: [],
+}];
+const stalePublication = await service.rpc(
+  "publish_wheel_deep_scan_compatibility",
+  {
+    p_candidates: compatibilityCandidates,
+    p_claims: [{
+      lease_token: claimA[0].lease_token,
+      option_type: claimA[0].option_type,
+      symbol: claimA[0].symbol,
+    }],
+    p_coverage: compatibilityCoverage,
+    p_lease_seconds: 60,
+    p_now: reclaimAt,
+    p_owner_id: ownerA,
+  },
+);
+assert.ok(
+  stalePublication.error,
+  "a reclaim after validation must reject stale compatibility publication",
+);
+const staleCoverage = requireSuccess(
+  await service
+    .from("wheel_deep_scan_coverage")
+    .select("symbol")
+    .eq("filter_key", fencedFilterKey),
+  "read stale compatibility state",
+);
+assert.equal(
+  staleCoverage.length,
+  0,
+  "rejected stale publication must not mutate legacy coverage",
+);
+const staleCandidates = requireSuccess(
+  await service
+    .from("wheel_deep_scan_candidates")
+    .select("symbol")
+    .eq("filter_key", fencedFilterKey),
+  "read stale compatibility candidate state",
+);
+assert.equal(
+  staleCandidates.length,
+  0,
+  "rejected stale publication must not mutate legacy candidates",
+);
+requireSuccess(
+  await service.rpc("publish_wheel_deep_scan_compatibility", {
+    p_candidates: compatibilityCandidates,
+    p_claims: [{
+      lease_token: reclaimedPriorClaim.lease_token,
+      option_type: reclaimedPriorClaim.option_type,
+      symbol: reclaimedPriorClaim.symbol,
+    }],
+    p_coverage: compatibilityCoverage,
+    p_lease_seconds: 60,
+    p_now: reclaimAt,
+    p_owner_id: ownerC,
+  }),
+  "publish fenced compatibility state",
+);
+const publishedCandidates = requireSuccess(
+  await service
+    .from("wheel_deep_scan_candidates")
+    .select("symbol,score")
+    .eq("filter_key", fencedFilterKey),
+  "read current-owner compatibility candidate state",
+);
+assert.deepEqual(publishedCandidates, [{
+  score: 95,
+  symbol: reclaimedPriorClaim.symbol,
+}]);
+requireSuccess(
+  await service.rpc("publish_wheel_deep_scan_compatibility", {
+    p_candidates: [],
+    p_claims: [{
+      lease_token: reclaimedPriorClaim.lease_token,
+      option_type: reclaimedPriorClaim.option_type,
+      symbol: reclaimedPriorClaim.symbol,
+    }],
+    p_coverage: [{
+      ...compatibilityCoverage[0],
+      best_score: null,
+      status: "no_candidate",
+    }],
+    p_lease_seconds: 60,
+    p_now: reclaimAt,
+    p_owner_id: ownerC,
+  }),
+  "remove stale compatibility candidate atomically",
+);
+const removedCandidates = requireSuccess(
+  await service
+    .from("wheel_deep_scan_candidates")
+    .select("symbol")
+    .eq("filter_key", fencedFilterKey),
+  "read removed compatibility candidate state",
+);
+assert.equal(
+  removedCandidates.length,
+  0,
+  "a current no-candidate publication removes the stale legacy candidate",
+);
+
 const batchId = await readyBatch(service, startedAt, "completion");
 const completionClaims = reclaimed.slice(0, 2);
 const malformedResults = completionClaims.map((claim, index) => ({
@@ -218,6 +373,43 @@ const completed = requireSuccess(
   "complete atomic claim batch",
 );
 assert.equal(completed.completed_count, 2);
+const exactResults = completionClaims.map((claim, index) => ({
+  error: index === 0 ? "provider unavailable" : null,
+  lease_token: claim.lease_token,
+  option_contract_count: index,
+  option_type: claim.option_type,
+  outcome: index === 0 ? "provider_outage" : "complete",
+  symbol: claim.symbol,
+}));
+const replayed = requireSuccess(
+  await service.rpc("complete_wheel_deep_scan_work_batch", {
+    p_batch_id: batchId,
+    p_now: reclaimAt,
+    p_owner_id: ownerC,
+    p_results: exactResults,
+  }),
+  "replay exact completion",
+);
+assert.equal(replayed.replayed_count, 2);
+const alteredReplay = await service.rpc(
+  "complete_wheel_deep_scan_work_batch",
+  {
+    p_batch_id: batchId,
+    p_now: reclaimAt,
+    p_owner_id: ownerC,
+    p_results: exactResults.map((result, index) => index === 0
+      ? {
+        ...result,
+        error: "materially altered replay",
+        option_contract_count: 999,
+      }
+      : result),
+  },
+);
+assert.ok(
+  alteredReplay.error,
+  "a materially altered completion replay must be rejected",
+);
 
 const providerRow = requireSuccess(
   await service
@@ -252,11 +444,75 @@ const stale = await service.rpc("complete_wheel_deep_scan_work_batch", {
 });
 assert.ok(stale.error, "an expired prior owner must not complete reclaimed work");
 
+const benchmarkOwner = randomUUID();
+const benchmarkAt = new Date(
+  new Date(reclaimAt).getTime() + 1000,
+).toISOString();
+const claimStartedAt = performance.now();
+const benchmarkClaims = requireSuccess(
+  await service.rpc("claim_wheel_deep_scan_work", {
+    p_force: true,
+    p_lease_seconds: 3600,
+    p_limit: 625,
+    p_now: benchmarkAt,
+    p_owner_id: benchmarkOwner,
+  }),
+  "claim 625-unit benchmark batch",
+);
+const claimMs = performance.now() - claimStartedAt;
+assert.equal(benchmarkClaims.length, 625);
+const heartbeatStartedAt = performance.now();
+requireSuccess(
+  await service.rpc("heartbeat_wheel_deep_scan_work", {
+    p_claims: benchmarkClaims.map((claim) => ({
+      lease_token: claim.lease_token,
+      option_type: claim.option_type,
+      symbol: claim.symbol,
+    })),
+    p_lease_seconds: 3600,
+    p_now: benchmarkAt,
+    p_owner_id: benchmarkOwner,
+  }),
+  "heartbeat 625-unit benchmark batch",
+);
+const heartbeatMs = performance.now() - heartbeatStartedAt;
+const benchmarkBatchId = await readyBatch(
+  service,
+  benchmarkAt,
+  "benchmark",
+);
+const completionStartedAt = performance.now();
+requireSuccess(
+  await service.rpc("complete_wheel_deep_scan_work_batch", {
+    p_batch_id: benchmarkBatchId,
+    p_now: benchmarkAt,
+    p_owner_id: benchmarkOwner,
+    p_results: benchmarkClaims.map((claim) => ({
+      error: null,
+      lease_token: claim.lease_token,
+      option_contract_count: 0,
+      option_type: claim.option_type,
+      outcome: "no_candidate",
+      symbol: claim.symbol,
+    })),
+  }),
+  "complete 625-unit benchmark batch",
+);
+const completionMs = performance.now() - completionStartedAt;
+
 console.log(
   JSON.stringify({
+    alteredReplayRejected: true,
     atomicRollbackVerified: true,
+    compatibilityCandidateLifecycleVerified: true,
     concurrentClaims: [claimA.length, claimB.length],
+    mutationTimeFenceVerified: true,
     providerBackoffVerified: true,
+    queueBenchmarksMs: {
+      claim625: claimMs,
+      complete625: completionMs,
+      heartbeat625: heartbeatMs,
+    },
     reclaimedCount: reclaimed.length,
     staleCompletionRejected: true,
   }),

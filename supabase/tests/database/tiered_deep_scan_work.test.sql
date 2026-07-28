@@ -137,6 +137,7 @@ with functions(signature) as (
     ('public.claim_wheel_deep_scan_work(uuid,integer,integer,boolean,timestamp with time zone)'),
     ('public.peek_wheel_deep_scan_work(integer,boolean,timestamp with time zone)'),
     ('public.heartbeat_wheel_deep_scan_work(uuid,jsonb,integer,timestamp with time zone)'),
+    ('public.publish_wheel_deep_scan_compatibility(uuid,jsonb,jsonb,jsonb,integer,timestamp with time zone)'),
     ('public.complete_wheel_deep_scan_work_batch(uuid,uuid,jsonb,timestamp with time zone)'),
     ('public.fail_wheel_deep_scan_work_batch(uuid,uuid,jsonb,text,timestamp with time zone)'),
     ('public.get_wheel_deep_scan_work_metrics(timestamp with time zone)')
@@ -158,6 +159,7 @@ with functions(signature) as (
     ('public.claim_wheel_deep_scan_work(uuid,integer,integer,boolean,timestamp with time zone)'),
     ('public.peek_wheel_deep_scan_work(integer,boolean,timestamp with time zone)'),
     ('public.heartbeat_wheel_deep_scan_work(uuid,jsonb,integer,timestamp with time zone)'),
+    ('public.publish_wheel_deep_scan_compatibility(uuid,jsonb,jsonb,jsonb,integer,timestamp with time zone)'),
     ('public.complete_wheel_deep_scan_work_batch(uuid,uuid,jsonb,timestamp with time zone)'),
     ('public.fail_wheel_deep_scan_work_batch(uuid,uuid,jsonb,text,timestamp with time zone)'),
     ('public.get_wheel_deep_scan_work_metrics(timestamp with time zone)')
@@ -181,6 +183,7 @@ select is(
         'claim_wheel_deep_scan_work',
         'peek_wheel_deep_scan_work',
         'heartbeat_wheel_deep_scan_work',
+        'publish_wheel_deep_scan_compatibility',
         'complete_wheel_deep_scan_work_batch',
         'fail_wheel_deep_scan_work_batch',
         'get_wheel_deep_scan_work_metrics'
@@ -188,7 +191,7 @@ select is(
       and not functions.prosecdef
       and functions.proconfig = array['search_path=""']
   ),
-  7,
+  8,
   'all queue RPCs are invoker-security with an empty search path'
 );
 
@@ -451,6 +454,114 @@ select isnt(
   'reclaim replaces the stale ownership token'
 );
 
+select throws_ok(
+  format(
+    $publication$
+      select public.publish_wheel_deep_scan_compatibility(
+        '11111111-1111-4111-8111-111111111111'::uuid,
+        %L::jsonb,
+        '[]'::jsonb,
+        %L::jsonb,
+        3600,
+        '2026-07-27T13:05:30Z'::timestamptz
+      )
+    $publication$,
+    (
+      select jsonb_agg(jsonb_build_object(
+        'symbol', reclaimed.symbol,
+        'option_type', reclaimed.option_type,
+        'lease_token', stale.lease_token
+      ))::text
+      from reclaimed_claim as reclaimed
+      join first_claims as stale
+        using (symbol, option_type)
+    ),
+    (
+      select jsonb_agg(jsonb_build_object(
+        'symbol', symbol,
+        'option_type', option_type,
+        'persona', 'balanced_wheel',
+        'strategy', case
+          when option_type = 'put' then 'short_put'
+          else 'covered_call'
+        end,
+        'filter_key', 'ad019-fenced',
+        'status', 'no_candidate',
+        'scan_run_id', null,
+        'option_contract_count', 0,
+        'best_score', null,
+        'error', null
+      ))::text
+      from reclaimed_claim
+    )
+  ),
+  'P0001',
+  'Wheel deep-scan compatibility ownership is stale.',
+  'a reclaim after prior validation rejects stale compatibility mutation'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wheel_deep_scan_coverage
+    where filter_key = 'ad019-fenced'
+  ),
+  0,
+  'rejected stale publication leaves legacy coverage untouched'
+);
+
+select lives_ok(
+  format(
+    $publication$
+      select public.publish_wheel_deep_scan_compatibility(
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        %L::jsonb,
+        '[]'::jsonb,
+        %L::jsonb,
+        3600,
+        '2026-07-27T13:05:30Z'::timestamptz
+      )
+    $publication$,
+    (
+      select jsonb_agg(jsonb_build_object(
+        'symbol', symbol,
+        'option_type', option_type,
+        'lease_token', lease_token
+      ))::text
+      from reclaimed_claim
+    ),
+    (
+      select jsonb_agg(jsonb_build_object(
+        'symbol', symbol,
+        'option_type', option_type,
+        'persona', 'balanced_wheel',
+        'strategy', case
+          when option_type = 'put' then 'short_put'
+          else 'covered_call'
+        end,
+        'filter_key', 'ad019-fenced',
+        'status', 'no_candidate',
+        'scan_run_id', null,
+        'option_contract_count', 0,
+        'best_score', null,
+        'error', null
+      ))::text
+      from reclaimed_claim
+    )
+  ),
+  'the current owner publishes compatibility rows atomically'
+);
+
+select is(
+  (
+    select count(*)::integer
+    from public.wheel_deep_scan_coverage
+    where filter_key = 'ad019-fenced'
+  ),
+  1,
+  'the fenced compatibility transaction writes current-owner coverage'
+);
+
 create temporary table test_queue_batches (
   name text primary key,
   id uuid not null
@@ -625,6 +736,34 @@ select is(
   )::integer,
   1,
   'completion replay is idempotent'
+);
+
+select throws_ok(
+  format(
+    $completion$
+      select public.complete_wheel_deep_scan_work_batch(
+        %L::uuid,
+        '33333333-3333-4333-8333-333333333333'::uuid,
+        %L::jsonb,
+        '2026-07-27T13:06:00Z'::timestamptz
+      )
+    $completion$,
+    (select id from test_queue_batches where name = 'reclaimed'),
+    (
+      select jsonb_agg(jsonb_build_object(
+        'symbol', symbol,
+        'option_type', option_type,
+        'lease_token', lease_token,
+        'outcome', 'complete',
+        'option_contract_count', 999,
+        'error', 'materially altered replay'
+      ))::text
+      from reclaimed_claim
+    )
+  ),
+  'P0001',
+  'Wheel deep-scan completion replay payload differs.',
+  'completion rejects a materially altered replay payload'
 );
 
 update public.wheel_deep_scan_work

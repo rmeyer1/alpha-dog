@@ -108,6 +108,7 @@ create table if not exists public.wheel_deep_scan_work (
   last_batch_id uuid
     references public.wheel_market_batches(id) on delete set null,
   last_claim_token uuid,
+  last_result jsonb,
   option_contract_count integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -563,6 +564,397 @@ begin
 end;
 $$;
 
+create or replace function public.publish_wheel_deep_scan_compatibility(
+  p_owner_id uuid,
+  p_claims jsonb,
+  p_candidates jsonb,
+  p_coverage jsonb,
+  p_lease_seconds integer,
+  p_now timestamptz
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  v_claim jsonb;
+  v_now timestamptz := coalesce(p_now, clock_timestamp());
+  v_option_type text;
+  v_renewed integer := 0;
+  v_symbol text;
+  v_token uuid;
+begin
+  if p_owner_id is null or
+     p_claims is null or
+     pg_catalog.jsonb_typeof(p_claims) <> 'array' or
+     pg_catalog.jsonb_array_length(p_claims) < 1 or
+     pg_catalog.jsonb_array_length(p_claims) > 1000 or
+     p_candidates is null or
+     pg_catalog.jsonb_typeof(p_candidates) <> 'array' or
+     pg_catalog.jsonb_array_length(p_candidates) > 10000 or
+     p_coverage is null or
+     pg_catalog.jsonb_typeof(p_coverage) <> 'array' or
+     pg_catalog.jsonb_array_length(p_coverage) < 1 or
+     pg_catalog.jsonb_array_length(p_coverage) > 10000 or
+     p_lease_seconds < 30 or p_lease_seconds > 7200 then
+    raise exception 'Invalid wheel deep-scan compatibility publication.';
+  end if;
+
+  if (
+    select count(*) <> count(distinct (
+      value ->> 'symbol',
+      value ->> 'option_type'
+    ))
+    from pg_catalog.jsonb_array_elements(p_claims)
+  ) then
+    raise exception 'Wheel deep-scan compatibility claims contain duplicates.';
+  end if;
+
+  if (
+    select count(*) <> count(distinct (
+      value ->> 'persona',
+      value ->> 'strategy',
+      value ->> 'filter_key',
+      value ->> 'symbol'
+    ))
+    from pg_catalog.jsonb_array_elements(p_candidates)
+  ) or (
+    select count(*) <> count(distinct (
+      value ->> 'persona',
+      value ->> 'strategy',
+      value ->> 'filter_key',
+      value ->> 'symbol'
+    ))
+    from pg_catalog.jsonb_array_elements(p_coverage)
+  ) then
+    raise exception 'Wheel deep-scan compatibility publication contains duplicates.';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_to_recordset(p_coverage) as coverage(
+      filter_key text,
+      option_type text,
+      persona text,
+      strategy text,
+      symbol text
+    )
+    where coverage.symbol is null
+      or coverage.persona is null
+      or coverage.strategy is null
+      or coverage.filter_key is null
+      or coverage.option_type not in ('put', 'call')
+      or (
+        coverage.option_type = 'put' and
+        coverage.strategy not in ('short_put', 'put_credit_spread')
+      )
+      or (
+        coverage.option_type = 'call' and
+        coverage.strategy not in ('covered_call', 'call_credit_spread')
+      )
+      or not exists (
+        select 1
+        from pg_catalog.jsonb_to_recordset(p_claims) as claim(
+          option_type text,
+          symbol text
+        )
+        where claim.symbol = coverage.symbol
+          and claim.option_type = coverage.option_type
+      )
+  ) then
+    raise exception 'Wheel deep-scan coverage is outside the claimed work.';
+  end if;
+
+  if exists (
+    select 1
+    from pg_catalog.jsonb_to_recordset(p_candidates) as candidate(
+      filter_key text,
+      option_type text,
+      persona text,
+      strategy text,
+      symbol text
+    )
+    where candidate.symbol is null
+      or candidate.persona is null
+      or candidate.strategy is null
+      or candidate.filter_key is null
+      or candidate.option_type not in ('put', 'call')
+      or (
+        candidate.option_type = 'put' and
+        candidate.strategy not in ('short_put', 'put_credit_spread')
+      )
+      or (
+        candidate.option_type = 'call' and
+        candidate.strategy not in ('covered_call', 'call_credit_spread')
+      )
+      or not exists (
+        select 1
+        from pg_catalog.jsonb_to_recordset(p_claims) as claim(
+          option_type text,
+          symbol text
+        )
+        where claim.symbol = candidate.symbol
+          and claim.option_type = candidate.option_type
+      )
+      or not exists (
+        select 1
+        from pg_catalog.jsonb_to_recordset(p_coverage) as coverage(
+          filter_key text,
+          persona text,
+          strategy text,
+          symbol text
+        )
+        where coverage.symbol = candidate.symbol
+          and coverage.persona = candidate.persona
+          and coverage.strategy = candidate.strategy
+          and coverage.filter_key = candidate.filter_key
+      )
+  ) then
+    raise exception 'Wheel deep-scan candidate is outside the claimed coverage.';
+  end if;
+
+  for v_claim in
+    select value
+    from pg_catalog.jsonb_array_elements(p_claims)
+    order by value ->> 'symbol', value ->> 'option_type'
+  loop
+    v_symbol := v_claim ->> 'symbol';
+    v_option_type := v_claim ->> 'option_type';
+    v_token := (v_claim ->> 'lease_token')::uuid;
+
+    update public.wheel_deep_scan_work as work
+    set
+      lease_expires_at =
+        v_now + pg_catalog.make_interval(secs => p_lease_seconds),
+      updated_at = v_now
+    where work.symbol = v_symbol
+      and work.option_type = v_option_type
+      and work.lease_owner_id = p_owner_id
+      and work.lease_token = v_token
+      and work.lease_expires_at > v_now;
+
+    if not found then
+      raise exception 'Wheel deep-scan compatibility ownership is stale.';
+    end if;
+
+    v_renewed := v_renewed + 1;
+  end loop;
+
+  delete from public.wheel_deep_scan_candidates as existing
+  using pg_catalog.jsonb_to_recordset(p_coverage) as coverage(
+    filter_key text,
+    persona text,
+    strategy text,
+    symbol text
+  )
+  where existing.symbol = coverage.symbol
+    and existing.persona = coverage.persona
+    and existing.strategy = coverage.strategy
+    and existing.filter_key = coverage.filter_key
+    and not exists (
+      select 1
+      from pg_catalog.jsonb_to_recordset(p_candidates) as candidate(
+        filter_key text,
+        persona text,
+        strategy text,
+        symbol text
+      )
+      where candidate.symbol = coverage.symbol
+        and candidate.persona = coverage.persona
+        and candidate.strategy = coverage.strategy
+        and candidate.filter_key = coverage.filter_key
+    );
+
+  insert into public.wheel_deep_scan_candidates (
+    scan_run_id,
+    persona,
+    strategy,
+    filter_key,
+    symbol,
+    company_name,
+    exchange,
+    score,
+    option_type,
+    expiration,
+    dte,
+    short_strike,
+    long_strike,
+    premium_received,
+    premium_yield,
+    annualized_yield,
+    return_on_risk,
+    annualized_return_on_risk,
+    delta,
+    implied_volatility,
+    liquidity_quality,
+    warning_count,
+    underlying_price,
+    underlying_as_of,
+    trend,
+    rsi14,
+    ma20,
+    ma50,
+    ma200,
+    warnings,
+    errors,
+    as_of,
+    updated_at
+  )
+  select
+    candidate.scan_run_id,
+    candidate.persona,
+    candidate.strategy,
+    candidate.filter_key,
+    candidate.symbol,
+    candidate.company_name,
+    candidate.exchange,
+    candidate.score,
+    candidate.option_type,
+    candidate.expiration,
+    candidate.dte,
+    candidate.short_strike,
+    candidate.long_strike,
+    candidate.premium_received,
+    candidate.premium_yield,
+    candidate.annualized_yield,
+    candidate.return_on_risk,
+    candidate.annualized_return_on_risk,
+    candidate.delta,
+    candidate.implied_volatility,
+    candidate.liquidity_quality,
+    candidate.warning_count,
+    candidate.underlying_price,
+    candidate.underlying_as_of,
+    candidate.trend,
+    candidate.rsi14,
+    candidate.ma20,
+    candidate.ma50,
+    candidate.ma200,
+    coalesce(candidate.warnings, '[]'::jsonb),
+    coalesce(candidate.errors, '[]'::jsonb),
+    v_now,
+    v_now
+  from pg_catalog.jsonb_to_recordset(p_candidates) as candidate(
+    scan_run_id uuid,
+    persona text,
+    strategy text,
+    filter_key text,
+    symbol text,
+    company_name text,
+    exchange text,
+    score integer,
+    option_type text,
+    expiration date,
+    dte integer,
+    short_strike numeric,
+    long_strike numeric,
+    premium_received numeric,
+    premium_yield numeric,
+    annualized_yield numeric,
+    return_on_risk numeric,
+    annualized_return_on_risk numeric,
+    delta numeric,
+    implied_volatility numeric,
+    liquidity_quality text,
+    warning_count integer,
+    underlying_price numeric,
+    underlying_as_of timestamptz,
+    trend text,
+    rsi14 numeric,
+    ma20 numeric,
+    ma50 numeric,
+    ma200 numeric,
+    warnings jsonb,
+    errors jsonb
+  )
+  on conflict (persona, strategy, filter_key, symbol)
+  do update set
+    scan_run_id = excluded.scan_run_id,
+    company_name = excluded.company_name,
+    exchange = excluded.exchange,
+    score = excluded.score,
+    option_type = excluded.option_type,
+    expiration = excluded.expiration,
+    dte = excluded.dte,
+    short_strike = excluded.short_strike,
+    long_strike = excluded.long_strike,
+    premium_received = excluded.premium_received,
+    premium_yield = excluded.premium_yield,
+    annualized_yield = excluded.annualized_yield,
+    return_on_risk = excluded.return_on_risk,
+    annualized_return_on_risk = excluded.annualized_return_on_risk,
+    delta = excluded.delta,
+    implied_volatility = excluded.implied_volatility,
+    liquidity_quality = excluded.liquidity_quality,
+    warning_count = excluded.warning_count,
+    underlying_price = excluded.underlying_price,
+    underlying_as_of = excluded.underlying_as_of,
+    trend = excluded.trend,
+    rsi14 = excluded.rsi14,
+    ma20 = excluded.ma20,
+    ma50 = excluded.ma50,
+    ma200 = excluded.ma200,
+    warnings = excluded.warnings,
+    errors = excluded.errors,
+    as_of = excluded.as_of,
+    updated_at = excluded.updated_at;
+
+  insert into public.wheel_deep_scan_coverage (
+    symbol,
+    persona,
+    strategy,
+    filter_key,
+    status,
+    scan_run_id,
+    last_scanned_at,
+    option_contract_count,
+    best_score,
+    error,
+    updated_at
+  )
+  select
+    coverage.symbol,
+    coverage.persona,
+    coverage.strategy,
+    coverage.filter_key,
+    coverage.status,
+    coverage.scan_run_id,
+    v_now,
+    coverage.option_contract_count,
+    coverage.best_score,
+    coverage.error,
+    v_now
+  from pg_catalog.jsonb_to_recordset(p_coverage) as coverage(
+    symbol text,
+    persona text,
+    strategy text,
+    filter_key text,
+    status text,
+    scan_run_id uuid,
+    option_contract_count integer,
+    best_score integer,
+    error text
+  )
+  on conflict (symbol, persona, strategy, filter_key)
+  do update set
+    status = excluded.status,
+    scan_run_id = excluded.scan_run_id,
+    last_scanned_at = excluded.last_scanned_at,
+    option_contract_count = excluded.option_contract_count,
+    best_score = excluded.best_score,
+    error = excluded.error,
+    updated_at = excluded.updated_at;
+
+  return pg_catalog.jsonb_build_object(
+    'candidate_count', pg_catalog.jsonb_array_length(p_candidates),
+    'coverage_row_count', pg_catalog.jsonb_array_length(p_coverage),
+    'published_at', v_now,
+    'renewed_count', v_renewed
+  );
+end;
+$$;
+
 create or replace function public.complete_wheel_deep_scan_work_batch(
   p_batch_id uuid,
   p_owner_id uuid,
@@ -589,6 +981,7 @@ declare
   v_processed integer := 0;
   v_replayed integer := 0;
   v_result jsonb;
+  v_normalized_result jsonb;
   v_symbol text;
   v_token uuid;
   v_work public.wheel_deep_scan_work%rowtype;
@@ -639,6 +1032,14 @@ begin
     v_outcome := v_result ->> 'outcome';
     v_contract_count := coalesce((v_result ->> 'option_contract_count')::integer, 0);
     v_error := nullif(v_result ->> 'error', '');
+    v_normalized_result := pg_catalog.jsonb_build_object(
+      'error', v_error,
+      'lease_token', v_token,
+      'option_contract_count', v_contract_count,
+      'option_type', v_option_type,
+      'outcome', v_outcome,
+      'symbol', v_symbol
+    );
 
     if v_symbol is null or
        v_option_type not in ('put', 'call') or
@@ -666,10 +1067,13 @@ begin
 
     if v_work.lease_owner_id is null and
        v_work.last_batch_id = p_batch_id and
-       v_work.last_claim_token = v_token and
-       v_work.last_outcome = v_outcome then
-      v_replayed := v_replayed + 1;
-      continue;
+       v_work.last_claim_token = v_token then
+      if v_work.last_result = v_normalized_result then
+        v_replayed := v_replayed + 1;
+        continue;
+      end if;
+
+      raise exception 'Wheel deep-scan completion replay payload differs.';
     end if;
 
     if v_work.lease_owner_id is distinct from p_owner_id or
@@ -743,6 +1147,7 @@ begin
       last_error = left(v_error, 1000),
       last_batch_id = p_batch_id,
       last_claim_token = v_token,
+      last_result = v_normalized_result,
       option_contract_count = v_contract_count,
       updated_at = v_now
     where work.symbol = v_symbol
@@ -1017,6 +1422,9 @@ revoke all on function public.peek_wheel_deep_scan_work(
 revoke all on function public.heartbeat_wheel_deep_scan_work(
   uuid, jsonb, integer, timestamptz
 ) from public, anon, authenticated;
+revoke all on function public.publish_wheel_deep_scan_compatibility(
+  uuid, jsonb, jsonb, jsonb, integer, timestamptz
+) from public, anon, authenticated;
 revoke all on function public.complete_wheel_deep_scan_work_batch(
   uuid, uuid, jsonb, timestamptz
 ) from public, anon, authenticated;
@@ -1036,6 +1444,9 @@ grant execute on function public.peek_wheel_deep_scan_work(
 ) to service_role;
 grant execute on function public.heartbeat_wheel_deep_scan_work(
   uuid, jsonb, integer, timestamptz
+) to service_role;
+grant execute on function public.publish_wheel_deep_scan_compatibility(
+  uuid, jsonb, jsonb, jsonb, integer, timestamptz
 ) to service_role;
 grant execute on function public.complete_wheel_deep_scan_work_batch(
   uuid, uuid, jsonb, timestamptz

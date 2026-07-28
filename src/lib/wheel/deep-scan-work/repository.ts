@@ -136,6 +136,45 @@ export async function heartbeatDeepScanWork({
   });
 }
 
+export async function publishDeepScanCompatibility({
+  candidates,
+  claims,
+  coverage,
+  leaseSeconds,
+  now,
+  ownerId,
+}: {
+  candidates: Record<string, unknown>[];
+  claims: DeepScanWorkClaim[];
+  coverage: Record<string, unknown>[];
+  leaseSeconds: number;
+  now?: string;
+  ownerId: string;
+}) {
+  const result = await requestSupabaseRest<{
+    candidate_count: number;
+    coverage_row_count: number;
+    published_at: string;
+    renewed_count: number;
+  }>("rpc/publish_wheel_deep_scan_compatibility", {
+    method: "POST",
+    body: {
+      p_candidates: candidates,
+      p_claims: claims.map(claimIdentity),
+      p_coverage: coverage,
+      p_lease_seconds: leaseSeconds,
+      p_now: now ?? null,
+      p_owner_id: ownerId,
+    },
+  });
+
+  if (!result) {
+    throw new Error("Deep-scan compatibility publication returned no result.");
+  }
+
+  return result;
+}
+
 export async function completeDeepScanWorkBatch({
   batchId,
   now,

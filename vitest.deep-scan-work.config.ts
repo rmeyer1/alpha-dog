@@ -15,6 +15,7 @@ export default defineConfig({
         "src/lib/wheel/deep-scan-work/domain.ts",
         "src/lib/wheel/deep-scan-work/repository.ts",
         "src/lib/wheel/deep-scan-work/service.ts",
+        "src/lib/wheel/deep-scan-work/work-units.ts",
         "src/workflows/wheel-tiered-deep-scan/index.ts",
         "src/workflows/wheel-tiered-deep-scan/steps.ts",
       ],

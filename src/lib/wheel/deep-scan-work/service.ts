@@ -3,16 +3,17 @@ import type { MarketBatchOptionStageSummary } from "../market-batch/model";
 import { scoreSharedMarketBatchConsumer } from "../market-batch/service";
 import { optionTypeForStrategy } from "../universe-scanner/candidate-domain";
 import {
-  deleteDeepScanCandidate,
-  upsertDeepScanCandidates,
-  upsertDeepScanCoverageRows,
+  deepScanCandidateRow,
 } from "../universe-scanner/repository";
 import type { WheelScreenerRequest } from "../types";
 import type {
   DeepScanWorkClaim,
   TieredDeepScanCompatibilitySummary,
 } from "./model";
-import { heartbeatDeepScanWork } from "./repository";
+import {
+  heartbeatDeepScanWork,
+  publishDeepScanCompatibility,
+} from "./repository";
 
 export async function publishTieredDeepScanCompatibility({
   batchId,
@@ -29,8 +30,8 @@ export async function publishTieredDeepScanCompatibility({
   ownerId: string;
   requests: WheelScreenerRequest[];
 }): Promise<TieredDeepScanCompatibilitySummary> {
-  // Revalidate and extend every token inside the publication step so a
-  // resumed stale workflow cannot touch the legacy reader tables.
+  // Renew early to avoid scoring work that is already stale. The publication
+  // RPC revalidates and locks the same tokens again at the mutation boundary.
   await heartbeatDeepScanWork({
     claims,
     leaseSeconds,
@@ -39,6 +40,8 @@ export async function publishTieredDeepScanCompatibility({
 
   let candidateCount = 0;
   let coverageRowCount = 0;
+  const candidateRows: Record<string, unknown>[] = [];
+  const coverageRows: Record<string, unknown>[] = [];
   const stageByUnit = new Map(
     optionStages.map((stage) => [
       `${stage.symbol}:${stage.optionType}`,
@@ -70,38 +73,47 @@ export async function publishTieredDeepScanCompatibility({
     const companyBySymbol = new Map(
       scored.companies.map((company) => [company.ticker, company]),
     );
-    const coverageRows: Parameters<typeof upsertDeepScanCoverageRows>[1] = [];
-
-    await upsertDeepScanCandidates(context, null, scored.companies);
+    candidateRows.push(
+      ...scored.companies.map((company) =>
+        deepScanCandidateRow(context, null, company)
+      ),
+    );
     candidateCount += scored.companies.length;
 
     for (const claim of requestClaims) {
       const company = companyBySymbol.get(claim.symbol);
       const stage = stageByUnit.get(`${claim.symbol}:${claim.optionType}`);
 
-      if (!company) {
-        await deleteDeepScanCandidate(context, claim.symbol);
-      }
-
       coverageRows.push({
-        bestScore: company?.score ?? null,
+        best_score: company?.score ?? null,
         error:
           stage?.error ??
           (stage ? null : "Claimed underlying facts were unavailable."),
-        optionContractCount: stage?.contractCount ?? 0,
-        runId: null,
+        filter_key: context.filterKey,
+        option_contract_count: stage?.contractCount ?? 0,
+        option_type: claim.optionType,
+        persona: context.persona,
+        scan_run_id: null,
         status: company
           ? "complete"
           : stage?.error || !stage
             ? "failed"
             : "no_candidate",
+        strategy: context.strategy,
         symbol: claim.symbol,
       });
     }
 
-    await upsertDeepScanCoverageRows(context, coverageRows);
-    coverageRowCount += coverageRows.length;
+    coverageRowCount += requestClaims.length;
   }
+
+  await publishDeepScanCompatibility({
+    candidates: candidateRows,
+    claims,
+    coverage: coverageRows,
+    leaseSeconds,
+    ownerId,
+  });
 
   return {
     candidateCount,

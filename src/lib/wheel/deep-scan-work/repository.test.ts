@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 describe("tiered deep scan work repository", () => {
-  it("maps sync, claim, preview, heartbeat, completion, failure, and metrics RPCs", async () => {
+  it("maps sync, claim, preview, heartbeat, publication, completion, failure, and metrics RPCs", async () => {
     const repository = await import("./repository");
     restMock
       .mockResolvedValueOnce({ eligible_units: 2 })
@@ -41,6 +41,7 @@ describe("tiered deep scan work repository", () => {
         },
       ])
       .mockResolvedValueOnce({ renewed_count: 1 })
+      .mockResolvedValueOnce({ coverage_row_count: 1, renewed_count: 1 })
       .mockResolvedValueOnce({ completed_count: 1, status: "complete" })
       .mockResolvedValueOnce({ failed_count: 1, status: "failed" })
       .mockResolvedValueOnce({ total_count: 2 });
@@ -58,6 +59,19 @@ describe("tiered deep scan work repository", () => {
     });
     await repository.heartbeatDeepScanWork({
       claims,
+      leaseSeconds: 3600,
+      ownerId: "owner-1",
+    });
+    await repository.publishDeepScanCompatibility({
+      candidates: [],
+      claims,
+      coverage: [{
+        filter_key: "filter",
+        option_type: "put",
+        persona: "balanced_wheel",
+        strategy: "short_put",
+        symbol: "AAPL",
+      }],
       leaseSeconds: 3600,
       ownerId: "owner-1",
     });
@@ -91,11 +105,12 @@ describe("tiered deep scan work repository", () => {
       "rpc/claim_wheel_deep_scan_work",
       "rpc/peek_wheel_deep_scan_work",
       "rpc/heartbeat_wheel_deep_scan_work",
+      "rpc/publish_wheel_deep_scan_compatibility",
       "rpc/complete_wheel_deep_scan_work_batch",
       "rpc/fail_wheel_deep_scan_work_batch",
       "rpc/get_wheel_deep_scan_work_metrics",
     ]);
-    expect(restMock.mock.calls[4][1].body.p_results[0]).toEqual({
+    expect(restMock.mock.calls[5][1].body.p_results[0]).toEqual({
       error: null,
       lease_token: "token-1",
       option_contract_count: 3,

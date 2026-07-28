@@ -2,6 +2,8 @@ import type {
   TieredDeepScanWorkflowInput,
   TieredDeepScanWorkflowResult,
 } from "@/lib/wheel/deep-scan-work/model";
+import { optionUnitsForDeepScanClaims } from
+  "@/lib/wheel/deep-scan-work/work-units";
 import {
   requireDurableTelemetryContext,
   type DurableTelemetryContext,
@@ -51,21 +53,18 @@ export async function wheelTieredDeepScanWorkflow(
       symbols,
     );
     await heartbeatTieredDeepScanStep(input);
-    const claimedTypes = new Set(
-      input.claims.map((claim) => claim.optionType),
-    );
     const optionStages = await Promise.all(
-      underlyingStage.selectedSymbols.flatMap((symbol) =>
-        prepared.optionTypes
-          .filter((optionType) => claimedTypes.has(optionType))
-          .map((optionType) =>
-            stageMarketBatchOptionStep(
-              batchId,
-              symbol,
-              optionType,
-              prepared.discoveryFilters,
-            )
-          )
+      optionUnitsForDeepScanClaims(
+        underlyingStage.selectedSymbols,
+        prepared.optionTypes,
+        input.claims,
+      ).map(({ optionType, symbol }) =>
+        stageMarketBatchOptionStep(
+          batchId,
+          symbol,
+          optionType,
+          prepared.discoveryFilters,
+        )
       ),
     );
     const ingestion = await finalizeTieredDeepScanFactsStep(

@@ -27,16 +27,22 @@ forward; demotion does not erase already-due work.
    `FOR UPDATE SKIP LOCKED`. It returns an owner UUID, opaque lease token, and
    expiration for each unit.
 3. One Workflow run loads only the claimed universe rows and claimed stock
-   snapshots, refreshes each claimed symbol/type once, and scores every
-   configured consumer of those facts without another provider fetch.
-4. The compatibility-publication step revalidates and extends every token
-   before touching legacy reader tables, so a resumed stale Workflow fails
-   before it can overwrite replacement work.
+   snapshots. Provider steps are built from the exact claimed
+   `(symbol, option_type)` set rather than a symbol/type cross-product, so
+   complementary owners cannot duplicate each other's provider work.
+4. Compatibility publication uses one PostgreSQL transaction that locks,
+   revalidates, and extends every token at the mutation boundary before
+   atomically deleting/upserting legacy candidates and coverage. A reclaim
+   after an earlier heartbeat therefore rejects the entire stale publication
+   without changing either legacy table.
 5. `complete_wheel_deep_scan_work_batch` validates every owner/token pair and
    publishes all queue outcomes plus fact-batch completion in one PostgreSQL
    transaction. One stale member rejects and rolls back the whole completion.
 6. Expired claims are reclaimed. An old owner or token cannot heartbeat,
-   complete, or fail replacement work. Exact completion replay is idempotent.
+   publish, complete, or fail replacement work. Exact completion replay is
+   idempotent; comparison of the complete normalized result payload rejects any
+   replay whose outcome, contract count, error, token, symbol, or option type
+   differs.
 
 Provider outages retain the last successful queue freshness timestamp, record
 a `provider_outage` outcome, and apply the tier-configured bounded exponential
@@ -83,5 +89,8 @@ still receive coverage at the default claim size.
 - `npm run test:supabase`
 
 The Data API verifier launches concurrent claims, proves their sets are
-disjoint, reclaims expired work, rejects stale completion, checks transaction
-rollback when one batch member is invalid, and verifies provider backoff.
+disjoint, reclaims expired work, rejects mutation-time stale publication and
+altered completion replay, checks transaction rollback when one batch member
+is invalid, verifies provider backoff, and measures 625-unit claim, heartbeat,
+and completion RPCs. The domain suite measures exact mixed 625-unit fan-out
+and asserts that its output has no cross-product work.

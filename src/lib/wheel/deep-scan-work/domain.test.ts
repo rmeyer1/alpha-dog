@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import type { MarketBatchOptionStageSummary } from "../market-batch/model";
 import type { WheelScreenerRequest } from "../types";
@@ -8,6 +9,7 @@ import {
   resultsForDeepScanClaims,
   simulateTieredCoverageWeek,
 } from "./domain";
+import { optionUnitsForDeepScanClaims } from "./work-units";
 import type { DeepScanWorkClaim } from "./model";
 
 const putRequest: WheelScreenerRequest = {
@@ -89,6 +91,47 @@ describe("tiered deep scan work domain", () => {
         [claim("AAPL", "put")],
       ),
     ).toEqual([putRequest, spreadRequest]);
+  });
+
+  it("builds a 625-unit mixed fan-out without cross-product work at low overhead", () => {
+    const symbols = Array.from(
+      { length: 313 },
+      (_, index) => `SYM${index.toString().padStart(3, "0")}`,
+    );
+    const claims = symbols.flatMap((symbol) => [
+      claim(symbol, "put"),
+      claim(symbol, "call"),
+    ]).slice(0, 625);
+    const samples: number[] = [];
+
+    for (let batch = 0; batch < 80; batch += 1) {
+      const startedAt = performance.now();
+      for (let iteration = 0; iteration < 100; iteration += 1) {
+        optionUnitsForDeepScanClaims(symbols, ["put", "call"], claims);
+      }
+      samples.push((performance.now() - startedAt) / 100);
+    }
+
+    const units = optionUnitsForDeepScanClaims(
+      symbols,
+      ["put", "call"],
+      claims,
+    );
+    const sorted = [...samples].sort((left, right) => left - right);
+    const p95Ms = sorted[Math.ceil(sorted.length * 0.95) - 1] ?? 0;
+
+    console.info("tiered_deep_scan_mixed_fanout_benchmark", {
+      claims: claims.length,
+      p95Ms,
+      samples: samples.length,
+      units: units.length,
+    });
+
+    expect(units).toHaveLength(625);
+    expect(
+      new Set(units.map((unit) => `${unit.symbol}:${unit.optionType}`)),
+    ).toHaveLength(625);
+    expect(p95Ms).toBeLessThan(10);
   });
 
   it("classifies completed, empty, unavailable, and failed provider facts", () => {

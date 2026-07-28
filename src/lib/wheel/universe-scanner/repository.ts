@@ -475,7 +475,7 @@ export async function getDeepScanCoverage(context: DeepScanContext) {
   return new Map((rows ?? []).map((row) => [row.symbol, row]));
 }
 
-function deepScanCandidateRow(
+export function deepScanCandidateRow(
   context: DeepScanContext,
   runId: string | null,
   company: WheelCompanyScore,

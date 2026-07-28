@@ -130,6 +130,147 @@ describe("tiered deep scan workflow", () => {
     expect(stepMocks.fail).not.toHaveBeenCalled();
   });
 
+  it("stages only exact sparse claimed symbol and option-type pairs", async () => {
+    const { wheelTieredDeepScanWorkflow } = await import("./index");
+    const sparseInput = {
+      ...input,
+      claims: [
+        input.claims[0],
+        {
+          ...input.claims[0],
+          leaseToken: "00000000-0000-4000-8000-000000000003",
+          optionType: "call" as const,
+          symbol: "MSFT",
+        },
+      ],
+    };
+    stepMocks.prepare.mockResolvedValueOnce({
+      batch: {
+        batchId: "batch-sparse",
+        created: true,
+        status: "running",
+      },
+      discoveryFilters: {},
+      optionTypes: ["put", "call"],
+      requests: input.requests,
+    });
+    stepMocks.stageUnderlyings.mockResolvedValueOnce({
+      assetCount: 2,
+      metrics: [],
+      missingSymbols: [],
+      rankedCount: 2,
+      selectedCount: 2,
+      selectedSymbols: ["AAPL", "MSFT"],
+    });
+    stepMocks.results.mockReturnValueOnce([
+      {
+        error: null,
+        leaseToken: sparseInput.claims[0].leaseToken,
+        optionContractCount: 2,
+        optionType: "put",
+        outcome: "complete",
+        symbol: "AAPL",
+      },
+      {
+        error: null,
+        leaseToken: sparseInput.claims[1].leaseToken,
+        optionContractCount: 2,
+        optionType: "call",
+        outcome: "complete",
+        symbol: "MSFT",
+      },
+    ]);
+
+    await wheelTieredDeepScanWorkflow(sparseInput, telemetry);
+
+    expect(stepMocks.stageOption.mock.calls.map((call) => call.slice(1, 3)))
+      .toEqual([
+        ["AAPL", "put"],
+        ["MSFT", "call"],
+      ]);
+  });
+
+  it("keeps complementary owners' provider work disjoint", async () => {
+    const { wheelTieredDeepScanWorkflow } = await import("./index");
+    const ownerA = {
+      ...input,
+      batchKey: "coverage:owner-a",
+      claims: [
+        input.claims[0],
+        {
+          ...input.claims[0],
+          leaseToken: "00000000-0000-4000-8000-000000000003",
+          optionType: "call" as const,
+          symbol: "MSFT",
+        },
+      ],
+    };
+    const ownerB = {
+      ...input,
+      batchKey: "coverage:owner-b",
+      claims: [
+        {
+          ...input.claims[0],
+          leaseToken: "00000000-0000-4000-8000-000000000004",
+          optionType: "call" as const,
+        },
+        {
+          ...input.claims[0],
+          leaseToken: "00000000-0000-4000-8000-000000000005",
+          symbol: "MSFT",
+        },
+      ],
+      ownerId: "00000000-0000-4000-8000-000000000006",
+    };
+    stepMocks.prepare
+      .mockResolvedValueOnce({
+        batch: { batchId: "batch-a", created: true, status: "running" },
+        discoveryFilters: {},
+        optionTypes: ["put", "call"],
+        requests: input.requests,
+      })
+      .mockResolvedValueOnce({
+        batch: { batchId: "batch-b", created: true, status: "running" },
+        discoveryFilters: {},
+        optionTypes: ["put", "call"],
+        requests: input.requests,
+      });
+    stepMocks.stageUnderlyings.mockResolvedValue({
+      assetCount: 2,
+      metrics: [],
+      missingSymbols: [],
+      rankedCount: 2,
+      selectedCount: 2,
+      selectedSymbols: ["AAPL", "MSFT"],
+    });
+    stepMocks.results.mockImplementation((claims) =>
+      claims.map((claim: typeof input.claims[number]) => ({
+        error: null,
+        leaseToken: claim.leaseToken,
+        optionContractCount: 2,
+        optionType: claim.optionType,
+        outcome: "complete",
+        symbol: claim.symbol,
+      }))
+    );
+
+    await Promise.all([
+      wheelTieredDeepScanWorkflow(ownerA, telemetry),
+      wheelTieredDeepScanWorkflow(ownerB, telemetry),
+    ]);
+
+    const units = stepMocks.stageOption.mock.calls.map(
+      (call) => `${call[1]}:${call[2]}`,
+    );
+    expect(units).toHaveLength(4);
+    expect(new Set(units)).toEqual(new Set([
+      "AAPL:put",
+      "MSFT:call",
+      "AAPL:call",
+      "MSFT:put",
+    ]));
+  });
+
   it("fails the batch and releases owned work when publication fails", async () => {
     const { wheelTieredDeepScanWorkflow } = await import("./index");
     stepMocks.publish.mockRejectedValueOnce(new Error("compatibility failed"));
