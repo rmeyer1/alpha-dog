@@ -81,13 +81,19 @@ export async function prepareMarketBatchStep(
   }
 }
 
-export async function stageMarketBatchUnderlyingsStep(batchId: string) {
+export async function stageMarketBatchUnderlyingsStep(
+  batchId: string,
+  requestedSymbols?: string[],
+) {
   "use step";
 
   logStep("underlyings", "START", { batchId });
 
   try {
-    const result = await stageSharedMarketBatchUnderlyings(batchId);
+    const result = await stageSharedMarketBatchUnderlyings(
+      batchId,
+      requestedSymbols,
+    );
     logStep("underlyings", "DONE", {
       batchId,
       selectedCount: result.selectedCount,

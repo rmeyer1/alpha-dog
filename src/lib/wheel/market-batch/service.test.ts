@@ -38,6 +38,7 @@ const repositoryMocks = vi.hoisted(() => ({
   readMarketBatchOptions: vi.fn(),
   readMarketBatchUnderlying: vi.fn(),
   readMarketBatchUnderlyings: vi.fn(),
+  readScannerAssetsBySymbols: vi.fn(),
   replaceMarketBatchSnapshotCandidates: vi.fn(),
   upsertMarketBatchMetrics: vi.fn(),
 }));
@@ -160,6 +161,7 @@ beforeEach(() => {
   repositoryMocks.readMarketBatchUnderlying.mockResolvedValue(
     persistedUnderlying,
   );
+  repositoryMocks.readScannerAssetsBySymbols.mockResolvedValue([asset]);
   repositoryMocks.getMarketBatchOptionIngestion.mockResolvedValue(null);
   marketServiceMocks.refreshCandidateContracts.mockResolvedValue({
     contracts: [{
@@ -247,6 +249,34 @@ describe("shared market batch service", () => {
       .toHaveBeenCalledOnce();
     expect(replay.selectedSymbols).toEqual(["AAPL"]);
     expect(replayWithoutStoredMetrics.metrics).toEqual([]);
+  });
+
+  it("loads only claimed symbols and records unavailable queue members", async () => {
+    const { stageSharedMarketBatchUnderlyings } = await import("./service");
+    const result = await stageSharedMarketBatchUnderlyings(
+      "batch-1",
+      ["aapl", "MISSING", "AAPL"],
+    );
+
+    expect(repositoryMocks.readScannerAssetsBySymbols).toHaveBeenCalledWith([
+      "AAPL",
+      "MISSING",
+    ]);
+    expect(alpacaMocks.getWheelAssetUniverse).not.toHaveBeenCalled();
+    expect(alpacaMocks.getStockSnapshotsBySymbols).toHaveBeenCalledWith(
+      ["AAPL"],
+      expect.any(Object),
+    );
+    expect(marketServiceMocks.buildDeepScanUniverse).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      missingSymbols: ["MISSING"],
+      selectedSymbols: ["AAPL"],
+    });
+    expect(repositoryMocks.checkpointMarketBatchUnderlyings)
+      .toHaveBeenCalledWith(
+        "batch-1",
+        expect.objectContaining({ missingSymbols: ["MISSING"] }),
+      );
   });
 
   it("rejects missing and failed batches before provider work", async () => {
@@ -408,10 +438,14 @@ describe("shared market batch service", () => {
   });
 
   it("allows partial symbols but rejects a required-type outage", async () => {
-    const { finalizeSharedMarketBatchFacts } = await import("./service");
+    const {
+      finalizeSharedMarketBatchFacts,
+      finalizeSharedMarketCoverageFacts,
+    } = await import("./service");
     const underlyingStage = {
       assetCount: 1,
       metrics: [],
+      missingSymbols: [],
       rankedCount: 1,
       selectedCount: 1,
       selectedSymbols: ["AAPL"],
@@ -451,6 +485,25 @@ describe("shared market batch service", () => {
     expect(repositoryMocks.completeMarketBatchFacts).toHaveBeenCalledOnce();
 
     await expect(
+      finalizeSharedMarketCoverageFacts({
+        batchId: "batch-coverage",
+        underlyingStage,
+        optionStages: [{
+          contractCount: 0,
+          durationMs: 12,
+          error: "AAPL call: timeout",
+          optionType: "call",
+          providerRequests: 1,
+          symbol: "AAPL",
+        }],
+      }),
+    ).resolves.toMatchObject({
+      errorCount: 1,
+      optionContractCount: 0,
+    });
+    expect(repositoryMocks.completeMarketBatchFacts).toHaveBeenCalledTimes(2);
+
+    await expect(
       finalizeSharedMarketBatchFacts({
         batchId: "batch-2",
         underlyingStage,
@@ -473,7 +526,7 @@ describe("shared market batch service", () => {
     ).rejects.toThrow(
       "Every shared call option-ingestion operation failed.",
     );
-    expect(repositoryMocks.completeMarketBatchFacts).toHaveBeenCalledOnce();
+    expect(repositoryMocks.completeMarketBatchFacts).toHaveBeenCalledTimes(2);
   });
 
   it("scores, stages, publishes, completes, fails, and exposes discovery filters", async () => {

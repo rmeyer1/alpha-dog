@@ -52,6 +52,7 @@ import {
   readMarketBatchOptions,
   readMarketBatchUnderlying,
   readMarketBatchUnderlyings,
+  readScannerAssetsBySymbols,
   replaceMarketBatchSnapshotCandidates,
   upsertMarketBatchMetrics,
 } from "./repository";
@@ -98,6 +99,25 @@ function storedUnderlyingMetrics(
   return underlyings.metrics as MarketBatchMetric[];
 }
 
+function storedMissingSymbols(
+  batch: Awaited<ReturnType<typeof getMarketBatch>>,
+) {
+  const underlyings = batch?.summary.underlyings;
+
+  if (
+    !underlyings ||
+    typeof underlyings !== "object" ||
+    !("missingSymbols" in underlyings) ||
+    !Array.isArray(underlyings.missingSymbols)
+  ) {
+    return [] as string[];
+  }
+
+  return underlyings.missingSymbols.filter(
+    (symbol): symbol is string => typeof symbol === "string",
+  );
+}
+
 export async function prepareSharedMarketBatch({
   batchKey,
   feed,
@@ -116,6 +136,7 @@ export async function prepareSharedMarketBatch({
 
 export async function stageSharedMarketBatchUnderlyings(
   batchId: string,
+  requestedSymbols?: string[],
 ): Promise<MarketBatchUnderlyingStageSummary> {
   const existingBatch = await getMarketBatch(batchId);
 
@@ -136,6 +157,7 @@ export async function stageSharedMarketBatchUnderlyings(
     return {
       assetCount: existingBatch.asset_count,
       metrics: storedUnderlyingMetrics(existingBatch),
+      missingSymbols: storedMissingSymbols(existingBatch),
       rankedCount: existingBatch.ranked_count,
       selectedCount: existingBatch.selected_count,
       selectedSymbols,
@@ -144,7 +166,18 @@ export async function stageSharedMarketBatchUnderlyings(
 
   const env = getEnv();
   const assetStartedAt = performance.now();
-  const assets = await getWheelAssetUniverse();
+  const normalizedRequestedSymbols = requestedSymbols == null
+    ? null
+    : Array.from(
+        new Set(
+          requestedSymbols
+            .map((symbol) => symbol.trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      );
+  const assets = normalizedRequestedSymbols == null
+    ? await getWheelAssetUniverse()
+    : await readScannerAssetsBySymbols(normalizedRequestedSymbols);
   const assetDurationMs = elapsed(assetStartedAt);
   const snapshotChunkSize =
     env.WHEEL_UNIVERSE_STOCK_SNAPSHOT_CHUNK_SIZE ??
@@ -159,12 +192,20 @@ export async function stageSharedMarketBatchUnderlyings(
   );
   const stockDurationMs = elapsed(stockStartedAt);
   const ranked = rankUnderlyingUniverse(assets, snapshots);
-  const deepScan = await buildDeepScanUniverse(
-    ranked,
-    env.WHEEL_UNIVERSE_DEEP_SCAN_SIZE,
-  );
+  const requestedSet = normalizedRequestedSymbols == null
+    ? null
+    : new Set(normalizedRequestedSymbols);
+  const deepScan = requestedSet == null
+    ? await buildDeepScanUniverse(
+        ranked,
+        env.WHEEL_UNIVERSE_DEEP_SCAN_SIZE,
+      )
+    : ranked.filter((item) => requestedSet.has(item.asset.symbol));
   const selectedSymbols = deepScan.map((item) => item.asset.symbol);
   const selectedSet = new Set(selectedSymbols);
+  const missingSymbols = normalizedRequestedSymbols?.filter(
+    (symbol) => !selectedSet.has(symbol),
+  ) ?? [];
   const technicalStartedAt = performance.now();
   const { cached: technicals, summary: technicalSummary } =
     await ensureTechnicals(deepScan);
@@ -213,7 +254,7 @@ export async function stageSharedMarketBatchUnderlyings(
   const metrics = [
     metric("asset_universe", {
       durationMs: assetDurationMs,
-      providerRequests: 1,
+      providerRequests: normalizedRequestedSymbols == null ? 1 : 0,
     }),
     metric("stock_snapshots", {
       databaseRowsWritten: rows.length,
@@ -236,6 +277,7 @@ export async function stageSharedMarketBatchUnderlyings(
   const summary = {
     assetCount: assets.length,
     metrics,
+    missingSymbols,
     rankedCount: ranked.length,
     selectedCount: deepScan.length,
     selectedSymbols,
@@ -426,6 +468,61 @@ export async function finalizeSharedMarketBatchFacts({
   return summary;
 }
 
+export async function finalizeSharedMarketCoverageFacts({
+  batchId,
+  optionStages,
+  underlyingStage,
+}: {
+  batchId: string;
+  optionStages: MarketBatchOptionStageSummary[];
+  underlyingStage: MarketBatchUnderlyingStageSummary;
+}): Promise<MarketBatchIngestionSummary> {
+  const errors = optionStages
+    .map((stage) => stage.error)
+    .filter((error) => error != null);
+  const optionMetrics = (["put", "call"] as const)
+    .map((optionType) => {
+      const stages = optionStages.filter(
+        (stage) => stage.optionType === optionType,
+      );
+
+      return stages.length === 0
+        ? null
+        : metric(optionType === "put" ? "option_put" : "option_call", {
+            databaseRowsWritten: stages.reduce(
+              (total, stage) => total + stage.contractCount,
+              0,
+            ),
+            durationMs: stages.reduce(
+              (total, stage) => total + stage.durationMs,
+              0,
+            ),
+            providerRequests: stages.reduce(
+              (total, stage) => total + stage.providerRequests,
+              0,
+            ),
+          });
+    })
+    .filter((entry) => entry != null);
+  const summary: MarketBatchIngestionSummary = {
+    assetCount: underlyingStage.assetCount,
+    errorCount: errors.length,
+    errors,
+    metrics: [...underlyingStage.metrics, ...optionMetrics],
+    optionContractCount: optionStages.reduce(
+      (total, stage) => total + stage.contractCount,
+      0,
+    ),
+    rankedCount: underlyingStage.rankedCount,
+    selectedCount: underlyingStage.selectedCount,
+  };
+
+  await upsertMarketBatchMetrics(batchId, summary.metrics);
+  await completeMarketBatchFacts(batchId, summary);
+
+  return summary;
+}
+
 function batchFactErrors(batch: Awaited<ReturnType<typeof getMarketBatch>>) {
   const errors = batch?.summary.errors;
 
@@ -434,11 +531,10 @@ function batchFactErrors(batch: Awaited<ReturnType<typeof getMarketBatch>>) {
     : [];
 }
 
-export async function stageScoredMarketBatchSnapshot(
+async function loadScoredMarketBatchConsumer(
   batchId: string,
   request: WheelScreenerRequest,
-): Promise<StagedMarketBatchSnapshot> {
-  const startedAt = performance.now();
+) {
   const [batch, underlyingRows, optionRows] = await Promise.all([
     getMarketBatch(batchId),
     readMarketBatchUnderlyings(batchId),
@@ -457,6 +553,26 @@ export async function stageScoredMarketBatchSnapshot(
     request,
     underlyingRows,
   });
+
+  return { batch, scored };
+}
+
+export async function scoreSharedMarketBatchConsumer(
+  batchId: string,
+  request: WheelScreenerRequest,
+) {
+  return (await loadScoredMarketBatchConsumer(batchId, request)).scored;
+}
+
+export async function stageScoredMarketBatchSnapshot(
+  batchId: string,
+  request: WheelScreenerRequest,
+): Promise<StagedMarketBatchSnapshot> {
+  const startedAt = performance.now();
+  const { batch, scored } = await loadScoredMarketBatchConsumer(
+    batchId,
+    request,
+  );
   const identity = marketBatchRequestIdentity(request);
   const snapshot = await createMarketBatchSnapshot({
     batchId,

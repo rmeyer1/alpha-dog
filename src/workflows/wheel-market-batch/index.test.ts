@@ -41,9 +41,10 @@ beforeEach(() => {
     requests,
   });
   stepMocks.stageUnderlyings.mockResolvedValue({
-    assetCount: 1,
-    metrics: [],
-    rankedCount: 1,
+  assetCount: 1,
+  metrics: [],
+  missingSymbols: [],
+  rankedCount: 1,
     selectedCount: 1,
     selectedSymbols: ["AAPL"],
   });

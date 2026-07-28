@@ -48,6 +48,7 @@ const input = {
 const underlyingStage = {
   assetCount: 1,
   metrics: [],
+  missingSymbols: [],
   rankedCount: 1,
   selectedCount: 1,
   selectedSymbols: ["AAPL"],

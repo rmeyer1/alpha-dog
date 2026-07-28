@@ -1,4 +1,3 @@
-import { instrumentApiRoute } from "@/lib/observability/route";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { start } from "workflow/api";
@@ -7,23 +6,37 @@ import {
   getMarketDataConfigurationError,
   isDemoMode,
 } from "@/lib/env";
+import {
+  deepScanCoverageIntervalStartedAt,
+  deepScanCoverageWindowState,
+  requestsForDeepScanClaims,
+} from "@/lib/wheel/deep-scan-work/domain";
+import {
+  claimDeepScanWork,
+  getDeepScanWorkMetrics,
+  peekDeepScanWork,
+  syncDeepScanWorkQueue,
+} from "@/lib/wheel/deep-scan-work/repository";
+import type { DeepScanWorkClaim } from "@/lib/wheel/deep-scan-work/model";
+import { instrumentApiRoute } from "@/lib/observability/route";
 import { observeCronOperation } from "@/lib/observability/cron";
 import { startObservedWorkflow } from "@/lib/observability/workflow";
-import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import { getSupabaseServiceConfig } from "@/lib/supabase/rest";
-import { getScheduledScreenerRefreshRequests } from "@/lib/wheel/screener-refresh";
-import type { UniverseDeepScanCoverageRequest } from "@/lib/wheel/universe-scanner";
-import { wheelDeepScanWorkflow } from "@/workflows/wheel-deep-scan";
+import { getScheduledScreenerRefreshRequests } from
+  "@/lib/wheel/screener-refresh";
+import { wheelTieredDeepScanWorkflow } from
+  "@/workflows/wheel-tiered-deep-scan";
 
 export const dynamic = "force-dynamic";
 
 interface StartedDeepScan {
+  claimedCount: number;
   completionStatus: "complete" | "pending";
+  consumerCount: number;
   enqueueStatus: "accepted";
-  persona: UniverseDeepScanCoverageRequest["persona"];
+  optionTypes: Array<DeepScanWorkClaim["optionType"]>;
   runId: string;
   status: string;
-  strategy: UniverseDeepScanCoverageRequest["strategy"];
 }
 
 function unauthorized() {
@@ -62,36 +75,16 @@ function verifyCronRequest(request: Request) {
     : unauthorized();
 }
 
-function getEasternCoverageHoursState(date = new Date()) {
-  const marketSession = getUsEquitiesMarketState(date);
-  const windowStartMinutes = 8 * 60;
-  const windowEndMinutes = marketSession.closeMinutes;
-
-  return {
-    easternMinutes: marketSession.easternMinutes,
-    isOpen:
-      marketSession.isMarketDay &&
-      windowEndMinutes != null &&
-      marketSession.easternMinutes >= windowStartMinutes &&
-      marketSession.easternMinutes < windowEndMinutes,
-    isWeekday: !["Sat", "Sun"].includes(marketSession.weekday),
-    marketSession,
-    weekday: marketSession.weekday,
-  };
-}
-
-function requestForScan(
-  request: ReturnType<typeof getScheduledScreenerRefreshRequests>[number],
-  batchSize: number,
-  forceRefresh: boolean,
-): UniverseDeepScanCoverageRequest {
-  return {
-    batchSize,
-    filters: request.filters,
-    forceRefresh,
-    persona: request.persona,
-    strategy: request.strategy,
-  };
+function boundedPositiveInteger(
+  value: string | null,
+  fallback: number,
+  maximum: number,
+) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Math.min(
+    maximum,
+    Number.isInteger(parsed) && parsed > 0 ? parsed : fallback,
+  );
 }
 
 async function handleDeepScanCoverage(request: Request) {
@@ -120,11 +113,7 @@ async function handleDeepScanCoverage(request: Request) {
 
   if (!isDemoMode(env) && configurationError) {
     return NextResponse.json(
-      {
-        error: {
-          ...configurationError,
-        },
-      },
+      { error: { ...configurationError } },
       { status: 503 },
     );
   }
@@ -132,7 +121,7 @@ async function handleDeepScanCoverage(request: Request) {
   const url = new URL(request.url);
   const dryRun = url.searchParams.get("dryRun") === "true";
   const force = url.searchParams.get("force") === "true";
-  const coverageHours = getEasternCoverageHoursState();
+  const coverageHours = deepScanCoverageWindowState();
 
   if (!coverageHours.isOpen && !dryRun && !force) {
     return NextResponse.json({
@@ -145,45 +134,75 @@ async function handleDeepScanCoverage(request: Request) {
     });
   }
 
-  const maxRuns = Math.min(
-    env.WHEEL_UNIVERSE_BACKGROUND_MAX_RUNS,
-    Number.parseInt(url.searchParams.get("maxRuns") ?? "", 10) ||
-      Number.MAX_SAFE_INTEGER,
+  const claimLimit = boundedPositiveInteger(
+    url.searchParams.get("batchSize"),
+    env.WHEEL_DEEP_SCAN_CLAIM_LIMIT,
+    1000,
   );
-  const batchSize =
-    Number.parseInt(url.searchParams.get("batchSize") ?? "", 10) ||
-    env.WHEEL_UNIVERSE_BACKGROUND_BATCH_SIZE;
+  const leaseSeconds = boundedPositiveInteger(
+    url.searchParams.get("leaseSeconds"),
+    env.WHEEL_DEEP_SCAN_CLAIM_LEASE_SECONDS,
+    7200,
+  );
   const configuredRequests = getScheduledScreenerRefreshRequests();
-  const scanRequests = configuredRequests
-    .slice(0, maxRuns)
-    .map((scheduledRequest) =>
-      requestForScan(scheduledRequest, batchSize, force)
-    );
+  const sync = await syncDeepScanWorkQueue();
+  const ownerId = randomUUID();
+  const preview = dryRun
+    ? await peekDeepScanWork({ force, limit: claimLimit })
+    : [];
+  const claims: DeepScanWorkClaim[] = dryRun
+    ? []
+    : await claimDeepScanWork({
+        force,
+        leaseSeconds,
+        limit: claimLimit,
+        ownerId,
+      });
+  const plannedWork = dryRun ? preview : claims;
+  const scanRequests = requestsForDeepScanClaims(
+    configuredRequests,
+    plannedWork,
+  );
   const started: StartedDeepScan[] = [];
 
-  if (!dryRun) {
-    for (const scanRequest of scanRequests) {
-      const run = await startObservedWorkflow(
-        "wheel_deep_scan",
-        {
-          ...scanRequest,
-          workflowIdempotencyKey: randomUUID(),
-        },
-        (args) => start(wheelDeepScanWorkflow, args),
+  if (!dryRun && claims.length > 0) {
+    if (scanRequests.length === 0) {
+      throw new Error(
+        "No configured screener consumer matches the claimed option types.",
       );
-      const workflowStatus = await run.status;
-
-      started.push({
-        completionStatus:
-          workflowStatus === "completed" ? "complete" : "pending",
-        enqueueStatus: "accepted",
-        persona: scanRequest.persona,
-        strategy: scanRequest.strategy,
-        runId: run.runId,
-        status: workflowStatus,
-      });
     }
+
+    const intervalStartedAt = deepScanCoverageIntervalStartedAt();
+    const run = await startObservedWorkflow(
+      "wheel_deep_scan",
+      {
+        batchKey:
+          `wheel-tiered-deep-scan:${intervalStartedAt}:${ownerId}`,
+        claims,
+        intervalStartedAt,
+        leaseSeconds,
+        ownerId,
+        requests: scanRequests,
+      },
+      (args) => start(wheelTieredDeepScanWorkflow, args),
+    );
+    const workflowStatus = await run.status;
+
+    started.push({
+      claimedCount: claims.length,
+      completionStatus:
+        workflowStatus === "completed" ? "complete" : "pending",
+      consumerCount: scanRequests.length,
+      enqueueStatus: "accepted",
+      optionTypes: Array.from(
+        new Set(claims.map((claim) => claim.optionType)),
+      ).sort(),
+      runId: run.runId,
+      status: workflowStatus,
+    });
   }
+
+  const metrics = await getDeepScanWorkMetrics();
 
   return NextResponse.json({
     ok: true,
@@ -194,11 +213,21 @@ async function handleDeepScanCoverage(request: Request) {
     dryRun,
     force,
     coverageHours,
-    batchSize,
-    maxRuns,
+    batchSize: claimLimit,
+    leaseSeconds,
+    maxRuns: 1,
     configuredCount: configuredRequests.length,
+    claimedCount: plannedWork.length,
+    sharedMarketData: true,
+    sync,
+    metrics,
     started,
-    planned: dryRun ? scanRequests : [],
+    planned: dryRun
+      ? {
+          consumers: scanRequests,
+          work: plannedWork,
+        }
+      : null,
   });
 }
 

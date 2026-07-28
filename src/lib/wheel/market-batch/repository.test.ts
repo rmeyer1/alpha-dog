@@ -119,6 +119,32 @@ describe("shared market batch repository", () => {
     expect(restMock.mock.calls.at(-2)?.[1]?.query.offset).toBe(1000);
   });
 
+  it("reads only requested universe symbols in bounded chunks", async () => {
+    const repository = await import("./repository");
+    restMock
+      .mockResolvedValueOnce([{
+        company_name: "Apple Inc.",
+        exchange: "NASDAQ",
+        symbol: "AAPL",
+      }])
+      .mockResolvedValueOnce([]);
+
+    const result = await repository.readScannerAssetsBySymbols([
+      "aapl",
+      ...Array.from({ length: 100 }, (_, index) => `S${index}`),
+      "AAPL",
+    ]);
+
+    expect(result).toEqual([{
+      exchange: "NASDAQ",
+      name: "Apple Inc.",
+      symbol: "AAPL",
+    }]);
+    expect(restMock).toHaveBeenCalledTimes(2);
+    expect(restMock.mock.calls[0][1].query.symbol).toContain("\"AAPL\"");
+    expect(restMock.mock.calls[0][1].query.active).toBe("eq.true");
+  });
+
   it("persists facts, checkpoints, metrics, and completion summaries", async () => {
     const repository = await import("./repository");
     vi.setSystemTime(new Date("2026-07-27T14:00:00.000Z"));
@@ -130,6 +156,7 @@ describe("shared market batch repository", () => {
     await repository.checkpointMarketBatchUnderlyings("batch-1", {
       assetCount: 2,
       metrics: [],
+      missingSymbols: [],
       rankedCount: 2,
       selectedCount: 1,
       selectedSymbols: ["AAPL"],

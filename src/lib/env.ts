@@ -129,6 +129,8 @@ const envSchema = z.object({
   WHEEL_UNIVERSE_BACKGROUND_COVERAGE_MAX_AGE_HOURS:
     optionalPositiveInteger("24"),
   WHEEL_UNIVERSE_BACKGROUND_MAX_RUNS: optionalPositiveInteger("4"),
+  WHEEL_DEEP_SCAN_CLAIM_LIMIT: optionalPositiveInteger("625"),
+  WHEEL_DEEP_SCAN_CLAIM_LEASE_SECONDS: optionalPositiveInteger("3600"),
   ALPHA_DOG_SUPABASE_URL: z.preprocess(
     emptyStringToUndefined,
     z.string().url().optional(),

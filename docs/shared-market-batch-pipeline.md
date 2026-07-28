@@ -4,6 +4,12 @@ AD-018 introduces a durable replacement pipeline for wheel-market ingestion
 and scoring. It does not change the production reader. AD-020 owns comparison,
 cutover, rollback, and removal of the legacy scanner path.
 
+AD-019 reuses these fact tables for tiered deep-scan claims but does not
+publish or advance the shared snapshot pointer. Claimed-symbol coverage
+batches may retain per-symbol provider failures so the queue can apply bounded
+backoff independently; the original all-required-option-type publication rule
+below remains unchanged for reader-visible snapshot batches.
+
 ## Ownership
 
 | Layer | Responsibility |

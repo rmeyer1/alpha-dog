@@ -5,7 +5,7 @@ on:
     # Bound scheduled coverage to UTC hours that can overlap the guarded
     # 8 a.m.-4 p.m. New York session. The route applies holidays, early
     # closes, and DST from the versioned exchange calendar.
-    - cron: "10 12-21 * * 1-5"
+    - cron: "10,25,40,55 12-21 * * 1-5"
   workflow_dispatch:
 
 jobs:

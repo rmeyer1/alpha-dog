@@ -122,6 +122,7 @@ export interface MarketBatchIngestionSummary {
 export interface MarketBatchUnderlyingStageSummary {
   assetCount: number;
   metrics: MarketBatchMetric[];
+  missingSymbols: string[];
   rankedCount: number;
   selectedCount: number;
   selectedSymbols: string[];

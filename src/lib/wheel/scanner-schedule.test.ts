@@ -18,7 +18,7 @@ describe("scanner schedules", () => {
       'cron: "7,22,37,52 20-23 * * 0"',
     );
     expect(workflow("wheel-deep-scan-coverage.yml")).toContain(
-      'cron: "10 12-21 * * 1-5"',
+      'cron: "10,25,40,55 12-21 * * 1-5"',
     );
   });
 

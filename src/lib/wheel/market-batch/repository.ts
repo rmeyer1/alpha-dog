@@ -18,6 +18,53 @@ import type {
   MarketBatchUnderlyingRow,
   StagedMarketBatchSnapshot,
 } from "./model";
+import type { ScannerAsset } from "../universe-scanner/model";
+
+const UNDERLYING_SYMBOL_READ_CHUNK_SIZE = 100;
+
+export async function readScannerAssetsBySymbols(
+  symbols: string[],
+): Promise<ScannerAsset[]> {
+  const normalized = Array.from(
+    new Set(
+      symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean),
+    ),
+  );
+  const rows: Array<{
+    company_name: string;
+    exchange: ScannerAsset["exchange"];
+    symbol: string;
+  }> = [];
+
+  for (
+    let offset = 0;
+    offset < normalized.length;
+    offset += UNDERLYING_SYMBOL_READ_CHUNK_SIZE
+  ) {
+    const chunk = normalized.slice(
+      offset,
+      offset + UNDERLYING_SYMBOL_READ_CHUNK_SIZE,
+    );
+    const result = await requestSupabaseRest<typeof rows>(
+      "wheel_underlying_universe",
+      {
+        query: {
+          active: "eq.true",
+          optionable: "eq.true",
+          select: "symbol,company_name,exchange",
+          symbol: `in.(${chunk.map((symbol) => `"${symbol}"`).join(",")})`,
+        },
+      },
+    );
+    rows.push(...(result ?? []));
+  }
+
+  return rows.map((row) => ({
+    exchange: row.exchange,
+    name: row.company_name,
+    symbol: row.symbol,
+  }));
+}
 
 interface CreateBatchRpcResult {
   batch_id: string;
@@ -130,6 +177,7 @@ export async function checkpointMarketBatchUnderlyings(
   summary: {
     assetCount: number;
     metrics: MarketBatchMetric[];
+    missingSymbols: string[];
     rankedCount: number;
     selectedCount: number;
     selectedSymbols: string[];
@@ -146,6 +194,7 @@ export async function checkpointMarketBatchUnderlyings(
         p_selected_count: summary.selectedCount,
         p_summary: {
           metrics: summary.metrics,
+          missingSymbols: summary.missingSymbols,
           selectedSymbols: summary.selectedSymbols,
         },
       },
