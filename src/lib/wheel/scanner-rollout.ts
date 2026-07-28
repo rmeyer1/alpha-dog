@@ -64,7 +64,21 @@ export async function getControlledWheelScreenerRead(
     };
   }
 
-  const replacement = await getSharedMarketBatchScreenerResponse(request);
+  let replacement: WheelScreenerResponse | null = null;
+  let replacementReadFailed = false;
+
+  try {
+    replacement = await getSharedMarketBatchScreenerResponse(request);
+  } catch (error) {
+    replacementReadFailed = true;
+    emitTelemetry({
+      error,
+      event: "wheel.scanner_rollout_read",
+      operation: "replacement",
+      outcome: "read_failed",
+      severity: "warn",
+    });
+  }
 
   if (replacement) {
     emitTelemetry({
@@ -85,7 +99,13 @@ export async function getControlledWheelScreenerRead(
   emitTelemetry({
     event: "wheel.scanner_rollout_read",
     operation: "replacement",
-    outcome: legacy ? "legacy_fallback" : "unavailable",
+    outcome: legacy
+      ? replacementReadFailed
+        ? "legacy_fallback_after_read_failure"
+        : "legacy_fallback"
+      : replacementReadFailed
+        ? "unavailable_after_read_failure"
+        : "unavailable",
     severity: legacy ? "warn" : "error",
   });
 

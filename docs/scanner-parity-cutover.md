@@ -4,14 +4,17 @@ AD-020 moves scheduled screener refreshes onto the shared market-batch
 workflow without changing the default public reader. One normalized persisted
 fact batch feeds both the legacy-compatible snapshot and the replacement
 snapshot, so parity measurement does not repeat paid provider calls.
+Each consumer loads the persisted facts once, computes the two independent
+projections once, and stages both before replacement publication begins.
 
 ## Safety contract
 
 - `wheel_scanner_rollout_control.read_source` defaults to `legacy`.
 - The replacement reader accepts only a current pointer whose batch and
   snapshot are both complete.
-- If replacement storage has no complete readable pointer, the server
-  immediately falls back to the legacy reader.
+- If replacement storage has no complete readable pointer or its read throws,
+  the server immediately falls back to the legacy reader and emits bounded
+  failure telemetry.
 - Control and parity tables use forced RLS, have no client policies, and grant
   access only to `service_role`.
 - Diagnostic samples contain at most ten candidate identities, mismatch
@@ -50,7 +53,8 @@ select public.set_wheel_scanner_read_source('legacy');
 
 The next request resolves the server-side control row and reads the legacy
 snapshot. If control-plane lookup itself fails, application code also fails
-safe to legacy.
+safe to legacy. The legacy snapshot is populated from the independent legacy
+projection, not from the replacement response.
 
 ## Observation query
 

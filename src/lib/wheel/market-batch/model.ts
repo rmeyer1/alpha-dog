@@ -220,6 +220,24 @@ export interface StagedMarketBatchSnapshot {
   warnings: WheelScreenerResponse["warnings"];
 }
 
+export interface StagedLegacyMarketBatchSnapshot {
+  error: string | null;
+  processedCount: number;
+  skippedCount: number;
+  snapshotId: string;
+  totalCount: number;
+}
+
+export interface StagedMarketBatchConsumerSnapshots {
+  legacy: StagedLegacyMarketBatchSnapshot;
+  replacement: StagedMarketBatchSnapshot;
+}
+
+export interface ScoredMarketBatchConsumerProjections {
+  legacy: ScoredMarketBatchConsumer;
+  replacement: ScoredMarketBatchConsumer;
+}
+
 export interface SharedMarketBatchWorkflowInput {
   batchKey?: string;
   intervalStartedAt: string;

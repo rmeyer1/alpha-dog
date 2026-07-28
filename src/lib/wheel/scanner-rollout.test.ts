@@ -84,6 +84,35 @@ describe("wheel scanner rollout reader", () => {
     );
   });
 
+  it("falls back to legacy when replacement storage throws", async () => {
+    mocks.rest.mockResolvedValue([{ read_source: "replacement" }]);
+    mocks.replacement.mockRejectedValue(
+      new Error("replacement storage unavailable"),
+    );
+    const { getControlledWheelScreenerRead } = await import("./scanner-rollout");
+
+    await expect(getControlledWheelScreenerRead(request)).resolves.toEqual({
+      fallback: true,
+      requestedSource: "replacement",
+      response: legacyResponse,
+      source: "legacy",
+    });
+    expect(mocks.legacy).toHaveBeenCalledOnce();
+    expect(mocks.emitTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "wheel.scanner_rollout_read",
+        operation: "replacement",
+        outcome: "read_failed",
+        severity: "warn",
+      }),
+    );
+    expect(mocks.emitTelemetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "legacy_fallback_after_read_failure",
+      }),
+    );
+  });
+
   it("reports unavailable when neither complete source exists", async () => {
     mocks.rest.mockResolvedValue([{ read_source: "replacement" }]);
     mocks.replacement.mockResolvedValue(null);

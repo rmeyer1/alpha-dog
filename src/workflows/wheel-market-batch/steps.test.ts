@@ -18,14 +18,14 @@ const serviceMocks = vi.hoisted(() => ({
   markFailed: vi.fn(),
   prepare: vi.fn(),
   publish: vi.fn(),
-  score: vi.fn(),
+  scoreProjections: vi.fn(),
   sharedFilters: vi.fn(() => ({ dteMin: 7, dteMax: 45 })),
   stageOptions: vi.fn(),
-  stageSnapshot: vi.fn(),
+  stageProjection: vi.fn(),
   stageUnderlyings: vi.fn(),
 }));
 const materializedMocks = vi.hoisted(() => ({
-  complete: vi.fn(),
+  completeSummary: vi.fn(),
   create: vi.fn(),
   upsert: vi.fn(),
 }));
@@ -42,14 +42,15 @@ vi.mock("@/lib/wheel/market-batch/service", () => ({
   markSharedMarketBatchFailed: serviceMocks.markFailed,
   prepareSharedMarketBatch: serviceMocks.prepare,
   publishScoredMarketBatchSnapshot: serviceMocks.publish,
-  scoreSharedMarketBatchConsumer: serviceMocks.score,
+  scoreSharedMarketBatchConsumerProjections: serviceMocks.scoreProjections,
   sharedMarketBatchDiscoveryFilters: serviceMocks.sharedFilters,
-  stageScoredMarketBatchSnapshot: serviceMocks.stageSnapshot,
+  stageScoredMarketBatchSnapshotProjection: serviceMocks.stageProjection,
   stageSharedMarketBatchOptions: serviceMocks.stageOptions,
   stageSharedMarketBatchUnderlyings: serviceMocks.stageUnderlyings,
 }));
 vi.mock("@/lib/wheel/materialized-screener", () => ({
-  completeMaterializedWheelScreenerSnapshot: materializedMocks.complete,
+  completeMaterializedWheelScreenerSnapshotSummary:
+    materializedMocks.completeSummary,
   createMaterializedWheelScreenerSnapshot: materializedMocks.create,
   upsertMaterializedWheelScreenerCandidates: materializedMocks.upsert,
 }));
@@ -112,22 +113,38 @@ beforeEach(() => {
     rankedCount: 1,
     selectedCount: 1,
   });
-  serviceMocks.stageSnapshot.mockResolvedValue(snapshot);
+  serviceMocks.stageProjection.mockResolvedValue(snapshot);
   serviceMocks.publish.mockResolvedValue({ staged: true, durationMs: 1 });
-  serviceMocks.score.mockResolvedValue({
-    response: {
-      companies: [],
-      errors: [],
-      progress: { processedCount: 1, totalCount: 1 },
-      skippedCount: 0,
-      warnings: [],
+  serviceMocks.scoreProjections.mockResolvedValue({
+    batch: { feed: "opra" },
+    projections: {
+      legacy: {
+        companies: [{ ticker: "LEGACY" }],
+        response: {
+          companies: [{ ticker: "LEGACY" }],
+          errors: ["legacy-only"],
+          progress: { processedCount: 1, totalCount: 2 },
+          skippedCount: 1,
+          warnings: [],
+        },
+      },
+      replacement: {
+        companies: [{ ticker: "REPLACEMENT" }],
+        response: {
+          companies: [{ ticker: "REPLACEMENT" }],
+          errors: [],
+          progress: { processedCount: 2, totalCount: 2 },
+          skippedCount: 0,
+          warnings: [],
+        },
+      },
     },
   });
   materializedMocks.create.mockResolvedValue("legacy-snapshot-1");
 });
 
 describe("wheel market batch workflow steps", () => {
-  it("runs every successful step and deduplicates consumer identities", async () => {
+  it("runs once and persists the independent legacy projection under a forced mismatch", async () => {
     const steps = await import("./steps");
     const prepared = await steps.prepareMarketBatchStep({
       ...input,
@@ -166,21 +183,28 @@ describe("wheel market batch workflow steps", () => {
       [optionStage],
     )).resolves.toMatchObject({ optionContractCount: 1 });
     await expect(
-      steps.stageMarketBatchSnapshotStep("batch-1", input.requests[0]),
-    ).resolves.toEqual(snapshot);
+      steps.stageMarketBatchConsumerStep("batch-1", input.requests[0]),
+    ).resolves.toEqual({
+      legacy: {
+        error: "legacy-only",
+        processedCount: 1,
+        skippedCount: 1,
+        snapshotId: "legacy-snapshot-1",
+        totalCount: 2,
+      },
+      replacement: snapshot,
+    });
     await expect(
       steps.publishMarketBatchSnapshotStep(snapshot),
     ).resolves.toMatchObject({ staged: true });
-    await expect(
-      steps.stageLegacyMarketBatchSnapshotStep(
-        "batch-1",
-        input.requests[0],
-      ),
-    ).resolves.toBe("legacy-snapshot-1");
     await steps.completeLegacyMarketBatchSnapshotStep(
-      "batch-1",
-      input.requests[0],
-      "legacy-snapshot-1",
+      {
+        error: "legacy-only",
+        processedCount: 1,
+        skippedCount: 1,
+        snapshotId: "legacy-snapshot-1",
+        totalCount: 2,
+      },
     );
     await steps.recordMarketBatchWorkflowLifecycle(
       {
@@ -201,9 +225,29 @@ describe("wheel market batch workflow steps", () => {
     expect(materializedMocks.upsert).toHaveBeenCalledWith(
       "legacy-snapshot-1",
       input.requests[0],
-      expect.objectContaining({ companies: [] }),
+      expect.objectContaining({
+        companies: [{ ticker: "LEGACY" }],
+        errors: ["legacy-only"],
+      }),
     );
-    expect(materializedMocks.complete).toHaveBeenCalled();
+    expect(materializedMocks.upsert).not.toHaveBeenCalledWith(
+      "legacy-snapshot-1",
+      input.requests[0],
+      expect.objectContaining({
+        companies: [{ ticker: "REPLACEMENT" }],
+      }),
+    );
+    expect(materializedMocks.completeSummary).toHaveBeenCalledWith(
+      "legacy-snapshot-1",
+      expect.objectContaining({
+        error: "legacy-only",
+        processedCount: 1,
+        skippedCount: 1,
+        totalCount: 2,
+      }),
+    );
+    expect(serviceMocks.scoreProjections).toHaveBeenCalledOnce();
+    expect(serviceMocks.stageProjection).toHaveBeenCalledOnce();
     expect(observabilityMocks.emit).toHaveBeenCalledWith(
       expect.objectContaining({
         phase: "completed",
@@ -214,10 +258,10 @@ describe("wheel market batch workflow steps", () => {
 
   it("fails before candidate publication when a legacy snapshot is not created", async () => {
     materializedMocks.create.mockResolvedValueOnce(null);
-    const { stageLegacyMarketBatchSnapshotStep } = await import("./steps");
+    const { stageMarketBatchConsumerStep } = await import("./steps");
 
     await expect(
-      stageLegacyMarketBatchSnapshotStep("batch-1", input.requests[0]),
+      stageMarketBatchConsumerStep("batch-1", input.requests[0]),
     ).rejects.toThrow("was not created");
     expect(materializedMocks.upsert).not.toHaveBeenCalled();
   });
@@ -245,8 +289,8 @@ describe("wheel market batch workflow steps", () => {
         [optionStage],
       )), serviceMocks.finalize],
     ["score", () => import("./steps").then((steps) =>
-      steps.stageMarketBatchSnapshotStep("batch-1", input.requests[0])),
-    serviceMocks.stageSnapshot],
+      steps.stageMarketBatchConsumerStep("batch-1", input.requests[0])),
+    serviceMocks.stageProjection],
     ["publish", () => import("./steps").then((steps) =>
       steps.publishMarketBatchSnapshotStep(snapshot)), serviceMocks.publish],
   ] as const)("logs and rethrows %s failures", async (_name, run, mock) => {
@@ -260,7 +304,7 @@ describe("wheel market batch workflow steps", () => {
     const {
       finalizeMarketBatchFactsStep,
       publishMarketBatchSnapshotStep,
-      stageMarketBatchSnapshotStep,
+      stageMarketBatchConsumerStep,
     } = await import("./steps");
     serviceMocks.finalize.mockRejectedValueOnce("unknown");
     await expect(finalizeMarketBatchFactsStep(
@@ -273,9 +317,9 @@ describe("wheel market batch workflow steps", () => {
       expect.objectContaining({ message: "facts failed" }),
     );
 
-    serviceMocks.stageSnapshot.mockRejectedValueOnce("unknown");
+    serviceMocks.stageProjection.mockRejectedValueOnce("unknown");
     await expect(
-      stageMarketBatchSnapshotStep("batch-1", input.requests[0]),
+      stageMarketBatchConsumerStep("batch-1", input.requests[0]),
     ).rejects.toBe("unknown");
     expect(console.error).toHaveBeenCalledWith(
       "[wheelMarketBatch:score] FAIL",

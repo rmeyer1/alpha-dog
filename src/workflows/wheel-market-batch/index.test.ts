@@ -9,7 +9,6 @@ const stepMocks = vi.hoisted(() => ({
   publish: vi.fn(),
   recordLifecycle: vi.fn(),
   score: vi.fn(),
-  stageLegacy: vi.fn(),
   stageOption: vi.fn(),
   stageUnderlyings: vi.fn(),
 }));
@@ -22,9 +21,8 @@ vi.mock("./steps", () => ({
   prepareMarketBatchStep: stepMocks.prepare,
   publishMarketBatchSnapshotStep: stepMocks.publish,
   recordMarketBatchWorkflowLifecycle: stepMocks.recordLifecycle,
+  stageMarketBatchConsumerStep: stepMocks.score,
   stageMarketBatchOptionStep: stepMocks.stageOption,
-  stageMarketBatchSnapshotStep: stepMocks.score,
-  stageLegacyMarketBatchSnapshotStep: stepMocks.stageLegacy,
   stageMarketBatchUnderlyingsStep: stepMocks.stageUnderlyings,
 }));
 
@@ -87,29 +85,44 @@ beforeEach(() => {
   });
   stepMocks.score
     .mockResolvedValueOnce({
-      candidateCount: 1,
-      durationMs: 4,
-      errors: [],
-      screenedCount: 1,
-      skippedCount: 0,
-      snapshotId: "snapshot-put",
-      warnings: [],
+      legacy: {
+        error: null,
+        processedCount: 1,
+        skippedCount: 0,
+        snapshotId: "legacy-put",
+        totalCount: 1,
+      },
+      replacement: {
+        candidateCount: 1,
+        durationMs: 4,
+        errors: [],
+        screenedCount: 1,
+        skippedCount: 0,
+        snapshotId: "snapshot-put",
+        warnings: [],
+      },
     })
     .mockResolvedValueOnce({
-      candidateCount: 1,
-      durationMs: 6,
-      errors: [],
-      screenedCount: 1,
-      skippedCount: 0,
-      snapshotId: "snapshot-call",
-      warnings: [],
+      legacy: {
+        error: null,
+        processedCount: 1,
+        skippedCount: 0,
+        snapshotId: "legacy-call",
+        totalCount: 1,
+      },
+      replacement: {
+        candidateCount: 1,
+        durationMs: 6,
+        errors: [],
+        screenedCount: 1,
+        skippedCount: 0,
+        snapshotId: "snapshot-call",
+        warnings: [],
+      },
     });
   stepMocks.publish
     .mockResolvedValueOnce({ durationMs: 2, staged: true })
     .mockResolvedValueOnce({ durationMs: 3, staged: true });
-  stepMocks.stageLegacy
-    .mockResolvedValueOnce("legacy-put")
-    .mockResolvedValueOnce("legacy-call");
 });
 
 describe("wheel market batch workflow", () => {
@@ -134,8 +147,20 @@ describe("wheel market batch workflow", () => {
     ]);
     expect(stepMocks.finish).toHaveBeenCalledWith("batch-1", 2, 2, 10, 5);
     expect(stepMocks.completeLegacy.mock.calls).toEqual([
-      ["batch-1", requests[0], "legacy-put"],
-      ["batch-1", requests[1], "legacy-call"],
+      [{
+        error: null,
+        processedCount: 1,
+        skippedCount: 0,
+        snapshotId: "legacy-put",
+        totalCount: 1,
+      }],
+      [{
+        error: null,
+        processedCount: 1,
+        skippedCount: 0,
+        snapshotId: "legacy-call",
+        totalCount: 1,
+      }],
     ]);
     expect(stepMocks.recordLifecycle.mock.calls).toEqual([
       [telemetryContext, "resumed"],
@@ -188,7 +213,7 @@ describe("wheel market batch workflow", () => {
         requests,
       }),
     ).rejects.toThrow("pointer transaction failed");
-    expect(stepMocks.stageLegacy).toHaveBeenCalledTimes(2);
+    expect(stepMocks.score).toHaveBeenCalledTimes(2);
     expect(stepMocks.completeLegacy).not.toHaveBeenCalled();
     expect(stepMocks.fail).toHaveBeenCalledWith(
       "batch-1",

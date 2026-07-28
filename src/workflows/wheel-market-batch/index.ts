@@ -11,9 +11,8 @@ import {
   prepareMarketBatchStep,
   publishMarketBatchSnapshotStep,
   recordMarketBatchWorkflowLifecycle,
-  stageLegacyMarketBatchSnapshotStep,
+  stageMarketBatchConsumerStep,
   stageMarketBatchOptionStep,
-  stageMarketBatchSnapshotStep,
   stageMarketBatchUnderlyingsStep,
 } from "./steps";
 
@@ -65,30 +64,26 @@ export async function wheelMarketBatchWorkflow(
       underlyingStage,
       optionStages,
     );
-    const stagedSnapshots = await Promise.all(
+    const stagedConsumers = await Promise.all(
       prepared.requests.map((request) =>
-        stageMarketBatchSnapshotStep(batchId, request)
-      ),
-    );
-    const legacySnapshotIds = await Promise.all(
-      prepared.requests.map((request) =>
-        stageLegacyMarketBatchSnapshotStep(batchId, request)
+        stageMarketBatchConsumerStep(batchId, request)
       ),
     );
     const publications = await Promise.all(
-      stagedSnapshots.map((snapshot) =>
-        publishMarketBatchSnapshotStep(snapshot)
+      stagedConsumers.map(({ replacement }) =>
+        publishMarketBatchSnapshotStep(replacement)
       ),
     );
     await finishMarketBatchStep(
       batchId,
-      stagedSnapshots.length,
-      stagedSnapshots.reduce(
-        (total, snapshot) => total + snapshot.candidateCount,
+      stagedConsumers.length,
+      stagedConsumers.reduce(
+        (total, { replacement }) =>
+          total + replacement.candidateCount,
         0,
       ),
-      stagedSnapshots.reduce(
-        (total, snapshot) => total + snapshot.durationMs,
+      stagedConsumers.reduce(
+        (total, { replacement }) => total + replacement.durationMs,
         0,
       ),
       publications.reduce(
@@ -97,18 +92,14 @@ export async function wheelMarketBatchWorkflow(
       ),
     );
     await Promise.all(
-      prepared.requests.map((request, index) =>
-        completeLegacyMarketBatchSnapshotStep(
-          batchId,
-          request,
-          legacySnapshotIds[index],
-        )
+      stagedConsumers.map(({ legacy }) =>
+        completeLegacyMarketBatchSnapshotStep(legacy)
       ),
     );
-    const snapshots = stagedSnapshots.map((snapshot, index) => ({
-      candidateCount: snapshot.candidateCount,
+    const snapshots = stagedConsumers.map(({ replacement }, index) => ({
+      candidateCount: replacement.candidateCount,
       persona: prepared.requests[index].persona,
-      snapshotId: snapshot.snapshotId,
+      snapshotId: replacement.snapshotId,
       strategy: prepared.requests[index].strategy,
     }));
 

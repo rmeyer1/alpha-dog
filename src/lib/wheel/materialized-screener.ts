@@ -677,6 +677,23 @@ export async function completeMaterializedWheelScreenerSnapshot(
   snapshotId: string | null,
   response: WheelScreenerResponse,
 ) {
+  return completeMaterializedWheelScreenerSnapshotSummary(snapshotId, {
+    error: response.errors[0] ?? null,
+    processedCount: response.progress.processedCount,
+    skippedCount: response.skippedCount,
+    totalCount: response.progress.totalCount,
+  });
+}
+
+export async function completeMaterializedWheelScreenerSnapshotSummary(
+  snapshotId: string | null,
+  summary: {
+    error: string | null;
+    processedCount: number;
+    skippedCount: number;
+    totalCount: number;
+  },
+) {
   if (!snapshotId) {
     return;
   }
@@ -686,10 +703,10 @@ export async function completeMaterializedWheelScreenerSnapshot(
     body: {
       status: "complete",
       completed_at: new Date().toISOString(),
-      total_count: response.progress.totalCount,
-      processed_count: response.progress.processedCount,
-      skipped_count: response.skippedCount,
-      error: response.errors[0] ?? null,
+      total_count: summary.totalCount,
+      processed_count: summary.processedCount,
+      skipped_count: summary.skippedCount,
+      error: summary.error,
     },
     prefer: "return=minimal",
     query: {
