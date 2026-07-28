@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestSupabaseRestMock = vi.hoisted(() => vi.fn());
@@ -130,17 +131,63 @@ describe("scanner concurrency", () => {
     });
     const firstBody = requestSupabaseRestMock.mock.calls[0][1].body;
     const secondBody = requestSupabaseRestMock.mock.calls[1][1].body;
+    const expectedContextKey =
+      '{"filters":{"dteMax":45,"dteMin":21},"persona":"balanced_wheel","strategy":"short_put"}';
+    const expectedDigest = createHash("sha256")
+      .update(expectedContextKey)
+      .digest("hex");
 
     expect(first).toMatchObject({
       acquired: true,
+      contextKey: expectedContextKey,
       intervalStartedAt: "2026-07-23T14:15:00.000Z",
+      leaseKey: `universe:${expectedDigest}`,
     });
     expect(second).toMatchObject({
       acquired: true,
+      contextKey: expectedContextKey,
       intervalStartedAt: "2026-07-23T14:30:00.000Z",
+      leaseKey: `universe:${expectedDigest}`,
     });
     expect(firstBody.p_lease_key).toBe(secondBody.p_lease_key);
     expect(firstBody.p_context_key).toBe(secondBody.p_context_key);
+  });
+
+  it("bounds oversized persisted context without changing digest identity", async () => {
+    requestSupabaseRestMock.mockResolvedValue({
+      acquired: true,
+      expires_at: "2026-07-23T14:30:00.000Z",
+      owner_id: "11111111-1111-1111-1111-111111111111",
+      retry_after_seconds: 0,
+    });
+    const { acquireScannerLease } = await import("./scanner-concurrency");
+    const context = {
+      filters: { serialized: "x".repeat(600) },
+      persona: "balanced_wheel",
+      strategy: "short_put",
+    };
+    const serializedContext =
+      `{"filters":{"serialized":"${"x".repeat(600)}"},"persona":"balanced_wheel","strategy":"short_put"}`;
+    const expectedDigest = createHash("sha256")
+      .update(serializedContext)
+      .digest("hex");
+    const lease = await acquireScannerLease({
+      context,
+      intervalMinutes: 15,
+      now: new Date("2026-07-23T14:17:54.000Z"),
+      ownerId: "11111111-1111-1111-1111-111111111111",
+      scanKind: "universe",
+    });
+    const body = requestSupabaseRestMock.mock.calls[0][1].body;
+
+    expect(body.p_context_key).toBe(`sha256:${expectedDigest}`);
+    expect(body.p_context_key.length).toBeLessThanOrEqual(500);
+    expect(body.p_lease_key).toBe(`universe:${expectedDigest}`);
+    expect(lease).toMatchObject({
+      acquired: true,
+      contextKey: body.p_context_key,
+      leaseKey: body.p_lease_key,
+    });
   });
 
   it("derives a stable UUID lease owner from a Workflow idempotency key", async () => {

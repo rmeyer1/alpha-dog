@@ -14,6 +14,9 @@ scan cannot overlap the next interval for the same context.
 - Deep scans use 60-minute intervals.
 - A PostgreSQL advisory transaction lock serializes acquisition for one lease
   key.
+- The lease key always hashes the complete normalized scan context. Contexts
+  longer than the database's 500-character audit field are stored there as
+  the same SHA-256 digest, while scan-run rows retain the complete filters.
 - An unexpired lease can only be renewed or released by its owner UUID.
 - An expired lease can be atomically reclaimed by a new owner.
 - Leases expire after 60 minutes if a worker disappears.

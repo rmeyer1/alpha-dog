@@ -3,6 +3,7 @@ import { requestSupabaseRest } from "@/lib/supabase/rest";
 
 const DEADLOCK_RETRY_DELAYS_MS = [40, 120, 280] as const;
 const DEFAULT_SCAN_LEASE_SECONDS = 60 * 60;
+const MAX_PERSISTED_SCAN_CONTEXT_KEY_LENGTH = 500;
 
 type ScannerKind = "universe" | "deep_scan";
 
@@ -211,6 +212,12 @@ function contextDigest(contextKey: string) {
   return createHash("sha256").update(contextKey).digest("hex");
 }
 
+function persistedScannerContextKey(contextKey: string, digest: string) {
+  return contextKey.length <= MAX_PERSISTED_SCAN_CONTEXT_KEY_LENGTH
+    ? contextKey
+    : `sha256:${digest}`;
+}
+
 export function scannerOwnerId(idempotencyKey: string) {
   const digits = contextDigest(idempotencyKey).slice(0, 32).split("");
 
@@ -243,11 +250,13 @@ export async function acquireScannerLease({
   ownerId?: string;
   scanKind: ScannerKind;
 }): Promise<ScannerLeaseResult> {
-  const contextKey = stableStringify(context);
+  const serializedContext = stableStringify(context);
+  const digest = contextDigest(serializedContext);
+  const contextKey = persistedScannerContextKey(serializedContext, digest);
   const intervalStartedAt = intervalStart(now, intervalMinutes);
   const leaseKey = [
     scanKind,
-    contextDigest(contextKey),
+    digest,
   ].join(":");
   const result = await requestSupabaseRest<ScannerLeaseRpcResult>(
     "rpc/acquire_wheel_scan_lease",

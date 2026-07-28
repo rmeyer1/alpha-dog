@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mergeFilters } from "./personas";
+import { stableStringify } from "./universe-scanner/domain";
 
 const getHistoricalDailyBarsBySymbolsMock = vi.hoisted(() => vi.fn());
 const getLiveOptionSnapshotContractsBySymbolsMock = vi.hoisted(() => vi.fn());
@@ -30,6 +33,24 @@ function scannerLeaseRpcResult(table: string) {
   }
 
   return undefined;
+}
+
+function balancedLeaseIdentity(scanKind: "universe" | "deep_scan") {
+  const filters = mergeFilters("balanced_wheel");
+  const filterKey = stableStringify(filters);
+  const serializedContext = stableStringify({
+    filterKey,
+    filters,
+    persona: "balanced_wheel",
+    strategy: "short_put",
+  });
+  const digest = createHash("sha256").update(serializedContext).digest("hex");
+
+  return {
+    contextKey: `sha256:${digest}`,
+    leaseKey: `${scanKind}:${digest}`,
+    serializedContext,
+  };
 }
 
 vi.mock("@/lib/alpaca/client", () => ({
@@ -156,11 +177,21 @@ describe("staged universe scanner", () => {
         options?.method === "PATCH" &&
         options?.body?.status === "complete",
     );
+    const leaseAcquire = requestSupabaseRestMock.mock.calls.find(
+      ([table]) => table === "rpc/acquire_wheel_scan_lease",
+    );
+    const expectedLease = balancedLeaseIdentity("universe");
 
     expect(getStockSnapshotsBySymbolsMock).toHaveBeenCalledWith(
       ["AAPL", "MSFT"],
       expect.objectContaining({ chunkSize: 1000, feed: "sip" }),
     );
+    expect(expectedLease.serializedContext).toHaveLength(619);
+    expect(leaseAcquire?.[1].body).toMatchObject({
+      p_context_key: expectedLease.contextKey,
+      p_lease_key: expectedLease.leaseKey,
+    });
+    expect(expectedLease.contextKey.length).toBeLessThanOrEqual(500);
     expect(getLiveOptionSnapshotContractsMock).toHaveBeenCalledTimes(1);
     expect(getLiveOptionSnapshotContractsMock).toHaveBeenCalledWith(
       "AAPL",
@@ -386,8 +417,18 @@ describe("staged universe scanner", () => {
       strategy: "short_put",
       batchSize: 1,
     });
+    const leaseAcquire = requestSupabaseRestMock.mock.calls.find(
+      ([table]) => table === "rpc/acquire_wheel_scan_lease",
+    );
+    const expectedLease = balancedLeaseIdentity("deep_scan");
 
     expect(getLiveOptionSnapshotContractsMock).toHaveBeenCalledTimes(1);
+    expect(expectedLease.serializedContext).toHaveLength(619);
+    expect(leaseAcquire?.[1].body).toMatchObject({
+      p_context_key: expectedLease.contextKey,
+      p_lease_key: expectedLease.leaseKey,
+    });
+    expect(expectedLease.contextKey.length).toBeLessThanOrEqual(500);
     expect(getLiveOptionSnapshotContractsMock).toHaveBeenCalledWith(
       "AAPL",
       expect.any(Object),
