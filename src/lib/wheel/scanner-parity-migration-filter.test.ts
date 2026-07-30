@@ -32,6 +32,15 @@ describe("parity metrics batch-status filter migration", () => {
     );
   });
 
+  it("enforces cohort integrity by matching observation count to snapshot_count", () => {
+    expect(migration).toContain(
+      "batches.snapshot_count as expected_count",
+    );
+    expect(migration).toContain(
+      "cohort.observation_count = cohort.expected_count",
+    );
+  });
+
   it("excludes observations from running and failed batches", () => {
     // The WHERE clause only admits status = 'complete', which
     // implicitly excludes 'running' and 'failed'.

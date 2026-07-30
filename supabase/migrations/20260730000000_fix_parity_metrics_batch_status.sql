@@ -2,6 +2,10 @@
 -- from the 14-market-day observation gate metrics.
 -- The prior RPC counted all observations regardless of batch completion
 -- status, allowing an incomplete or failed batch to inflate the gate.
+--
+-- This version also enforces cohort integrity: a batch is only admitted
+-- when the parity observation count matches the expected consumer count
+-- (batch.snapshot_count), preventing partial cohorts from counting.
 
 create or replace function public.get_wheel_scanner_parity_metrics(
   p_since date default (current_date - 30)
@@ -11,13 +15,24 @@ language sql
 security invoker
 set search_path = ''
 as $$
-  with observations as (
-    select obs.*
+  with cohort as (
+    select
+      obs.batch_id,
+      batches.snapshot_count as expected_count,
+      count(*) as observation_count
     from public.wheel_scanner_parity_observations as obs
     join public.wheel_market_batches as batches
       on batches.id = obs.batch_id
     where obs.observed_at::date >= coalesce(p_since, current_date - 30)
       and batches.status = 'complete'
+    group by obs.batch_id, batches.snapshot_count
+  ),
+  observations as (
+    select obs.*
+    from public.wheel_scanner_parity_observations as obs
+    join cohort
+      on cohort.batch_id = obs.batch_id
+     and cohort.observation_count = cohort.expected_count
   )
   select pg_catalog.jsonb_build_object(
     'since', coalesce(p_since, current_date - 30),

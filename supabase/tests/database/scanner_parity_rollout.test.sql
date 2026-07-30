@@ -128,5 +128,166 @@ select is(
   'an empty observation window reports zero samples'
 );
 
+-- Cohort integrity: batch status and consumer count enforcement
+-- Test setup: create batches and observations for each scenario
+
+-- Running batch — excluded
+with test_batch(batch_id) as (
+  insert into public.wheel_market_batches (
+    batch_key, interval_started_at, feed, status, snapshot_count
+  )
+  values (
+    'pg-tap-running-01',
+    '2026-01-02 14:00:00+00',
+    'opra',
+    'running',
+    2
+  )
+  on conflict (batch_key) do nothing
+  returning id
+)
+insert into public.wheel_scanner_parity_observations (
+  batch_id, persona, strategy, filter_key, format_version,
+  exact_match, market_day,
+  candidate_count_legacy, candidate_count_replacement,
+  mismatch_count,
+  eligibility_mismatch_count, financial_mismatch_count,
+  score_mismatch_count, warning_mismatch_count, ordering_mismatch_count
+)
+select
+  test_batch.batch_id,
+  'balanced_wheel', 'short_put', 'running-filter', 1,
+  true, true,
+  2, 2,
+  0, 0, 0, 0, 0, 0
+from test_batch;
+
+select is(
+  (public.get_wheel_scanner_parity_metrics('2026-01-01')::jsonb #>> '{observation_count}')::integer,
+  0,
+  'running batches are excluded from metrics'
+);
+
+-- Failed batch — excluded
+with test_batch(batch_id) as (
+  insert into public.wheel_market_batches (
+    batch_key, interval_started_at, feed, status, snapshot_count
+  )
+  values (
+    'pg-tap-failed-01',
+    '2026-01-02 15:00:00+00',
+    'opra',
+    'failed',
+    2
+  )
+  on conflict (batch_key) do nothing
+  returning id
+)
+insert into public.wheel_scanner_parity_observations (
+  batch_id, persona, strategy, filter_key, format_version,
+  exact_match, market_day,
+  candidate_count_legacy, candidate_count_replacement,
+  mismatch_count,
+  eligibility_mismatch_count, financial_mismatch_count,
+  score_mismatch_count, warning_mismatch_count, ordering_mismatch_count
+)
+select
+  test_batch.batch_id,
+  'balanced_wheel', 'short_put', 'failed-filter', 1,
+  true, true,
+  2, 2,
+  0, 0, 0, 0, 0, 0
+from test_batch;
+
+select is(
+  (public.get_wheel_scanner_parity_metrics('2026-01-01')::jsonb #>> '{observation_count}')::integer,
+  0,
+  'failed batches are excluded from metrics'
+);
+
+-- Complete batch, partial cohort (1 observation, snapshot_count = 2) — excluded
+with test_batch(batch_id) as (
+  insert into public.wheel_market_batches (
+    batch_key, interval_started_at, feed, status, snapshot_count
+  )
+  values (
+    'pg-tap-partial-01',
+    '2026-01-02 16:00:00+00',
+    'opra',
+    'complete',
+    2
+  )
+  on conflict (batch_key) do nothing
+  returning id
+)
+insert into public.wheel_scanner_parity_observations (
+  batch_id, persona, strategy, filter_key, format_version,
+  exact_match, market_day,
+  candidate_count_legacy, candidate_count_replacement,
+  mismatch_count,
+  eligibility_mismatch_count, financial_mismatch_count,
+  score_mismatch_count, warning_mismatch_count, ordering_mismatch_count
+)
+select
+  test_batch.batch_id,
+  'balanced_wheel', 'short_put', 'partial-filter', 1,
+  true, true,
+  2, 2,
+  0, 0, 0, 0, 0, 0
+from test_batch;
+
+select is(
+  (public.get_wheel_scanner_parity_metrics('2026-01-01')::jsonb #>> '{observation_count}')::integer,
+  0,
+  'partial cohort (1 observation / 2 expected) is excluded from metrics'
+);
+
+-- Complete batch, full cohort (2 observations, snapshot_count = 2) — included
+with test_batch(batch_id) as (
+  insert into public.wheel_market_batches (
+    batch_key, interval_started_at, feed, status, snapshot_count
+  )
+  values (
+    'pg-tap-full-01',
+    '2026-01-02 17:00:00+00',
+    'opra',
+    'complete',
+    2
+  )
+  on conflict (batch_key) do nothing
+  returning id
+)
+insert into public.wheel_scanner_parity_observations (
+  batch_id, persona, strategy, filter_key, format_version,
+  exact_match, market_day,
+  candidate_count_legacy, candidate_count_replacement,
+  mismatch_count,
+  eligibility_mismatch_count, financial_mismatch_count,
+  score_mismatch_count, warning_mismatch_count, ordering_mismatch_count
+)
+select
+  test_batch.batch_id,
+  consumer.persona, consumer.strategy, format('full-filter-%s', consumer.strategy), 1,
+  true, true,
+  2, 2,
+  0, 0, 0, 0, 0, 0
+from test_batch, (
+  values
+    ('balanced_wheel'::text, 'short_put'::text),
+    ('balanced_wheel'::text, 'covered_call'::text)
+) as consumer(persona, strategy);
+
+select is(
+  (public.get_wheel_scanner_parity_metrics('2026-01-01')::jsonb #>> '{observation_count}')::integer,
+  2,
+  'full cohort (2 observations / 2 expected) is included in metrics'
+);
+
+select is(
+  (public.get_wheel_scanner_parity_metrics('2026-01-01')::jsonb #>> '{exact_count}')::integer,
+  2,
+  'full cohort exact match count is correct'
+);
+
 select * from finish();
 rollback;
