@@ -26,6 +26,25 @@ vi.mock("./steps", () => ({
   stageMarketBatchUnderlyingsStep: stepMocks.stageUnderlyings,
 }));
 
+const recordParityMock = vi.hoisted(() => vi.fn());
+const filterKeyMock = vi.hoisted(() => vi.fn((request) => ({
+  filterKey: `${request.strategy}-key`,
+  filters: { dteMin: 7, dteMax: 45 },
+  persona: request.persona,
+  strategy: request.strategy,
+})));
+const marketStateMock = vi.hoisted(() => ({
+  getUsEquitiesMarketState: vi.fn(() => ({ isMarketDay: true })),
+}));
+
+vi.mock("@/lib/wheel/market-batch/repository", () => ({
+  recordMarketBatchParityObservation: recordParityMock,
+}));
+vi.mock("@/lib/wheel/market-batch/domain", () => ({
+  marketBatchRequestIdentity: filterKeyMock,
+}));
+vi.mock("@/lib/market/us-equities-calendar", () => marketStateMock);
+
 const requests = [
   { persona: "balanced_wheel" as const, strategy: "short_put" as const },
   { persona: "balanced_wheel" as const, strategy: "covered_call" as const },
@@ -92,6 +111,20 @@ beforeEach(() => {
         snapshotId: "legacy-put",
         totalCount: 1,
       },
+      parity: {
+        candidateCount: { legacy: 1, replacement: 1 },
+        exactMatch: true,
+        formatVersion: 1,
+        mismatchCount: 0,
+        mismatches: {
+          eligibility: 0,
+          financial: 0,
+          ordering: 0,
+          score: 0,
+          warning: 0,
+        },
+        samples: [],
+      },
       replacement: {
         candidateCount: 1,
         durationMs: 4,
@@ -109,6 +142,20 @@ beforeEach(() => {
         skippedCount: 0,
         snapshotId: "legacy-call",
         totalCount: 1,
+      },
+      parity: {
+        candidateCount: { legacy: 1, replacement: 1 },
+        exactMatch: true,
+        formatVersion: 1,
+        mismatchCount: 0,
+        mismatches: {
+          eligibility: 0,
+          financial: 0,
+          ordering: 0,
+          score: 0,
+          warning: 0,
+        },
+        samples: [],
       },
       replacement: {
         candidateCount: 1,
@@ -166,6 +213,21 @@ describe("wheel market batch workflow", () => {
       [telemetryContext, "resumed"],
       [telemetryContext, "completed"],
     ]);
+    expect(recordParityMock).toHaveBeenCalledTimes(2);
+    expect(recordParityMock.mock.calls[0][0]).toMatchObject({
+      batchId: "batch-1",
+      filterKey: "short_put-key",
+      marketDay: true,
+      persona: "balanced_wheel",
+      strategy: "short_put",
+    });
+    expect(recordParityMock.mock.calls[1][0]).toMatchObject({
+      batchId: "batch-1",
+      filterKey: "covered_call-key",
+      marketDay: true,
+      persona: "balanced_wheel",
+      strategy: "covered_call",
+    });
     expect(result).toMatchObject({
       batchId: "batch-1",
       status: "complete",
@@ -219,6 +281,48 @@ describe("wheel market batch workflow", () => {
       "batch-1",
       "pointer transaction failed",
     );
+  });
+
+  it("does not record parity observations when legacy completion fails after replacement publication", async () => {
+    stepMocks.completeLegacy.mockRejectedValueOnce(
+      new Error("legacy snapshot summary update failed"),
+    );
+    const { wheelMarketBatchWorkflow } = await import("./index");
+
+    await expect(
+      wheelMarketBatchWorkflow({
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+        requests,
+      }),
+    ).rejects.toThrow("legacy snapshot summary update failed");
+    expect(stepMocks.score).toHaveBeenCalledTimes(2);
+    expect(stepMocks.publish).toHaveBeenCalledTimes(2);
+    expect(stepMocks.finish).toHaveBeenCalledWith("batch-1", 2, 2, 10, 5);
+    expect(stepMocks.completeLegacy).toHaveBeenCalled();
+    expect(stepMocks.fail).toHaveBeenCalledWith(
+      "batch-1",
+      "legacy snapshot summary update failed",
+    );
+    expect(recordParityMock).not.toHaveBeenCalled();
+  });
+
+  it("does not record parity observations when batch finish fails", async () => {
+    stepMocks.finish.mockRejectedValueOnce(
+      new Error("pointer transaction failed"),
+    );
+    const { wheelMarketBatchWorkflow } = await import("./index");
+
+    await expect(
+      wheelMarketBatchWorkflow({
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+        requests,
+      }),
+    ).rejects.toThrow("pointer transaction failed");
+    expect(stepMocks.fail).toHaveBeenCalledWith(
+      "batch-1",
+      "pointer transaction failed",
+    );
+    expect(recordParityMock).not.toHaveBeenCalled();
   });
 
   it("records a stable message for non-Error failures", async () => {

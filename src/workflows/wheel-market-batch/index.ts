@@ -3,6 +3,9 @@ import type {
   SharedMarketBatchWorkflowResult,
 } from "@/lib/wheel/market-batch/model";
 import type { DurableTelemetryContext } from "@/lib/observability/context";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
+import { marketBatchRequestIdentity } from "@/lib/wheel/market-batch/domain";
+import { recordMarketBatchParityObservation } from "@/lib/wheel/market-batch/repository";
 import {
   completeLegacyMarketBatchSnapshotStep,
   failMarketBatchStep,
@@ -94,6 +97,22 @@ export async function wheelMarketBatchWorkflow(
     await Promise.all(
       stagedConsumers.map(({ legacy }) =>
         completeLegacyMarketBatchSnapshotStep(legacy)
+      ),
+    );
+    await Promise.all(
+      stagedConsumers.map(({ parity }, index) =>
+        recordMarketBatchParityObservation({
+          batchId,
+          filterKey: marketBatchRequestIdentity(
+            prepared.requests[index],
+          ).filterKey,
+          marketDay: getUsEquitiesMarketState(
+            new Date(input.intervalStartedAt),
+          ).isMarketDay,
+          persona: prepared.requests[index].persona,
+          result: parity,
+          strategy: prepared.requests[index].strategy,
+        })
       ),
     );
     const snapshots = stagedConsumers.map(({ replacement }, index) => ({

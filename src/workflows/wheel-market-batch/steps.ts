@@ -25,6 +25,7 @@ import {
   stageSharedMarketBatchOptions,
   stageSharedMarketBatchUnderlyings,
 } from "@/lib/wheel/market-batch/service";
+import type { ScannerParityResult } from "@/lib/wheel/scanner-parity";
 import type {
   MarketBatchOptionStageSummary,
   MarketBatchUnderlyingStageSummary,
@@ -183,7 +184,7 @@ export async function finalizeMarketBatchFactsStep(
 export async function stageMarketBatchConsumerStep(
   batchId: string,
   request: SharedMarketBatchWorkflowInput["requests"][number],
-): Promise<StagedMarketBatchConsumerSnapshots> {
+): Promise<StagedMarketBatchConsumerSnapshots & { parity: ScannerParityResult }> {
   "use step";
 
   logStep("score", "START", {
@@ -193,7 +194,7 @@ export async function stageMarketBatchConsumerStep(
   });
 
   try {
-    const { batch, projections } =
+    const { batch, parity, projections } =
       await scoreSharedMarketBatchConsumerProjections(batchId, request);
     const replacement = await stageScoredMarketBatchSnapshotProjection(
       batchId,
@@ -230,7 +231,7 @@ export async function stageMarketBatchConsumerStep(
       replacementCandidateCount: replacement.candidateCount,
       replacementSnapshotId: replacement.snapshotId,
     });
-    return { legacy, replacement };
+    return { legacy, parity, replacement };
   } catch (error) {
     logStep("score", "FAIL", {
       batchId,

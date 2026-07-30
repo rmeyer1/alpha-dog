@@ -161,9 +161,12 @@ security invoker
 set search_path = ''
 as $$
   with observations as (
-    select *
-    from public.wheel_scanner_parity_observations
-    where observed_at::date >= coalesce(p_since, current_date - 30)
+    select obs.*
+    from public.wheel_scanner_parity_observations as obs
+    join public.wheel_market_batches as batches
+      on batches.id = obs.batch_id
+    where obs.observed_at::date >= coalesce(p_since, current_date - 30)
+      and batches.status = 'complete'
   )
   select pg_catalog.jsonb_build_object(
     'since', coalesce(p_since, current_date - 30),

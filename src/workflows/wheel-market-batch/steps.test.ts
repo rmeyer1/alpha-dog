@@ -117,6 +117,20 @@ beforeEach(() => {
   serviceMocks.publish.mockResolvedValue({ staged: true, durationMs: 1 });
   serviceMocks.scoreProjections.mockResolvedValue({
     batch: { feed: "opra" },
+    parity: {
+      candidateCount: { legacy: 1, replacement: 1 },
+      exactMatch: false,
+      formatVersion: 1,
+      mismatchCount: 1,
+      mismatches: {
+        eligibility: 0,
+        financial: 0,
+        ordering: 0,
+        score: 1,
+        warning: 0,
+      },
+      samples: [],
+    },
     projections: {
       legacy: {
         companies: [{ ticker: "LEGACY" }],
@@ -192,6 +206,7 @@ describe("wheel market batch workflow steps", () => {
         snapshotId: "legacy-snapshot-1",
         totalCount: 2,
       },
+      parity: expect.objectContaining({ exactMatch: false }),
       replacement: snapshot,
     });
     await expect(
