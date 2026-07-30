@@ -3,9 +3,6 @@ import type {
   SharedMarketBatchWorkflowResult,
 } from "@/lib/wheel/market-batch/model";
 import type { DurableTelemetryContext } from "@/lib/observability/context";
-import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
-import { marketBatchRequestIdentity } from "@/lib/wheel/market-batch/domain";
-import { recordMarketBatchParityObservation } from "@/lib/wheel/market-batch/repository";
 import {
   completeLegacyMarketBatchSnapshotStep,
   failMarketBatchStep,
@@ -13,6 +10,7 @@ import {
   finishMarketBatchStep,
   prepareMarketBatchStep,
   publishMarketBatchSnapshotStep,
+  recordMarketBatchParityObservationStep,
   recordMarketBatchWorkflowLifecycle,
   stageMarketBatchConsumerStep,
   stageMarketBatchOptionStep,
@@ -77,6 +75,11 @@ export async function wheelMarketBatchWorkflow(
         publishMarketBatchSnapshotStep(replacement)
       ),
     );
+    await Promise.all(
+      stagedConsumers.map(({ legacy }) =>
+        completeLegacyMarketBatchSnapshotStep(legacy)
+      ),
+    );
     await finishMarketBatchStep(
       batchId,
       stagedConsumers.length,
@@ -95,24 +98,13 @@ export async function wheelMarketBatchWorkflow(
       ),
     );
     await Promise.all(
-      stagedConsumers.map(({ legacy }) =>
-        completeLegacyMarketBatchSnapshotStep(legacy)
-      ),
-    );
-    await Promise.all(
       stagedConsumers.map(({ parity }, index) =>
-        recordMarketBatchParityObservation({
+        recordMarketBatchParityObservationStep(
           batchId,
-          filterKey: marketBatchRequestIdentity(
-            prepared.requests[index],
-          ).filterKey,
-          marketDay: getUsEquitiesMarketState(
-            new Date(input.intervalStartedAt),
-          ).isMarketDay,
-          persona: prepared.requests[index].persona,
-          result: parity,
-          strategy: prepared.requests[index].strategy,
-        })
+          parity,
+          prepared.requests[index],
+          input.intervalStartedAt,
+        )
       ),
     );
     const snapshots = stagedConsumers.map(({ replacement }, index) => ({

@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import type { DurableTelemetryContext } from "@/lib/observability/context";
 import {
   emitWorkflowTelemetry,
@@ -34,6 +35,7 @@ import type {
   StagedMarketBatchConsumerSnapshots,
   StagedMarketBatchSnapshot,
 } from "@/lib/wheel/market-batch/model";
+import { recordMarketBatchParityObservation } from "@/lib/wheel/market-batch/repository";
 
 function logStep(
   step: string,
@@ -322,4 +324,28 @@ export async function failMarketBatchStep(
   logStep("fail", "START", { batchId });
   await markSharedMarketBatchFailed(batchId, new Error(message));
   logStep("fail", "DONE", { batchId });
+}
+
+export async function recordMarketBatchParityObservationStep(
+  batchId: string,
+  parity: ScannerParityResult,
+  request: SharedMarketBatchWorkflowInput["requests"][number],
+  intervalStartedAt: string,
+) {
+  "use step";
+
+  logStep("parity", "START", { batchId, strategy: request.strategy });
+
+  await recordMarketBatchParityObservation({
+    batchId,
+    filterKey: marketBatchRequestIdentity(request).filterKey,
+    marketDay: getUsEquitiesMarketState(
+      new Date(intervalStartedAt),
+    ).isMarketDay,
+    persona: request.persona,
+    result: parity,
+    strategy: request.strategy,
+  });
+
+  logStep("parity", "DONE", { batchId, strategy: request.strategy });
 }
