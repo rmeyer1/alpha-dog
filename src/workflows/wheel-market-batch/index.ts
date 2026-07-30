@@ -80,6 +80,16 @@ export async function wheelMarketBatchWorkflow(
         completeLegacyMarketBatchSnapshotStep(legacy)
       ),
     );
+    await Promise.all(
+      stagedConsumers.map(({ parity }, index) =>
+        recordMarketBatchParityObservationStep(
+          batchId,
+          parity,
+          prepared.requests[index],
+          input.intervalStartedAt,
+        )
+      ),
+    );
     await finishMarketBatchStep(
       batchId,
       stagedConsumers.length,
@@ -95,16 +105,6 @@ export async function wheelMarketBatchWorkflow(
       publications.reduce(
         (total, publication) => total + publication.durationMs,
         0,
-      ),
-    );
-    await Promise.all(
-      stagedConsumers.map(({ parity }, index) =>
-        recordMarketBatchParityObservationStep(
-          batchId,
-          parity,
-          prepared.requests[index],
-          input.intervalStartedAt,
-        )
       ),
     );
     const snapshots = stagedConsumers.map(({ replacement }, index) => ({

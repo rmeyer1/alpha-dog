@@ -258,11 +258,11 @@ describe("wheel market batch workflow", () => {
     ).rejects.toThrow("pointer transaction failed");
     expect(stepMocks.score).toHaveBeenCalledTimes(2);
     expect(stepMocks.completeLegacy).toHaveBeenCalled();
+    expect(stepMocks.recordParity).toHaveBeenCalledTimes(2);
     expect(stepMocks.fail).toHaveBeenCalledWith(
       "batch-1",
       "pointer transaction failed",
     );
-    expect(stepMocks.recordParity).not.toHaveBeenCalled();
   });
 
   it("does not record parity observations when legacy completion fails after replacement publication", async () => {
@@ -288,7 +288,7 @@ describe("wheel market batch workflow", () => {
     expect(stepMocks.recordParity).not.toHaveBeenCalled();
   });
 
-  it("does not record parity observations when batch finish fails", async () => {
+  it("does not mark the batch complete when batch finish fails after parity recording", async () => {
     stepMocks.finish.mockRejectedValueOnce(
       new Error("pointer transaction failed"),
     );
@@ -300,11 +300,31 @@ describe("wheel market batch workflow", () => {
         requests,
       }),
     ).rejects.toThrow("pointer transaction failed");
+    expect(stepMocks.recordParity).toHaveBeenCalledTimes(2);
     expect(stepMocks.fail).toHaveBeenCalledWith(
       "batch-1",
       "pointer transaction failed",
     );
-    expect(stepMocks.recordParity).not.toHaveBeenCalled();
+  });
+
+  it("does not mark the batch complete when one parity observation fails", async () => {
+    stepMocks.recordParity
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("parity upsert failed"));
+    const { wheelMarketBatchWorkflow } = await import("./index");
+
+    await expect(
+      wheelMarketBatchWorkflow({
+        intervalStartedAt: "2026-07-27T14:00:00.000Z",
+        requests,
+      }),
+    ).rejects.toThrow("parity upsert failed");
+    expect(stepMocks.recordParity).toHaveBeenCalledTimes(2);
+    expect(stepMocks.finish).not.toHaveBeenCalled();
+    expect(stepMocks.fail).toHaveBeenCalledWith(
+      "batch-1",
+      "parity upsert failed",
+    );
   });
 
   it("records a stable message for non-Error failures", async () => {
