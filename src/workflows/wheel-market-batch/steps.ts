@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import type { DurableTelemetryContext } from "@/lib/observability/context";
 import {
   emitWorkflowTelemetry,
@@ -25,6 +26,7 @@ import {
   stageSharedMarketBatchOptions,
   stageSharedMarketBatchUnderlyings,
 } from "@/lib/wheel/market-batch/service";
+import type { ScannerParityResult } from "@/lib/wheel/scanner-parity";
 import type {
   MarketBatchOptionStageSummary,
   MarketBatchUnderlyingStageSummary,
@@ -33,6 +35,7 @@ import type {
   StagedMarketBatchConsumerSnapshots,
   StagedMarketBatchSnapshot,
 } from "@/lib/wheel/market-batch/model";
+import { recordMarketBatchParityObservation } from "@/lib/wheel/market-batch/repository";
 
 function logStep(
   step: string,
@@ -183,7 +186,7 @@ export async function finalizeMarketBatchFactsStep(
 export async function stageMarketBatchConsumerStep(
   batchId: string,
   request: SharedMarketBatchWorkflowInput["requests"][number],
-): Promise<StagedMarketBatchConsumerSnapshots> {
+): Promise<StagedMarketBatchConsumerSnapshots & { parity: ScannerParityResult }> {
   "use step";
 
   logStep("score", "START", {
@@ -193,7 +196,7 @@ export async function stageMarketBatchConsumerStep(
   });
 
   try {
-    const { batch, projections } =
+    const { batch, parity, projections } =
       await scoreSharedMarketBatchConsumerProjections(batchId, request);
     const replacement = await stageScoredMarketBatchSnapshotProjection(
       batchId,
@@ -230,7 +233,7 @@ export async function stageMarketBatchConsumerStep(
       replacementCandidateCount: replacement.candidateCount,
       replacementSnapshotId: replacement.snapshotId,
     });
-    return { legacy, replacement };
+    return { legacy, parity, replacement };
   } catch (error) {
     logStep("score", "FAIL", {
       batchId,
@@ -321,4 +324,28 @@ export async function failMarketBatchStep(
   logStep("fail", "START", { batchId });
   await markSharedMarketBatchFailed(batchId, new Error(message));
   logStep("fail", "DONE", { batchId });
+}
+
+export async function recordMarketBatchParityObservationStep(
+  batchId: string,
+  parity: ScannerParityResult,
+  request: SharedMarketBatchWorkflowInput["requests"][number],
+  intervalStartedAt: string,
+) {
+  "use step";
+
+  logStep("parity", "START", { batchId, strategy: request.strategy });
+
+  await recordMarketBatchParityObservation({
+    batchId,
+    filterKey: marketBatchRequestIdentity(request).filterKey,
+    marketDay: getUsEquitiesMarketState(
+      new Date(intervalStartedAt),
+    ).isMarketDay,
+    persona: request.persona,
+    result: parity,
+    strategy: request.strategy,
+  });
+
+  logStep("parity", "DONE", { batchId, strategy: request.strategy });
 }

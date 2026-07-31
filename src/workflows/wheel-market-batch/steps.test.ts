@@ -59,6 +59,16 @@ vi.mock("@/lib/observability/workflow", () => ({
   runWithDurableTelemetryContext: observabilityMocks.run,
 }));
 
+const parityRepoMock = vi.hoisted(() => ({
+  recordMarketBatchParityObservation: vi.fn(),
+}));
+const marketCalendarMock = vi.hoisted(() => ({
+  getUsEquitiesMarketState: vi.fn(() => ({ isMarketDay: true })),
+}));
+
+vi.mock("@/lib/wheel/market-batch/repository", () => parityRepoMock);
+vi.mock("@/lib/market/us-equities-calendar", () => marketCalendarMock);
+
 const input = {
   intervalStartedAt: "2026-07-27T14:00:00.000Z",
   requests: [{
@@ -117,6 +127,20 @@ beforeEach(() => {
   serviceMocks.publish.mockResolvedValue({ staged: true, durationMs: 1 });
   serviceMocks.scoreProjections.mockResolvedValue({
     batch: { feed: "opra" },
+    parity: {
+      candidateCount: { legacy: 1, replacement: 1 },
+      exactMatch: false,
+      formatVersion: 1,
+      mismatchCount: 1,
+      mismatches: {
+        eligibility: 0,
+        financial: 0,
+        ordering: 0,
+        score: 1,
+        warning: 0,
+      },
+      samples: [],
+    },
     projections: {
       legacy: {
         companies: [{ ticker: "LEGACY" }],
@@ -192,6 +216,7 @@ describe("wheel market batch workflow steps", () => {
         snapshotId: "legacy-snapshot-1",
         totalCount: 2,
       },
+      parity: expect.objectContaining({ exactMatch: false }),
       replacement: snapshot,
     });
     await expect(
@@ -335,5 +360,47 @@ describe("wheel market batch workflow steps", () => {
       "[wheelMarketBatch:publish] FAIL",
       expect.objectContaining({ message: "publication failed" }),
     );
+  });
+
+  it("persists parity observation for a consumer after both publication paths complete", async () => {
+    const {
+      recordMarketBatchParityObservationStep,
+    } = await import("./steps");
+
+    const parity = {
+      candidateCount: { legacy: 1, replacement: 1 },
+      exactMatch: true,
+      formatVersion: 1,
+      mismatchCount: 0,
+      mismatches: {
+        eligibility: 0,
+        financial: 0,
+        ordering: 0,
+        score: 0,
+        warning: 0,
+      },
+      samples: [],
+    };
+    const request = input.requests[0];
+    await recordMarketBatchParityObservationStep(
+      "batch-1",
+      parity,
+      request,
+      "2026-07-27T14:00:00.000Z",
+    );
+
+    expect(parityRepoMock.recordMarketBatchParityObservation)
+      .toHaveBeenCalledOnce();
+    expect(
+      parityRepoMock.recordMarketBatchParityObservation.mock.calls[0][0],
+    ).toMatchObject({
+      batchId: "batch-1",
+      persona: "balanced_wheel",
+      strategy: "short_put",
+    });
+    expect(
+      parityRepoMock.recordMarketBatchParityObservation.mock.calls[0][0]
+        .result.exactMatch,
+    ).toBe(true);
   });
 });

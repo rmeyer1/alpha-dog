@@ -4,7 +4,6 @@ import {
 } from "@/lib/alpaca/client";
 import { getEnv } from "@/lib/env";
 import { emitTelemetry } from "@/lib/observability/telemetry";
-import { getUsEquitiesMarketState } from "@/lib/market/us-equities-calendar";
 import {
   emptyEarningsRiskContext,
   getCachedEarningsRiskContexts,
@@ -34,6 +33,7 @@ import {
   legacyScannerParitySurface,
   scoreLegacyScannerFromMarketBatch,
 } from "../scanner-parity";
+import type { ScannerParityResult } from "../scanner-parity";
 import type {
   MarketBatchIngestionSummary,
   MarketBatchMetric,
@@ -62,7 +62,6 @@ import {
   readMarketBatchUnderlying,
   readMarketBatchUnderlyings,
   readScannerAssetsBySymbols,
-  recordMarketBatchParityObservation,
   replaceMarketBatchSnapshotCandidates,
   upsertMarketBatchMetrics,
 } from "./repository";
@@ -546,6 +545,7 @@ export async function scoreSharedMarketBatchConsumerProjections(
   request: WheelScreenerRequest,
 ): Promise<{
   batch: NonNullable<Awaited<ReturnType<typeof getMarketBatch>>>;
+  parity: ScannerParityResult;
   projections: ScoredMarketBatchConsumerProjections;
 }> {
   const [batch, underlyingRows, optionRows] = await Promise.all([
@@ -603,16 +603,6 @@ export async function scoreSharedMarketBatchConsumerProjections(
     },
   );
 
-  await recordMarketBatchParityObservation({
-    batchId,
-    filterKey: marketBatchRequestIdentity(request).filterKey,
-    marketDay: getUsEquitiesMarketState(
-      new Date(batch.interval_started_at),
-    ).isMarketDay,
-    persona: request.persona,
-    result: parity,
-    strategy: request.strategy,
-  });
   emitTelemetry({
     event: "wheel.scanner_parity",
     operation: request.strategy,
@@ -622,6 +612,7 @@ export async function scoreSharedMarketBatchConsumerProjections(
 
   return {
     batch,
+    parity,
     projections: {
       legacy,
       replacement: scored,
